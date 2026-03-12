@@ -39,6 +39,7 @@ const state = {
   viewer: null,
   publicState: null,
   postsPromise: null,
+  commentReply: null,
   map: null,
   markers: null
 };
@@ -264,6 +265,9 @@ async function initInvestigationCards() {
 async function initInvestigationDetail() {
   const article = document.querySelector("[data-investigation-article]");
   if (!article) return;
+  article.innerHTML = renderLoadingState("Looking up article...");
+  const commentPanel = document.querySelector("[data-comment-panel]");
+  if (commentPanel) commentPanel.innerHTML = renderLoadingState("Looking up discussion...");
 
   try {
     const posts = await loadPosts();
@@ -302,6 +306,7 @@ async function initInvestigationDetail() {
 async function initMarkdownArticles() {
   const article = document.querySelector("[data-markdown-article]");
   if (!article) return;
+  article.innerHTML = renderLoadingState("Looking up article...");
 
   try {
     const source = article.getAttribute("data-markdown-src");
@@ -320,6 +325,8 @@ async function initMapPage() {
   const list = document.querySelector("[data-map-list]");
   const canvas = document.querySelector("[data-map-canvas]");
   if (!list || !canvas) return;
+  list.innerHTML = renderLoadingState("Looking up map entries...");
+  canvas.innerHTML = renderLoadingState("Looking up map data...");
 
   const publicState = await getPublicState();
   if (!publicState.connected || !publicState.approvedEntities.length) {
@@ -342,8 +349,18 @@ async function renderComments(postSlug, publicState) {
   if (!panel) return;
 
   const comments = publicState.commentsByPost.get(postSlug) || [];
+  const threadedComments = buildCommentTree(comments);
   const isLoggedIn = Boolean(state.session);
   const isAdmin = Boolean(state.viewer && publicState.admins.includes(state.viewer.pubkey));
+  const currentUser = isLoggedIn && state.viewer
+    ? publicState.users.find((user) => user.pubkey === state.viewer.pubkey) || null
+    : null;
+  const replyTarget = state.commentReply?.postSlug === postSlug
+    ? comments.find((comment) => comment.id === state.commentReply.commentId) || null
+    : null;
+  if (state.commentReply?.postSlug === postSlug && !replyTarget) {
+    state.commentReply = null;
+  }
 
   panel.innerHTML = `
     <div class="comment-panel__head">
@@ -351,29 +368,45 @@ async function renderComments(postSlug, publicState) {
         <div class="eyebrow">Discussion</div>
         <h2>Comments</h2>
       </div>
-      <p>${comments.length} visible comment${comments.length === 1 ? "" : "s"}</p>
+      <p>${renderCommentCountLabel(comments.length)}</p>
     </div>
     ${
       isLoggedIn
         ? `
-          <form class="comment-form" data-comment-form>
-            <label>
-              <span>Add a comment</span>
-              <textarea name="markdown" placeholder="Keep it brief and tied to the post." required></textarea>
-            </label>
-            <div class="button-row">
-              <button class="button" type="submit">Post comment</button>
-            </div>
-            <div class="status-box" data-comment-status></div>
-          </form>
+          <section class="comment-composer">
+            ${renderAvatarBadge(currentUser, state.session?.username || "You", "comment-composer__avatar")}
+            <form class="comment-composer__form" data-comment-form>
+              <div class="comment-composer__head">
+                <strong>${replyTarget ? "Write a reply" : "Add a comment"}</strong>
+                <span>${replyTarget ? "Your reply will appear under the selected comment." : "Keep it specific and tied to the post."}</span>
+              </div>
+              ${
+                replyTarget
+                  ? `
+                    <div class="comment-composer__reply">
+                      <span>Replying to ${escapeHtml(commentAuthorLabel(replyTarget, publicState))}</span>
+                      <button class="button-ghost" type="button" data-cancel-reply>Cancel</button>
+                    </div>
+                  `
+                  : ""
+              }
+              <label class="sr-only" for="commentComposerInput">Comment</label>
+              <textarea id="commentComposerInput" class="comment-composer__input" name="markdown" placeholder="${replyTarget ? "Write a reply..." : "Write a comment..."}" required></textarea>
+              <div class="comment-composer__footer">
+                <span class="muted-text">${replyTarget ? "Replying keeps the thread together." : "Comments show up with your profile."}</span>
+                <button class="button" type="submit">${replyTarget ? "Reply" : "Post comment"}</button>
+              </div>
+              <div class="status-box" data-comment-status aria-live="polite"></div>
+            </form>
+          </section>
         `
-        : `<div class="empty-state">Log in to join the discussion.</div>`
+        : `<div class="empty-state">Log in to comment or reply.</div>`
     }
     ${
-      comments.length
-        ? `<div class="comment-list">${comments.map((comment) => renderComment(comment, publicState, isAdmin)).join("")}</div>`
+      threadedComments.length
+        ? `<div class="comment-list">${threadedComments.map((comment) => renderComment(comment, publicState, { isAdmin, canReply: isLoggedIn })).join("")}</div>`
         : isLoggedIn
-          ? `<div class="comment-list"><div class="empty-state">No comments yet.</div></div>`
+          ? `<div class="comment-list"><div class="empty-state">No comments yet. Start the discussion.</div></div>`
           : ""
     }
   `;
@@ -384,25 +417,41 @@ async function renderComments(postSlug, publicState) {
       event.preventDefault();
       const status = panel.querySelector("[data-comment-status]");
       const textarea = form.elements.namedItem("markdown");
+      const submitButton = form.querySelector('button[type="submit"]');
       const markdown = String(textarea?.value || "").trim();
       if (!markdown) return;
+      const activeReply = state.commentReply?.postSlug === postSlug
+        ? comments.find((comment) => comment.id === state.commentReply.commentId) || null
+        : null;
+      const parentId = activeReply?.id || "";
+      const rootId = activeReply ? String(activeReply.root_id || activeReply.parent_id || activeReply.id || "").trim() : "";
 
       try {
         const viewer = await getViewer();
+        if (submitButton instanceof HTMLButtonElement) submitButton.disabled = true;
+        if (status) {
+          status.textContent = activeReply ? "Posting reply..." : "Posting comment...";
+          status.dataset.state = "pending";
+        }
         await publishTaggedJson({
           kind: SITE.nostr.kinds.comment,
           secretKeyHex: state.session.secretKeyHex,
-          tags: [["d", `comment-${Date.now()}`], ["a", postSlug]],
+          tags: [
+            ["d", `comment-${Date.now()}`],
+            ["a", postSlug],
+            ...(parentId ? [["e", parentId], ["parent", parentId]] : []),
+            ...(rootId ? [["root", rootId]] : [])
+          ],
           content: {
             post_slug: postSlug,
-            markdown
+            markdown,
+            parent_id: parentId,
+            root_id: rootId
           }
         });
-        if (status) {
-          status.textContent = "Comment published.";
-          status.dataset.state = "success";
-        }
         form.reset();
+        state.commentReply = null;
+        panel.innerHTML = renderLoadingState("Looking up discussion...");
         state.publicState = await loadPublicState(true);
         state.viewer = viewer;
         await renderComments(postSlug, state.publicState);
@@ -411,13 +460,36 @@ async function renderComments(postSlug, publicState) {
           status.textContent = String(error?.message || error || "Comment failed.");
           status.dataset.state = "error";
         }
+      } finally {
+        if (submitButton instanceof HTMLButtonElement) submitButton.disabled = false;
       }
+    });
+  }
+
+  for (const replyButton of panel.querySelectorAll("[data-reply-comment]")) {
+    replyButton.addEventListener("click", async () => {
+      state.commentReply = {
+        postSlug,
+        commentId: replyButton.getAttribute("data-reply-comment") || ""
+      };
+      await renderComments(postSlug, publicState);
+      const input = panel.querySelector("#commentComposerInput");
+      if (input instanceof HTMLTextAreaElement) input.focus();
+    });
+  }
+
+  const cancelReply = panel.querySelector("[data-cancel-reply]");
+  if (cancelReply) {
+    cancelReply.addEventListener("click", async () => {
+      state.commentReply = null;
+      await renderComments(postSlug, publicState);
     });
   }
 
   for (const button of panel.querySelectorAll("[data-hide-comment]")) {
     button.addEventListener("click", async () => {
       try {
+        panel.innerHTML = renderLoadingState("Looking up discussion...");
         await publishTaggedJson({
           kind: SITE.nostr.kinds.commentMod,
           secretKeyHex: state.session.secretKeyHex,
@@ -436,22 +508,112 @@ async function renderComments(postSlug, publicState) {
   }
 }
 
-function renderComment(comment, publicState, isAdmin) {
+function renderComment(comment, publicState, options = {}, depth = 0) {
   const author = publicState.users.find((user) => user.pubkey === comment.author);
   const authorLabel = author?.displayName || author?.username || "User";
+  const replies = Array.isArray(comment.replies) ? comment.replies : [];
   return `
-    <article class="comment-card">
-      <div class="comment-card__meta">
-        <strong>${escapeHtml(authorLabel)}</strong>
-        <span>${formatDateTime(comment.created_at)}</span>
+    <article class="comment-card ${depth ? "comment-card--reply" : ""}" data-comment-id="${escapeAttribute(comment.id)}">
+      <div class="comment-card__shell">
+        ${renderAvatarBadge(author, authorLabel, "comment-card__avatar")}
+        <div class="comment-card__main">
+          <div class="comment-card__meta">
+            <div>
+              <strong>${escapeHtml(authorLabel)}</strong>
+              <span>${formatDateTime(comment.created_at)}</span>
+            </div>
+          </div>
+          <div class="comment-card__body">${renderMiniMarkdown(comment.markdown)}</div>
+          <div class="comment-card__actions">
+            ${options.canReply ? `<button type="button" class="button-ghost" data-reply-comment="${escapeAttribute(comment.id)}">Reply</button>` : ""}
+            ${options.isAdmin ? `<button type="button" class="button-ghost" data-hide-comment="${escapeAttribute(comment.id)}">Hide</button>` : ""}
+          </div>
+          ${
+            replies.length
+              ? `<div class="comment-card__children">${replies.map((reply) => renderComment(reply, publicState, options, depth + 1)).join("")}</div>`
+              : ""
+          }
+        </div>
       </div>
-      <div class="comment-card__body">${renderMiniMarkdown(comment.markdown)}</div>
-      ${isAdmin ? `<div class="comment-card__actions"><button type="button" class="button-ghost" data-hide-comment="${escapeAttribute(comment.id)}">Hide</button></div>` : ""}
     </article>
   `;
 }
 
+function buildCommentTree(comments) {
+  const nodes = new Map(
+    (Array.isArray(comments) ? comments : []).map((comment) => [
+      comment.id,
+      {
+        ...comment,
+        replies: []
+      }
+    ])
+  );
+  const roots = [];
+  for (const node of nodes.values()) {
+    const parentId = String(node.parent_id || "").trim();
+    const parent = parentId ? nodes.get(parentId) : null;
+    if (parent && parent.post_slug === node.post_slug) {
+      if (!node.root_id) node.root_id = parent.root_id || parent.id;
+      parent.replies.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  sortCommentNodes(roots);
+  return roots;
+}
+
+function sortCommentNodes(nodes) {
+  nodes.sort((left, right) => {
+    const leftTime = Number(left?.created_at || 0);
+    const rightTime = Number(right?.created_at || 0);
+    if (leftTime !== rightTime) return leftTime - rightTime;
+    return String(left?.id || "").localeCompare(String(right?.id || ""));
+  });
+  for (const node of nodes) {
+    if (Array.isArray(node.replies) && node.replies.length) sortCommentNodes(node.replies);
+  }
+}
+
+function renderCommentCountLabel(count) {
+  return `${count} visible comment${count === 1 ? "" : "s"}`;
+}
+
+function commentAuthorLabel(comment, publicState) {
+  const author = publicState.users.find((user) => user.pubkey === comment.author);
+  return author?.displayName || author?.username || "User";
+}
+
+function renderAvatarBadge(user, fallbackLabel, className) {
+  const label = user?.displayName || user?.username || fallbackLabel || "Profile";
+  if (user?.avatarUrl) {
+    const blob = user.avatarBlob;
+    const blobAttrs = blob?.sha256
+      ? ` data-avatar-sha="${escapeAttribute(blob.sha256)}" data-avatar-url="${escapeAttribute(blob.url || user.avatarUrl)}" data-avatar-type="${escapeAttribute(blob.type || "")}" data-avatar-name="${escapeAttribute(blob.name || "")}"`
+      : "";
+    return `<span class="${className} ${className}--image"><img src="${escapeAttribute(user.avatarUrl)}" alt="${escapeAttribute(label)}"${blobAttrs}></span>`;
+  }
+  return `<span class="${className}">${escapeHtml(profileInitials(label))}</span>`;
+}
+
 function renderInvestigationCard(post, compact) {
+  if (!compact) {
+    return `
+      <article class="investigation-card investigation-card--list">
+        <div class="investigation-card__body">
+          <div class="eyebrow">Case file</div>
+          <h3><a href="./investigation.html?slug=${encodeURIComponent(post.slug)}">${escapeHtml(post.title)}</a></h3>
+          <p class="card-meta">${escapeHtml(post.location)} <span>${escapeHtml(formatDate(post.date))}</span></p>
+          <p class="card-summary">${escapeHtml(post.summary)}</p>
+          <div class="tag-row">${renderTagList((post.tags || []).slice(0, 4))}</div>
+        </div>
+        <div class="investigation-card__rail">
+          <a class="text-link" href="./investigation.html?slug=${encodeURIComponent(post.slug)}">Open investigation</a>
+        </div>
+      </article>
+    `;
+  }
   return `
     <article class="investigation-card ${compact ? "investigation-card--compact" : ""}">
       <div class="eyebrow">Case file</div>
@@ -756,6 +918,15 @@ async function fetchText(path) {
 function renderError(node, message) {
   if (!node) return;
   node.innerHTML = `<div class="empty-state">${escapeHtml(message)}</div>`;
+}
+
+function renderLoadingState(message) {
+  return `
+    <div class="loading-state loading-state--panel" role="status" aria-live="polite">
+      <span class="loading-spinner" aria-hidden="true"></span>
+      <span>${escapeHtml(message)}</span>
+    </div>
+  `;
 }
 
 function renderTagList(tags) {

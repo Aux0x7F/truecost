@@ -45,7 +45,11 @@ function bindSubmitPage() {
     }
 
     if (target.closest("[data-open-submission-chat]")) {
-      submitState.chatModal = { submissionId: target.getAttribute("data-open-submission-chat") || "" };
+      submitState.chatModal = {
+        submissionId: target.getAttribute("data-open-submission-chat") || "",
+        loading: true,
+        messages: []
+      };
       renderSubmitPage();
       await hydrateChatModal();
       return;
@@ -98,11 +102,19 @@ async function refreshSubmitPage(force = false) {
     renderSubmitPage();
     return;
   }
+  renderSubmitLoading("Looking up your submissions...");
   await ensureEventToolsLoaded();
   submitState.viewer = deriveIdentity(submitState.session.secretKeyHex);
   submitState.publicState = await loadPublicState(force);
   submitState.submissions = await loadUserSubmissions(submitState.session.secretKeyHex).catch(() => []);
   renderSubmitPage();
+}
+
+function renderSubmitLoading(message) {
+  const shell = document.querySelector("[data-submit-shell]");
+  const lede = document.querySelector("[data-submit-lede]");
+  if (lede) lede.textContent = message;
+  if (shell) shell.innerHTML = renderLoadingState(message);
 }
 
 function renderSubmitPage() {
@@ -285,6 +297,7 @@ function renderSubmissionChatModal() {
   if (!submitState.chatModal) return "";
   const submission = submitState.submissions.find((item) => item.id === submitState.chatModal.submissionId);
   const messages = submitState.chatModal.messages || [];
+  const loading = submitState.chatModal.loading;
   return `
     <div class="modal-backdrop">
       <section class="modal-card modal-card--wide">
@@ -297,7 +310,9 @@ function renderSubmissionChatModal() {
         </div>
         <div class="chat-thread">
           ${
-            messages.length
+            loading
+              ? renderLoadingState("Looking up chat...")
+              : messages.length
               ? messages
                   .map(
                     (message) => `
@@ -377,11 +392,14 @@ async function handleSubmissionSave(form) {
 
 async function hydrateChatModal() {
   if (!submitState.chatModal || !activeSitePubkey()) return;
+  submitState.chatModal.loading = true;
+  renderSubmitPage();
   submitState.chatModal.messages = await loadSubmissionThread(
     submitState.session.secretKeyHex,
     submitState.chatModal.submissionId,
     knownSitePubkeys()
   ).catch(() => []);
+  submitState.chatModal.loading = false;
   renderSubmitPage();
 }
 
@@ -657,4 +675,13 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value).replace(/`/g, "");
+}
+
+function renderLoadingState(message) {
+  return `
+    <div class="loading-state loading-state--panel" role="status" aria-live="polite">
+      <span class="loading-spinner" aria-hidden="true"></span>
+      <span>${escapeHtml(message)}</span>
+    </div>
+  `;
 }

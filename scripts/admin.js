@@ -127,7 +127,9 @@ function bindWorkspace() {
     if (openChat) {
       workspaceState.chatModal = {
         submissionId: openChat.getAttribute("data-open-chat") || "",
-        targetPubkey: openChat.getAttribute("data-chat-target") || ""
+        targetPubkey: openChat.getAttribute("data-chat-target") || "",
+        loading: true,
+        messages: []
       };
       renderWorkspace();
       await hydrateChatModal();
@@ -177,6 +179,7 @@ function bindWorkspace() {
 }
 
 async function refreshWorkspace(force = false) {
+  renderWorkspaceLoading(workspaceState.session ? "Looking up workspace..." : "Looking up account...");
   await ensureEventToolsLoaded();
   workspaceState.session = getStoredSession();
   workspaceState.viewer = workspaceState.session
@@ -200,6 +203,13 @@ async function refreshWorkspace(force = false) {
   workspaceState.staticSlugs = await loadStaticSlugs().catch(() => []);
   workspaceState.activeTab = chooseInitialTab(workspaceState.activeTab);
   renderWorkspace();
+}
+
+function renderWorkspaceLoading(message) {
+  const shell = document.querySelector("[data-workspace-shell]");
+  const lede = document.querySelector("[data-workspace-lede]");
+  if (lede) lede.textContent = message;
+  if (shell) shell.innerHTML = renderLoadingState(message);
 }
 
 function renderWorkspace() {
@@ -830,6 +840,7 @@ function renderChatModal() {
   if (!workspaceState.chatModal) return "";
   const submission = workspaceState.inboxSubmissions.find((item) => item.id === workspaceState.chatModal.submissionId);
   const messages = workspaceState.chatModal.messages || [];
+  const loading = workspaceState.chatModal.loading;
   return `
     <div class="modal-backdrop">
       <section class="modal-card modal-card--wide">
@@ -842,7 +853,9 @@ function renderChatModal() {
         </div>
         <div class="chat-thread">
           ${
-            messages.length
+            loading
+              ? renderLoadingState("Looking up chat...")
+              : messages.length
               ? messages
                   .map(
                     (message) => `
@@ -1181,11 +1194,14 @@ async function handleSnapshotRequest(button) {
 
 async function hydrateChatModal() {
   if (!workspaceState.chatModal || !currentUserHasInboxAccess()) return;
+  workspaceState.chatModal.loading = true;
+  renderWorkspace();
   workspaceState.chatModal.messages = await loadSubmissionThread(
     workspaceState.siteKeyShares,
     workspaceState.chatModal.submissionId,
     workspaceState.chatModal.targetPubkey
   ).catch(() => []);
+  workspaceState.chatModal.loading = false;
   renderWorkspace();
 }
 
@@ -1359,17 +1375,22 @@ function lastCommaValue(value) {
 }
 
 function chooseInitialTab(current) {
-  const valid = new Set(tabButtons().map((tab) => tab.id));
-  const requested = cleanSlug(new URLSearchParams(window.location.search).get("tab") || current);
-  if (requested && valid.has(requested)) return requested;
-  return currentUserIsAdmin() ? "dashboard" : "profile";
+  const requested = cleanSlug(new URLSearchParams(window.location.search).get("tab") || "");
+  return normalizeWorkspaceTab(requested || current);
 }
 
 function setActiveTab(tab) {
-  workspaceState.activeTab = chooseInitialTab(tab);
+  workspaceState.activeTab = normalizeWorkspaceTab(tab);
   const url = new URL(window.location.href);
   url.searchParams.set("tab", workspaceState.activeTab);
   history.replaceState({}, "", url);
+}
+
+function normalizeWorkspaceTab(value) {
+  const valid = new Set(tabButtons().map((tab) => tab.id));
+  const requested = cleanSlug(value);
+  if (requested && valid.has(requested)) return requested;
+  return currentUserIsAdmin() ? "dashboard" : "profile";
 }
 
 function tabButtons() {
@@ -1566,8 +1587,8 @@ function regroupComments(comments, key) {
 }
 
 async function rotateSiteInboxKey(excludedPubkeys = [], reason = "rotation") {
-  if (!workspaceState.session || !workspaceState.siteKeyShare) {
-    throw new Error("Load the current site inbox key share before rotating it.");
+  if (!workspaceState.session || !currentUserIsAdmin()) {
+    throw new Error("Only an active admin can rotate the shared inbox key.");
   }
   const nextSiteSecretKeyHex = await generateSecretKeyHex();
   const previousSitePubkey = activeSitePubkey();
@@ -1596,6 +1617,15 @@ async function loadStaticSlugs() {
 
 function dedupe(values) {
   return [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
+function renderLoadingState(message) {
+  return `
+    <div class="loading-state loading-state--panel" role="status" aria-live="polite">
+      <span class="loading-spinner" aria-hidden="true"></span>
+      <span>${escapeHtml(message)}</span>
+    </div>
+  `;
 }
 
 function trimmed(value, length) {
