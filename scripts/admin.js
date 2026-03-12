@@ -1,0 +1,1637 @@
+import SITE from "./core/site-config.js";
+import { buildDraftMarkdown, createUniqueSlug, splitTags } from "./core/content-utils.js";
+import {
+  cleanSlug,
+  decryptUploadedBlob,
+  deriveIdentity,
+  ensureEventToolsLoaded,
+  generateSecretKeyHex,
+  loadAdminKeyShares,
+  loadAdminKeyShare,
+  loadInboxSubmissions,
+  loadPublicState,
+  loadSubmissionThread,
+  publishAdminKeyShare,
+  publishSiteKeyEvent,
+  publishSubmissionChat,
+  publishTaggedJson,
+  resolveSitePubkey,
+  shortKey,
+  uploadPublicBlob
+} from "./core/nostr.js";
+import { getStoredSession, rebroadcastAccount, signInWithCredentials } from "./core/session.js";
+
+const workspaceState = {
+  session: getStoredSession(),
+  viewer: null,
+  publicState: null,
+  siteKeyShares: [],
+  siteKeyShare: null,
+  inboxSubmissions: [],
+  staticSlugs: [],
+  activeTab: "login",
+  entityModal: null,
+  chatModal: null,
+  exportValue: "",
+  dashboardStatus: ""
+};
+
+document.addEventListener("DOMContentLoaded", () => {
+  if (!document.querySelector("[data-workspace-page]")) return;
+  bindWorkspace();
+  void refreshWorkspace();
+});
+
+function bindWorkspace() {
+  const shell = document.querySelector("[data-workspace-shell]");
+  if (!shell) return;
+
+  shell.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+
+    const tab = target.closest("[data-workspace-tab]");
+    if (tab) {
+      setActiveTab(tab.getAttribute("data-workspace-tab") || "profile");
+      renderWorkspace();
+      return;
+    }
+
+    const openEntityModal = target.closest("[data-open-entity-modal]");
+    if (openEntityModal) {
+      workspaceState.entityModal = createEntityModalState(openEntityModal);
+      renderWorkspace();
+      return;
+    }
+
+    if (target.closest("[data-load-draft]")) {
+      const slug = target.getAttribute("data-load-draft") || "";
+      loadDraft(slug);
+      return;
+    }
+
+    if (target.closest("[data-copy-export]")) {
+      await copyExport();
+      return;
+    }
+
+    const moderationButton = target.closest("[data-user-action]");
+    if (moderationButton) {
+      await handleUserAction(moderationButton);
+      return;
+    }
+
+    const entityAction = target.closest("[data-entity-action]");
+    if (entityAction) {
+      await handleEntityAction(entityAction);
+      return;
+    }
+
+    const commentAction = target.closest("[data-comment-action]");
+    if (commentAction) {
+      await handleCommentAction(commentAction);
+      return;
+    }
+
+    const entityPick = target.closest("[data-entity-pick]");
+    if (entityPick) {
+      applyEntityPick(entityPick);
+      return;
+    }
+
+    const locationPick = target.closest("[data-location-pick]");
+    if (locationPick) {
+      applyLocationPick(locationPick);
+      return;
+    }
+
+    const submissionAction = target.closest("[data-submission-action]");
+    if (submissionAction) {
+      await handleSubmissionAction(submissionAction);
+      return;
+    }
+
+    const attachmentAction = target.closest("[data-download-attachment]");
+    if (attachmentAction) {
+      await handleAttachmentDownload(attachmentAction);
+      return;
+    }
+
+    const snapshotRequest = target.closest("[data-request-snapshot]");
+    if (snapshotRequest) {
+      await handleSnapshotRequest(snapshotRequest);
+      return;
+    }
+
+    const openChat = target.closest("[data-open-chat]");
+    if (openChat) {
+      workspaceState.chatModal = {
+        submissionId: openChat.getAttribute("data-open-chat") || "",
+        targetPubkey: openChat.getAttribute("data-chat-target") || ""
+      };
+      renderWorkspace();
+      await hydrateChatModal();
+      return;
+    }
+
+    if (target.closest("[data-modal-close]")) {
+      workspaceState.entityModal = null;
+      workspaceState.chatModal = null;
+      renderWorkspace();
+    }
+  });
+
+  shell.addEventListener("submit", async (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    event.preventDefault();
+
+    if (form.matches("[data-login-form]")) {
+      await handleLogin(form);
+      return;
+    }
+    if (form.matches("[data-profile-form]")) {
+      await handleProfileSave(form);
+      return;
+    }
+    if (form.matches("[data-entity-form]")) {
+      await handleEntitySave(form);
+      return;
+    }
+    if (form.matches("[data-draft-form]")) {
+      await handleDraftSave(form);
+      return;
+    }
+    if (form.matches("[data-chat-form]")) {
+      await handleChatSend(form);
+    }
+  });
+
+  shell.addEventListener("input", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.matches("[data-entity-picker-input], [data-location-input]")) {
+      hydrateWorkspaceEnhancements();
+    }
+  });
+}
+
+async function refreshWorkspace(force = false) {
+  await ensureEventToolsLoaded();
+  workspaceState.session = getStoredSession();
+  workspaceState.viewer = workspaceState.session
+    ? deriveIdentity(workspaceState.session.secretKeyHex)
+    : null;
+  workspaceState.publicState = await loadPublicState(force);
+  workspaceState.siteKeyShares = workspaceState.session
+    ? await loadAdminKeyShares(workspaceState.session.secretKeyHex).catch(() => [])
+    : [];
+  workspaceState.siteKeyShare = workspaceState.session
+    ? await loadAdminKeyShare(
+        workspaceState.session.secretKeyHex,
+        resolveSitePubkey(workspaceState.publicState)
+      ).catch(() => null)
+    : null;
+  if (currentUserHasInboxAccess()) {
+    workspaceState.inboxSubmissions = await loadInboxSubmissions(workspaceState.siteKeyShares).catch(() => []);
+  } else {
+    workspaceState.inboxSubmissions = [];
+  }
+  workspaceState.staticSlugs = await loadStaticSlugs().catch(() => []);
+  workspaceState.activeTab = chooseInitialTab(workspaceState.activeTab);
+  renderWorkspace();
+}
+
+function renderWorkspace() {
+  const shell = document.querySelector("[data-workspace-shell]");
+  const title = document.querySelector("[data-workspace-title]");
+  const lede = document.querySelector("[data-workspace-lede]");
+  if (!shell || !title || !lede) return;
+
+  if (!workspaceState.session) {
+    title.textContent = "Log in";
+    lede.textContent = "Use a username and password to derive the same keypair each time, then sync your profile and shared account record.";
+    shell.innerHTML = renderLoginPane();
+    return;
+  }
+
+  const admin = currentUserIsAdmin();
+  title.textContent = admin ? "Workspace" : "Profile options";
+  lede.textContent = admin
+    ? "Manage the shared roster, review submission intake, publish entities, and stage markdown drafts."
+    : "Update your shared profile, review your comment history, and keep your account record synced.";
+
+  shell.innerHTML = `
+    <div class="workspace-tabs">
+      ${tabButtons().map((tab) => renderTabButton(tab)).join("")}
+    </div>
+    <div class="workspace-pane">
+      ${renderActivePane()}
+    </div>
+    ${renderEntityModal()}
+    ${renderChatModal()}
+  `;
+  hydrateWorkspaceEnhancements();
+}
+
+function renderLoginPane() {
+  return `
+    <section class="surface-panel workspace-auth">
+      <form class="tip-form" data-login-form>
+        <label>
+          <span>Username</span>
+          <input name="username" type="text" maxlength="40" placeholder="field-notes" required>
+        </label>
+        <label>
+          <span>Password</span>
+          <input name="password" type="password" maxlength="120" placeholder="••••••••" required>
+        </label>
+        <div class="button-row">
+          <button class="button" type="submit">Log in</button>
+        </div>
+        <div class="status-box" data-workspace-status>Credentials derive the same keypair every time for this site namespace.</div>
+      </form>
+    </section>
+  `;
+}
+
+function renderActivePane() {
+  switch (workspaceState.activeTab) {
+    case "dashboard":
+      return renderDashboardPane();
+    case "users":
+      return renderUsersPane();
+    case "submissions":
+      return renderSubmissionsPane();
+    case "entities":
+      return renderEntitiesPane();
+    case "drafts":
+      return renderDraftsPane();
+    case "log":
+      return renderLogPane();
+    case "comments":
+      return renderCommentsPane();
+    case "profile":
+    default:
+      return renderProfilePane();
+  }
+}
+
+function renderDashboardPane() {
+  const metrics = workspaceState.publicState?.metrics || {};
+  const locationCount = new Set(
+    (workspaceState.publicState?.approvedEntities || []).map((entity) => entity.location).filter(Boolean)
+  ).size;
+  const snapshot = workspaceState.publicState?.snapshotInfo || null;
+  return `
+    <div class="workspace-grid">
+      <section class="metric-grid">
+        <article class="metric-card"><strong>${metrics.visitorCount24h || 0}</strong><p>Visitors (24h)</p></article>
+        <article class="metric-card"><strong>${metrics.visitorCount7d || 0}</strong><p>Visitors (7d)</p></article>
+        <article class="metric-card"><strong>${metrics.userCount || 0}</strong><p>Known users</p></article>
+        <article class="metric-card"><strong>${metrics.submissionCount || 0}</strong><p>Submission threads</p></article>
+        <article class="metric-card"><strong>${locationCount}</strong><p>Tracked locations</p></article>
+        <article class="metric-card"><strong>${metrics.approvedEntityCount || 0}</strong><p>Approved entities</p></article>
+        <article class="metric-card"><strong>${metrics.commentCount || 0}</strong><p>Visible comments</p></article>
+        <article class="metric-card"><strong>${metrics.visitEventCount7d || 0}</strong><p>Visit pulses (7d)</p></article>
+      </section>
+      <section class="surface-panel">
+        <div class="eyebrow">Snapshot</div>
+        <h2>Seed bakedown</h2>
+        <p class="muted-text">Request a peer-pinner bakedown of approved entities and public posts into seed files, with an optional GitHub PR when the operator has configured repo access.</p>
+        <div class="button-row">
+          <button class="button" type="button" data-request-snapshot>Request bakedown</button>
+        </div>
+        <div class="status-box">${escapeHtml(workspaceState.dashboardStatus || "No bakedown request sent in this session.")}</div>
+        ${renderSnapshotSummary(snapshot)}
+      </section>
+    </div>
+  `;
+}
+
+function renderProfilePane() {
+  const current = currentUser();
+  const comments = workspaceState.publicState?.commentsByAuthor.get(workspaceState.viewer?.pubkey || "") || [];
+  return `
+    <div class="workspace-grid">
+      <section class="surface-panel">
+        <div class="eyebrow">Profile</div>
+        <h2>Shared account details</h2>
+        <form class="tip-form" data-profile-form>
+          <label>
+            <span>Display name</span>
+            <input name="displayName" type="text" maxlength="80" value="${escapeAttribute(current?.displayName || "")}">
+          </label>
+          <label>
+            <span>Bio</span>
+            <textarea name="bio" placeholder="Short bio">${escapeHtml(current?.bio || "")}</textarea>
+          </label>
+          <label>
+            <span>Avatar URL</span>
+            <input name="avatarUrl" type="url" placeholder="https://example.org/avatar.jpg" value="${escapeAttribute(current?.avatarUrl || "")}">
+          </label>
+          <label>
+            <span>Avatar upload</span>
+            <input name="avatarFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif">
+          </label>
+          <label>
+            <span>Social links</span>
+            <textarea name="socialLinks" placeholder="One URL per line">${escapeHtml((current?.socialLinks || []).join("\n"))}</textarea>
+          </label>
+          <div class="button-row">
+            <button class="button" type="submit">Save profile</button>
+          </div>
+          <div class="status-box" data-workspace-status>Your username claim is rebroadcast when you save.</div>
+          <p class="muted-text">Upload a clear avatar to the cache layer, or keep using a stable image URL.</p>
+        </form>
+        ${
+          currentUserIsAdmin()
+            ? `<p class="muted-text">${renderSiteKeyShareStatus()}</p>`
+            : ""
+        }
+      </section>
+      <section class="surface-panel">
+        <div class="eyebrow">Comment history</div>
+        <h2>Recent comments</h2>
+        <div class="roster-list">
+          ${
+            comments.length
+              ? comments
+                  .slice()
+                  .reverse()
+                  .map(
+                    (comment) => `
+                      <article class="roster-item">
+                        <strong>${escapeHtml(comment.post_slug)}</strong>
+                        <span>${escapeHtml(trimmed(comment.markdown, 180))}</span>
+                      </article>
+                    `
+                  )
+                  .join("")
+              : `<div class="empty-state">No comment history yet.</div>`
+          }
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderUsersPane() {
+  return `
+    <section class="surface-panel">
+      <div class="eyebrow">User Management</div>
+      <h2>Shared roster</h2>
+      <div class="roster-list">
+        ${
+          (workspaceState.publicState?.users || [])
+            .map((user) => renderUserCard(user))
+            .join("") || `<div class="empty-state">No users visible yet.</div>`
+        }
+      </div>
+    </section>
+  `;
+}
+
+function renderUserCard(user) {
+  const isRootAdmin = user.pubkey === workspaceState.publicState?.rootAdminPubkey;
+  const canChangeAdmin = currentUserIsAdmin() && !isRootAdmin && user.pubkey !== workspaceState.viewer?.pubkey;
+  return `
+    <article class="roster-item">
+      <div class="workspace-list__row">
+        <div>
+          <strong>${escapeHtml(user.displayName)}</strong>
+          <span>${user.username ? `@${escapeHtml(user.username)}` : shortKey(user.pubkey)}</span>
+        </div>
+        <div class="tag-row">
+          ${user.isAdmin ? `<span class="tag">admin</span>` : ""}
+          ${user.moderation ? `<span class="tag">${escapeHtml(user.moderation.action)}</span>` : ""}
+        </div>
+      </div>
+      <span>${user.submissionCount} submissions • ${user.commentCount} comments</span>
+      <span class="mono">${user.pubkey}</span>
+      ${
+        currentUserIsAdmin()
+          ? `
+            <div class="button-row button-row--tight">
+              ${
+                canChangeAdmin
+                  ? `<button class="button-ghost" type="button" data-user-action="admin" data-target-pubkey="${user.pubkey}" ${user.isAdmin ? 'data-mode="revoke"' : 'data-mode="grant"'}>${user.isAdmin ? "Remove admin" : "Make admin"}</button>`
+                  : isRootAdmin
+                    ? `<span class="tag">root admin</span>`
+                    : ""
+              }
+              ${
+                user.isAdmin && user.pubkey !== workspaceState.viewer?.pubkey && workspaceState.siteKeyShare
+                  ? `<button class="button-ghost" type="button" data-user-action="share-site-key" data-target-pubkey="${user.pubkey}">Share site key</button>`
+                  : ""
+              }
+              <button class="button-ghost" type="button" data-user-action="mod" data-target-pubkey="${user.pubkey}" data-mode="temp-ban">Temp ban</button>
+              <button class="button-ghost" type="button" data-user-action="mod" data-target-pubkey="${user.pubkey}" data-mode="full-ban">Full ban</button>
+              <button class="button-ghost" type="button" data-user-action="mod" data-target-pubkey="${user.pubkey}" data-mode="clear">Clear</button>
+            </div>
+          `
+          : ""
+      }
+    </article>
+  `;
+}
+
+function renderLogEvent(event) {
+  const target = logTarget(event);
+  return `
+    <article class="roster-item">
+      <strong>${escapeHtml(logLabel(event))}</strong>
+      <span>${escapeHtml(target.description)}</span>
+      <div class="button-row button-row--tight">
+        <a class="text-link" href="${target.href}">Open</a>
+      </div>
+    </article>
+  `;
+}
+
+function renderSubmissionsPane() {
+  if (currentUserHasInboxAccess()) {
+    return `
+      <section class="surface-panel">
+        <div class="eyebrow">Encrypted submissions</div>
+        <h2>Shared inbox</h2>
+        <div class="roster-list">
+          ${
+            workspaceState.inboxSubmissions.length
+              ? workspaceState.inboxSubmissions.map((item) => renderSubmissionCard(item)).join("")
+              : `<div class="empty-state">No submissions decrypted from the inbox yet.</div>`
+          }
+        </div>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="surface-panel">
+      <div class="eyebrow">Submission intake</div>
+      <h2>Metadata view</h2>
+      <p class="muted-text">This admin key can manage public status events, but no inbox key share is currently loaded for it.</p>
+      <div class="roster-list">
+        ${
+          (workspaceState.publicState?.users || [])
+            .filter((user) => user.submissionCount > 0)
+            .map(
+              (user) => `
+                <article class="roster-item">
+                  <strong>${escapeHtml(user.displayName)}</strong>
+                  <span>${user.submissionCount} submission threads</span>
+                  <span class="mono">${user.pubkey}</span>
+                </article>
+              `
+            )
+            .join("") || `<div class="empty-state">No submission metadata visible yet.</div>`
+        }
+      </div>
+    </section>
+  `;
+}
+
+function renderLogPane() {
+  const logEvents = (workspaceState.publicState?.rawEvents || [])
+    .filter((event) =>
+      [
+        SITE.nostr.kinds.snapshot,
+        SITE.nostr.kinds.adminClaim,
+        SITE.nostr.kinds.adminRole,
+        SITE.nostr.kinds.userMod,
+        SITE.nostr.kinds.snapshotRequest,
+        SITE.nostr.kinds.entity,
+        SITE.nostr.kinds.draft,
+        SITE.nostr.kinds.commentMod,
+        SITE.nostr.kinds.submissionStatus,
+        SITE.nostr.kinds.adminKeyShare,
+        SITE.nostr.kinds.siteKey
+      ].includes(Number(event.kind))
+    )
+    .slice(0, 40);
+  return `
+    <section class="surface-panel">
+      <div class="eyebrow">Log</div>
+      <h2>Audit events</h2>
+      <div class="roster-list">
+        ${
+          logEvents.length
+            ? logEvents.map((event) => renderLogEvent(event)).join("")
+            : `<div class="empty-state">No audit events visible yet.</div>`
+        }
+      </div>
+    </section>
+  `;
+}
+
+function renderSubmissionCard(item) {
+  const latest = item.latest?.payload || {};
+  const status = workspaceState.publicState?.submissionStatuses.get(item.id)?.status || "received";
+  const entityRefs = Array.isArray(latest.entity_refs) ? latest.entity_refs : [];
+  return `
+    <article class="roster-item">
+      <div class="workspace-list__row">
+        <div>
+          <strong>${escapeHtml(latest.subject || "Untitled submission")}</strong>
+          <span>${escapeHtml(latest.location || "No location supplied")}</span>
+        </div>
+        <div class="tag-row">
+          <span class="tag">${escapeHtml(status)}</span>
+        </div>
+      </div>
+      <span>${escapeHtml(trimmed(latest.details || "", 180))}</span>
+      ${
+        entityRefs.length
+          ? `<span class="muted-text">Entities: ${escapeHtml(entityRefs.map(resolveEntityDisplayValue).join(", "))}</span>`
+          : ""
+      }
+      ${
+        latest.suggested_entity?.name
+          ? `<span class="muted-text">Suggested entity: ${escapeHtml(latest.suggested_entity.name)}${latest.suggested_entity.location ? ` • ${escapeHtml(latest.suggested_entity.location)}` : ""}</span>`
+          : ""
+      }
+      <span class="mono">${item.author}</span>
+      <div class="button-row button-row--tight">
+        <button class="button-ghost" type="button" data-submission-action="status" data-submission-id="${item.id}" data-author-pubkey="${item.author}" data-status="approved">Approve</button>
+        <button class="button-ghost" type="button" data-submission-action="status" data-submission-id="${item.id}" data-author-pubkey="${item.author}" data-status="rejected">Reject</button>
+        ${latest.attachment?.url ? `<button class="button-ghost" type="button" data-download-attachment="${item.id}">Attachment</button>` : ""}
+        <button class="button-ghost" type="button" data-open-chat="${item.id}" data-chat-target="${item.author}">Chat</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderEntitiesPane() {
+  return `
+    <section class="surface-panel">
+      <div class="workspace-list__row">
+        <div>
+          <div class="eyebrow">Entities</div>
+          <h2>Locations and targets</h2>
+        </div>
+        <button class="button" type="button" data-open-entity-modal>Add entity</button>
+      </div>
+      <div class="roster-list">
+        ${
+          (workspaceState.publicState?.entities || [])
+            .map(
+              (entity) => `
+                <article class="roster-item">
+                  <div class="workspace-list__row">
+                    <div>
+                      <strong>${escapeHtml(entity.name)}</strong>
+                      <span>${escapeHtml(entity.location)} • ${escapeHtml(entity.type)}</span>
+                    </div>
+                    <div class="tag-row">
+                      <span class="tag">${escapeHtml(entity.status)}</span>
+                    </div>
+                  </div>
+                  <span>${escapeHtml(entity.notes || "No public note yet.")}</span>
+                  ${
+                    currentUserIsAdmin()
+                      ? `
+                        <div class="button-row button-row--tight">
+                          <button class="button-ghost" type="button" data-entity-action="approve" data-entity-slug="${entity.slug}">Approve</button>
+                          <button class="button-ghost" type="button" data-entity-action="deny" data-entity-slug="${entity.slug}">Deny</button>
+                        </div>
+                      `
+                      : ""
+                  }
+                </article>
+              `
+            )
+            .join("") || `<div class="empty-state">No entities published yet.</div>`
+        }
+      </div>
+    </section>
+  `;
+}
+
+function renderDraftsPane() {
+  return `
+    <div class="workspace-grid">
+      <section class="surface-panel">
+        <div class="eyebrow">Draft post</div>
+        <h2>Markdown export</h2>
+        <form class="tip-form" data-draft-form>
+          <label>
+            <span>Title</span>
+            <input name="title" type="text" maxlength="140" placeholder="Placeholder title" required>
+          </label>
+          <div class="tip-form__split">
+            <label>
+              <span>Date</span>
+              <input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}">
+            </label>
+            <label>
+              <span>Status</span>
+              <input name="status" type="text" value="draft">
+            </label>
+          </div>
+          <label>
+            <span>Summary</span>
+            <textarea name="summary" placeholder="Short archive summary"></textarea>
+          </label>
+          <div class="tip-form__split">
+            <label>
+              <span>Tags</span>
+              <input name="tags" type="text" placeholder="placeholder, archive-demo">
+            </label>
+            <label>
+              <span>Primary entity</span>
+              <input name="primaryEntity" type="text" data-entity-picker-input="primaryEntity" placeholder="Search existing entities">
+              <div class="picker-results" data-entity-picker-results="primaryEntity"></div>
+            </label>
+          </div>
+          <label>
+            <span>Related entities</span>
+            <input name="entityRefs" type="text" data-entity-picker-input="entityRefs" placeholder="Comma-separated slugs or names">
+            <div class="picker-results" data-entity-picker-results="entityRefs"></div>
+          </label>
+          <label>
+            <span>Markdown body</span>
+            <textarea name="markdown" placeholder="# Title&#10;&#10;Lorem ipsum..." required></textarea>
+          </label>
+          <div class="button-row">
+            <button class="button" type="submit">Publish draft</button>
+            <button class="button-ghost" type="button" data-open-entity-modal data-entity-seed-from="primaryEntity">Create entity</button>
+            <button class="button-ghost" type="button" data-open-entity-modal>Add entity</button>
+          </div>
+        </form>
+        <label class="draft-export">
+          <span>Markdown export</span>
+          <textarea data-draft-export>${escapeHtml(workspaceState.exportValue)}</textarea>
+        </label>
+        <div class="button-row">
+          <button class="button-ghost" type="button" data-copy-export>Copy markdown export</button>
+        </div>
+      </section>
+      <section class="surface-panel">
+        <div class="eyebrow">Published drafts</div>
+        <h2>Relay draft list</h2>
+        <div class="roster-list">
+          ${
+            (workspaceState.publicState?.drafts || [])
+              .map(
+                (draft) => `
+                  <button class="roster-item roster-item--button" type="button" data-load-draft="${draft.slug}">
+                    <strong>${escapeHtml(draft.title)}</strong>
+                    <span>${escapeHtml(draft.status)} • ${escapeHtml(draft.date)}</span>
+                  </button>
+                `
+              )
+              .join("") || `<div class="empty-state">No drafts published yet.</div>`
+          }
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderCommentsPane() {
+  const ownComments = workspaceState.publicState?.commentsByAuthor.get(workspaceState.viewer?.pubkey || "") || [];
+  if (currentUserIsAdmin()) {
+    const allComments = (workspaceState.publicState?.allComments || []).slice().reverse();
+    const hiddenCount = workspaceState.publicState?.hiddenComments?.length || 0;
+    return `
+      <section class="surface-panel">
+        <div class="workspace-list__row">
+          <div>
+            <div class="eyebrow">Comments</div>
+            <h2>Moderation queue</h2>
+          </div>
+          <div class="tag-row">
+            <span class="tag">${allComments.length - hiddenCount} visible</span>
+            <span class="tag">${hiddenCount} hidden</span>
+          </div>
+        </div>
+        <div class="roster-list">
+          ${
+            allComments.length
+              ? allComments.map((comment) => renderModerationComment(comment)).join("")
+              : `<div class="empty-state">No comments yet.</div>`
+          }
+        </div>
+      </section>
+    `;
+  }
+  return `
+    <section class="surface-panel">
+      <div class="eyebrow">Comments</div>
+      <h2>Your comment history</h2>
+      <div class="roster-list">
+        ${
+          ownComments.length
+            ? ownComments
+                .slice()
+                .reverse()
+                .map(
+                  (comment) => `
+                    <article class="roster-item">
+                      <strong>${escapeHtml(comment.post_slug)}</strong>
+                      <span>${escapeHtml(trimmed(comment.markdown, 220))}</span>
+                    </article>
+                  `
+                )
+                .join("")
+            : `<div class="empty-state">No comments yet.</div>`
+        }
+      </div>
+    </section>
+  `;
+}
+
+function renderModerationComment(comment) {
+  const author = (workspaceState.publicState?.users || []).find((user) => user.pubkey === comment.author);
+  const authorLabel = author?.displayName || author?.username || shortKey(comment.author);
+  const moderation = comment.moderation || null;
+  const action = comment.visibility === "hidden" ? "restore" : "hide";
+  const actionLabel = action === "restore" ? "Restore" : "Hide";
+  return `
+    <article class="roster-item">
+      <div class="workspace-list__row">
+        <div>
+          <strong>${escapeHtml(authorLabel)}</strong>
+          <span>${escapeHtml(comment.post_slug)} • ${escapeHtml(new Date(comment.created_at * 1000).toLocaleString())}</span>
+        </div>
+        <div class="tag-row">
+          <span class="tag">${escapeHtml(comment.visibility)}</span>
+        </div>
+      </div>
+      <span>${escapeHtml(trimmed(comment.markdown, 260))}</span>
+      ${
+        moderation?.note
+          ? `<span class="muted-text">Moderation note: ${escapeHtml(moderation.note)}</span>`
+          : ""
+      }
+      <label class="comment-note-field">
+        <span>Moderation note</span>
+        <textarea data-comment-note="${escapeAttribute(comment.id)}" placeholder="Optional note for hide or restore">${escapeHtml(moderation?.note || "")}</textarea>
+      </label>
+      <div class="button-row button-row--tight">
+        <a class="text-link" href="./investigation.html?slug=${encodeURIComponent(comment.post_slug)}">Open post</a>
+        <button class="button-ghost" type="button" data-comment-action="${action}" data-comment-id="${escapeAttribute(comment.id)}">${actionLabel}</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderEntityModal() {
+  if (!workspaceState.entityModal) return "";
+  const draft = workspaceState.entityModal;
+  return `
+    <div class="modal-backdrop">
+      <section class="modal-card">
+        <div class="workspace-list__row">
+          <div>
+            <div class="eyebrow">Entity</div>
+            <h2>Add entity</h2>
+          </div>
+          <button class="button-ghost" type="button" data-modal-close>Close</button>
+        </div>
+        <form class="tip-form" data-entity-form>
+          <label>
+            <span>Name</span>
+            <input name="name" type="text" maxlength="140" value="${escapeAttribute(draft.seedName || "")}" required>
+          </label>
+          <div class="tip-form__split">
+            <label>
+              <span>Location</span>
+              <input name="location" type="text" maxlength="160" placeholder="City, state" value="${escapeAttribute(draft.seedLocation || "")}" data-location-input required>
+              <div class="picker-results" data-location-results></div>
+            </label>
+            <label>
+              <span>Type</span>
+              <input name="type" type="text" maxlength="80" placeholder="factory farm, store, headquarters" value="${escapeAttribute(draft.seedType || "")}">
+            </label>
+          </div>
+          <div class="tip-form__split">
+            <label>
+              <span>Latitude</span>
+              <input name="lat" type="number" step="0.0001" value="${escapeAttribute(draft.seedLat || "")}">
+            </label>
+            <label>
+              <span>Longitude</span>
+              <input name="lng" type="number" step="0.0001" value="${escapeAttribute(draft.seedLng || "")}">
+            </label>
+          </div>
+          <label>
+            <span>Notes</span>
+            <textarea name="notes" placeholder="Short note for the map and index">${escapeHtml(draft.seedNotes || "")}</textarea>
+          </label>
+          <div class="button-row">
+            <button class="button" type="submit">Publish entity</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  `;
+}
+
+function renderChatModal() {
+  if (!workspaceState.chatModal) return "";
+  const submission = workspaceState.inboxSubmissions.find((item) => item.id === workspaceState.chatModal.submissionId);
+  const messages = workspaceState.chatModal.messages || [];
+  return `
+    <div class="modal-backdrop">
+      <section class="modal-card modal-card--wide">
+        <div class="workspace-list__row">
+          <div>
+            <div class="eyebrow">Submission chat</div>
+            <h2>${escapeHtml(submission?.latest?.payload?.subject || workspaceState.chatModal.submissionId)}</h2>
+          </div>
+          <button class="button-ghost" type="button" data-modal-close>Close</button>
+        </div>
+        <div class="chat-thread">
+          ${
+            messages.length
+              ? messages
+                  .map(
+                    (message) => `
+                      <article class="chat-message ${message.author === workspaceState.viewer?.pubkey ? "is-self" : ""}">
+                        <strong>${message.author === workspaceState.viewer?.pubkey ? "You" : shortKey(message.author)}</strong>
+                        <p>${escapeHtml(message.payload.body || "")}</p>
+                      </article>
+                    `
+                  )
+                  .join("")
+              : `<div class="empty-state">No messages yet.</div>`
+          }
+        </div>
+        <form class="tip-form" data-chat-form>
+          <input name="submissionId" type="hidden" value="${escapeAttribute(workspaceState.chatModal.submissionId)}">
+          <input name="targetPubkey" type="hidden" value="${escapeAttribute(workspaceState.chatModal.targetPubkey)}">
+          <label>
+            <span>Reply</span>
+            <textarea name="body" placeholder="Write a reply" required></textarea>
+          </label>
+          <div class="button-row">
+            <button class="button" type="submit">Send message</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  `;
+}
+
+async function handleLogin(form) {
+  const status = form.querySelector("[data-workspace-status]");
+  try {
+    const formData = new FormData(form);
+    const session = await signInWithCredentials(formData.get("username"), formData.get("password"));
+    await rebroadcastAccount(session);
+    if (status) {
+      status.textContent = `Signed in as @${session.username}.`;
+      status.dataset.state = "success";
+    }
+    await refreshWorkspace(true);
+  } catch (error) {
+    if (status) {
+      status.textContent = String(error?.message || error || "Login failed.");
+      status.dataset.state = "error";
+    }
+  }
+}
+
+async function handleProfileSave(form) {
+  const status = form.querySelector("[data-workspace-status]");
+  try {
+    const formData = new FormData(form);
+    const current = currentUser();
+    let avatarUrl = String(formData.get("avatarUrl") || "").trim();
+    let avatarBlob = current?.avatarBlob || null;
+    const avatarFile = formData.get("avatarFile");
+    if (avatarFile instanceof File && avatarFile.size > 0) {
+      const upload = await uploadPublicBlob(
+        workspaceState.session.secretKeyHex,
+        avatarFile,
+        { purpose: "avatar" }
+      );
+      avatarUrl = upload.url;
+      avatarBlob = upload;
+    } else if (!avatarUrl || avatarUrl !== String(current?.avatarUrl || "").trim()) {
+      avatarBlob = null;
+    }
+    await rebroadcastAccount(workspaceState.session, {
+      displayName: formData.get("displayName"),
+      avatarUrl,
+      avatarBlob,
+      bio: formData.get("bio"),
+      socialLinks: String(formData.get("socialLinks") || "")
+        .split(/\r?\n/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    });
+    if (status) {
+      status.textContent = "Profile synced.";
+      status.dataset.state = "success";
+    }
+    await refreshWorkspace(true);
+  } catch (error) {
+    if (status) {
+      status.textContent = String(error?.message || error || "Profile save failed.");
+      status.dataset.state = "error";
+    }
+  }
+}
+
+async function handleAttachmentDownload(button) {
+  if (!currentUserHasInboxAccess()) return;
+  const submission = workspaceState.inboxSubmissions.find((item) => item.id === (button.getAttribute("data-download-attachment") || ""));
+  const attachment = submission?.latest?.payload?.attachment;
+  if (!attachment?.url) return;
+  const siteKeyShare = findSiteKeyShare(attachment.recipient_pubkey || submission?.latest?.recipient_pubkey || "");
+  if (!siteKeyShare) {
+    window.alert("No matching site key share is loaded for this attachment.");
+    return;
+  }
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Decrypting";
+  try {
+    const file = await decryptUploadedBlob(
+      siteKeyShare.siteSecretKeyHex,
+      attachment.author_pubkey || submission.author,
+      attachment
+    );
+    triggerBrowserDownload(file);
+    button.textContent = "Downloaded";
+  } catch (error) {
+    button.textContent = "Retry";
+    window.alert(String(error?.message || error || "Attachment download failed."));
+  } finally {
+    window.setTimeout(() => {
+      button.disabled = false;
+      button.textContent = original;
+    }, 900);
+  }
+}
+
+async function handleUserAction(button) {
+  if (!currentUserIsAdmin()) return;
+  const targetPubkey = button.getAttribute("data-target-pubkey") || "";
+  const action = button.getAttribute("data-user-action") || "";
+  const mode = button.getAttribute("data-mode") || "";
+
+  if (action === "share-site-key" && workspaceState.siteKeyShare) {
+    await publishAdminKeyShare(
+      workspaceState.session.secretKeyHex,
+      targetPubkey,
+      workspaceState.siteKeyShare.siteSecretKeyHex
+    );
+  }
+
+  if (action === "admin") {
+    await publishTaggedJson({
+      kind: SITE.nostr.kinds.adminRole,
+      secretKeyHex: workspaceState.session.secretKeyHex,
+      tags: [["d", `admin-role:${targetPubkey}`], ["p", targetPubkey], ["op", mode]],
+      content: {
+        action: mode,
+        target_pubkey: targetPubkey
+      }
+    });
+    if (mode === "grant" && workspaceState.siteKeyShare && targetPubkey !== workspaceState.viewer?.pubkey) {
+      await publishAdminKeyShare(
+        workspaceState.session.secretKeyHex,
+        targetPubkey,
+        workspaceState.siteKeyShare.siteSecretKeyHex
+      );
+    }
+    if (mode === "revoke") {
+      try {
+        await rotateSiteInboxKey([targetPubkey], "admin-revoke");
+      } catch (error) {
+        window.alert(`Admin revoked, but site inbox key rotation failed: ${String(error?.message || error || "Unknown error.")}`);
+      }
+    }
+  }
+
+  if (action === "mod") {
+    await publishTaggedJson({
+      kind: SITE.nostr.kinds.userMod,
+      secretKeyHex: workspaceState.session.secretKeyHex,
+      tags: [["d", `user-mod:${targetPubkey}`], ["p", targetPubkey], ["op", mode]],
+      content: {
+        action: mode,
+        target_pubkey: targetPubkey
+      }
+    });
+  }
+
+  await refreshWorkspace(true);
+}
+
+async function handleEntitySave(form) {
+  const formData = new FormData(form);
+  const name = String(formData.get("name") || "").trim();
+  if (!name) return;
+  const taken = (workspaceState.publicState?.entities || []).map((entity) => entity.slug);
+  const slug = createUniqueSlug(name, taken);
+  await publishTaggedJson({
+    kind: SITE.nostr.kinds.entity,
+    secretKeyHex: workspaceState.session.secretKeyHex,
+    tags: [["d", slug]],
+    content: {
+      slug,
+      name,
+      location: String(formData.get("location") || "").trim(),
+      type: String(formData.get("type") || "").trim() || "entity",
+      lat: parseMaybeNumber(formData.get("lat")),
+      lng: parseMaybeNumber(formData.get("lng")),
+      notes: String(formData.get("notes") || "").trim(),
+      status: currentUserIsAdmin() ? "approved" : "pending"
+    }
+  });
+  workspaceState.entityModal = null;
+  await refreshWorkspace(true);
+}
+
+async function handleEntityAction(button) {
+  if (!currentUserIsAdmin()) return;
+  const slug = button.getAttribute("data-entity-slug") || "";
+  const action = button.getAttribute("data-entity-action") || "";
+  const entity = (workspaceState.publicState?.entities || []).find((item) => item.slug === slug);
+  if (!entity) return;
+  await publishTaggedJson({
+    kind: SITE.nostr.kinds.entity,
+    secretKeyHex: workspaceState.session.secretKeyHex,
+    tags: [["d", entity.slug]],
+    content: {
+      slug: entity.slug,
+      name: entity.name,
+      location: entity.location,
+      type: entity.type,
+      lat: entity.lat,
+      lng: entity.lng,
+      notes: entity.notes,
+      aliases: entity.aliases || [],
+      status: action === "approve" ? "approved" : "denied"
+    }
+  });
+  await refreshWorkspace(true);
+}
+
+async function handleCommentAction(button) {
+  if (!currentUserIsAdmin()) return;
+  const action = button.getAttribute("data-comment-action") || "";
+  const commentId = button.getAttribute("data-comment-id") || "";
+  if (!commentId || !action) return;
+  const noteField = document.querySelector(`[data-comment-note="${commentId}"]`);
+  const note = noteField instanceof HTMLTextAreaElement ? noteField.value.trim() : "";
+  await publishTaggedJson({
+    kind: SITE.nostr.kinds.commentMod,
+    secretKeyHex: workspaceState.session.secretKeyHex,
+    tags: [["e", commentId], ["op", action]],
+    content: {
+      target_id: commentId,
+      action,
+      note
+    }
+  });
+  applyLocalCommentModeration(commentId, action, note);
+  renderWorkspace();
+  window.setTimeout(() => {
+    void refreshWorkspace(true);
+  }, 1800);
+}
+
+async function handleDraftSave(form) {
+  if (!currentUserIsAdmin()) return;
+  const formData = new FormData(form);
+  const title = String(formData.get("title") || "").trim();
+  if (!title) return;
+  const primaryEntityInput = String(formData.get("primaryEntity") || "").trim();
+  const primaryEntity = resolveEntityByNameOrSlug(primaryEntityInput);
+  const additionalEntityRefs = splitTags(formData.get("entityRefs"));
+  const entityRefs = dedupe([
+    primaryEntity?.slug || "",
+    ...additionalEntityRefs.map((value) => resolveEntityByNameOrSlug(value)?.slug || cleanSlug(value))
+  ]);
+  const taken = [...workspaceState.staticSlugs, ...(workspaceState.publicState?.drafts || []).map((draft) => draft.slug)];
+  const slug = createUniqueSlug(title, taken);
+  const draft = {
+    slug,
+    title,
+    date: String(formData.get("date") || "").trim() || new Date().toISOString().slice(0, 10),
+    location: primaryEntity?.name || primaryEntity?.location || "Undisclosed location",
+    status: String(formData.get("status") || "draft").trim(),
+    summary: String(formData.get("summary") || "").trim(),
+    tags: splitTags(formData.get("tags")),
+    entity_refs: entityRefs,
+    featured: false,
+    markdown: String(formData.get("markdown") || "").trim(),
+    records: []
+  };
+  await publishTaggedJson({
+    kind: SITE.nostr.kinds.draft,
+    secretKeyHex: workspaceState.session.secretKeyHex,
+    tags: [["d", draft.slug], ["status", draft.status]],
+    content: draft
+  });
+  workspaceState.exportValue = buildDraftMarkdown(draft);
+  await refreshWorkspace(true);
+  workspaceState.exportValue = buildDraftMarkdown(draft);
+  renderWorkspace();
+}
+
+async function handleSubmissionAction(button) {
+  if (!currentUserIsAdmin()) return;
+  const submissionId = button.getAttribute("data-submission-id") || "";
+  const authorPubkey = button.getAttribute("data-author-pubkey") || "";
+  const status = button.getAttribute("data-status") || "received";
+  await publishTaggedJson({
+    kind: SITE.nostr.kinds.submissionStatus,
+    secretKeyHex: workspaceState.session.secretKeyHex,
+    tags: [["d", submissionId], ["p", authorPubkey]],
+    content: {
+      submission_id: submissionId,
+      author_pubkey: authorPubkey,
+      status
+    }
+  });
+  await refreshWorkspace(true);
+}
+
+async function handleSnapshotRequest(button) {
+  if (!currentUserIsAdmin() || !workspaceState.session) return;
+  button.setAttribute("disabled", "disabled");
+  try {
+    const requestId = `snapshot:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+    await publishTaggedJson({
+      kind: SITE.nostr.kinds.snapshotRequest,
+      secretKeyHex: workspaceState.session.secretKeyHex,
+      tags: [
+        ["d", requestId],
+        ["req", requestId],
+        ["op", "bake"]
+      ],
+      content: {
+        protocol: `${SITE.nostr.protocolPrefix}-snapshot-request/v1`,
+        request_id: requestId,
+        op: "bake",
+        requested_at: new Date().toISOString()
+      }
+    });
+    workspaceState.dashboardStatus = "Snapshot request published. Peer pinner can now materialize current approved content and update its bakedown branch.";
+    await refreshWorkspace(true);
+  } catch (error) {
+    workspaceState.dashboardStatus = String(error?.message || error || "Snapshot request failed.");
+    renderWorkspace();
+  } finally {
+    button.removeAttribute("disabled");
+  }
+}
+
+async function hydrateChatModal() {
+  if (!workspaceState.chatModal || !currentUserHasInboxAccess()) return;
+  workspaceState.chatModal.messages = await loadSubmissionThread(
+    workspaceState.siteKeyShares,
+    workspaceState.chatModal.submissionId,
+    workspaceState.chatModal.targetPubkey
+  ).catch(() => []);
+  renderWorkspace();
+}
+
+async function handleChatSend(form) {
+  if (!currentUserHasInboxAccess()) return;
+  const formData = new FormData(form);
+  const body = String(formData.get("body") || "").trim();
+  if (!body) return;
+  if (!workspaceState.siteKeyShare) {
+    window.alert("No current site inbox key share is loaded for replies.");
+    return;
+  }
+  await publishSubmissionChat(workspaceState.siteKeyShare.siteSecretKeyHex, {
+    targetPubkey: String(formData.get("targetPubkey") || ""),
+    submissionId: String(formData.get("submissionId") || ""),
+    body,
+    role: "admin"
+  });
+  await hydrateChatModal();
+}
+
+async function copyExport() {
+  const area = document.querySelector("[data-draft-export]");
+  if (!(area instanceof HTMLTextAreaElement) || !area.value.trim()) return;
+  try {
+    await navigator.clipboard.writeText(area.value);
+  } catch {
+    return;
+  }
+}
+
+function loadDraft(slug) {
+  const draft = (workspaceState.publicState?.drafts || []).find((item) => item.slug === slug);
+  if (!draft) return;
+  workspaceState.exportValue = buildDraftMarkdown(draft);
+  renderWorkspace();
+  const form = document.querySelector("[data-draft-form]");
+  if (!(form instanceof HTMLFormElement)) return;
+  form.elements.namedItem("title").value = draft.title;
+  form.elements.namedItem("date").value = draft.date;
+  form.elements.namedItem("status").value = draft.status;
+  form.elements.namedItem("summary").value = draft.summary;
+  form.elements.namedItem("tags").value = (draft.tags || []).join(", ");
+  form.elements.namedItem("primaryEntity").value = resolveEntityDisplayValue((draft.entity_refs || [])[0]);
+  form.elements.namedItem("entityRefs").value = (draft.entity_refs || []).join(", ");
+  form.elements.namedItem("markdown").value = draft.markdown;
+  hydrateWorkspaceEnhancements();
+}
+
+function hydrateWorkspaceEnhancements() {
+  renderEntityPickerResults("primaryEntity");
+  renderEntityPickerResults("entityRefs");
+  renderLocationResults();
+}
+
+function createEntityModalState(trigger) {
+  const fieldName = trigger?.getAttribute?.("data-entity-seed-from") || "";
+  const sourceField = fieldName ? document.querySelector(`[name="${fieldName}"]`) : null;
+  const sourceValue = sourceField instanceof HTMLInputElement ? sourceField.value.trim() : "";
+  const locationField = document.querySelector('[name="location"]');
+  const locationValue = locationField instanceof HTMLInputElement ? locationField.value.trim() : "";
+  const seedName = fieldName === "entityRefs" ? lastCommaValue(sourceValue) : sourceValue;
+  return {
+    mode: "create",
+    seedName,
+    seedLocation: locationValue
+  };
+}
+
+function renderEntityPickerResults(fieldName) {
+  const host = document.querySelector(`[data-entity-picker-results="${fieldName}"]`);
+  const input = document.querySelector(`[name="${fieldName}"]`);
+  if (!(host instanceof HTMLElement) || !(input instanceof HTMLInputElement)) return;
+  const query = fieldName === "entityRefs" ? lastCommaValue(input.value) : input.value.trim();
+  const matches = matchEntities(query).slice(0, 6);
+  if (!query) {
+    host.innerHTML = "";
+    return;
+  }
+  host.innerHTML = matches.length
+    ? matches
+        .map(
+          (entity) => `
+            <button class="picker-chip" type="button" data-entity-pick="${escapeAttribute(entity.slug)}" data-target-field="${fieldName}">
+              <strong>${escapeHtml(entity.name)}</strong>
+              <span>${escapeHtml(entity.location)}</span>
+            </button>
+          `
+        )
+        .join("")
+    : `<div class="picker-hint">No match yet. Use the create button to add a new entity.</div>`;
+}
+
+function renderLocationResults() {
+  const host = document.querySelector("[data-location-results]");
+  const input = document.querySelector("[data-location-input]");
+  if (!(host instanceof HTMLElement) || !(input instanceof HTMLInputElement)) return;
+  const query = input.value.trim().toLowerCase();
+  const matches = uniqueLocations()
+    .filter((location) => !query || location.toLowerCase().includes(query))
+    .slice(0, 6);
+  if (!query && !matches.length) {
+    host.innerHTML = "";
+    return;
+  }
+  host.innerHTML = matches.length
+    ? matches
+        .map(
+          (location) => `
+            <button class="picker-chip" type="button" data-location-pick="${escapeAttribute(location)}">
+              <strong>${escapeHtml(location)}</strong>
+            </button>
+          `
+        )
+        .join("")
+    : `<div class="picker-hint">No saved location matches. Keep the typed value to create a new one.</div>`;
+}
+
+function applyEntityPick(button) {
+  const slug = button.getAttribute("data-entity-pick") || "";
+  const fieldName = button.getAttribute("data-target-field") || "";
+  const entity = (workspaceState.publicState?.approvedEntities || []).find((item) => item.slug === slug);
+  const input = document.querySelector(`[name="${fieldName}"]`);
+  if (!entity || !(input instanceof HTMLInputElement)) return;
+  if (fieldName === "entityRefs") {
+    const existing = splitTags(input.value)
+      .map((value) => resolveEntityByNameOrSlug(value)?.slug || cleanSlug(value))
+      .filter(Boolean);
+    input.value = dedupe([...existing, entity.slug]).join(", ");
+  } else {
+    input.value = entity.name;
+  }
+  hydrateWorkspaceEnhancements();
+}
+
+function applyLocationPick(button) {
+  const value = button.getAttribute("data-location-pick") || "";
+  const input = document.querySelector("[data-location-input]");
+  if (!(input instanceof HTMLInputElement)) return;
+  input.value = value;
+  hydrateWorkspaceEnhancements();
+}
+
+function matchEntities(query) {
+  const clean = String(query || "").trim().toLowerCase();
+  if (!clean) return [];
+  return (workspaceState.publicState?.approvedEntities || []).filter((entity) => {
+    const haystacks = [
+      entity.name,
+      entity.slug,
+      entity.location,
+      ...(Array.isArray(entity.aliases) ? entity.aliases : [])
+    ]
+      .map((value) => String(value || "").toLowerCase())
+      .filter(Boolean);
+    return haystacks.some((value) => value.includes(clean));
+  });
+}
+
+function uniqueLocations() {
+  return dedupe((workspaceState.publicState?.entities || []).map((entity) => entity.location));
+}
+
+function resolveEntityDisplayValue(value) {
+  const entity = resolveEntityByNameOrSlug(value);
+  return entity?.name || String(value || "");
+}
+
+function lastCommaValue(value) {
+  return String(value || "").split(",").pop().trim();
+}
+
+function chooseInitialTab(current) {
+  const valid = new Set(tabButtons().map((tab) => tab.id));
+  const requested = cleanSlug(new URLSearchParams(window.location.search).get("tab") || current);
+  if (requested && valid.has(requested)) return requested;
+  return currentUserIsAdmin() ? "dashboard" : "profile";
+}
+
+function setActiveTab(tab) {
+  workspaceState.activeTab = chooseInitialTab(tab);
+  const url = new URL(window.location.href);
+  url.searchParams.set("tab", workspaceState.activeTab);
+  history.replaceState({}, "", url);
+}
+
+function tabButtons() {
+  if (!workspaceState.session) return [{ id: "login", label: "Log in" }];
+  const base = [{ id: "profile", label: "Profile" }, { id: "comments", label: "Comments" }];
+  if (!currentUserIsAdmin()) return base;
+  return [
+    { id: "dashboard", label: "Dashboard" },
+    ...base,
+    { id: "users", label: "User Management" },
+    { id: "submissions", label: "Submissions" },
+    { id: "entities", label: "Entities" },
+    { id: "drafts", label: "Draft Post" },
+    { id: "log", label: "Log" }
+  ];
+}
+
+function renderTabButton(tab) {
+  return `<button class="workspace-tab ${workspaceState.activeTab === tab.id ? "is-current" : ""}" type="button" data-workspace-tab="${tab.id}">${escapeHtml(tab.label)}</button>`;
+}
+
+function currentUser() {
+  return (workspaceState.publicState?.users || []).find((user) => user.pubkey === workspaceState.viewer?.pubkey) || null;
+}
+
+function currentUserIsAdmin() {
+  return Boolean(workspaceState.viewer && workspaceState.publicState?.admins?.includes(workspaceState.viewer.pubkey));
+}
+
+function currentUserHasInboxAccess() {
+  return Boolean(
+    currentUserIsAdmin() &&
+      workspaceState.siteKeyShare &&
+      workspaceState.siteKeyShare.sitePubkey === activeSitePubkey()
+  );
+}
+
+function renderSnapshotSummary(snapshot) {
+  if (!snapshot) {
+    return `<p class="muted-text">No baked snapshot event is visible yet.</p>`;
+  }
+  const generatedAt = snapshot.generated_at
+    ? new Date(snapshot.generated_at).toLocaleString()
+    : new Date((snapshot.event?.created_at || snapshot.version_ts || 0) * 1000).toLocaleString();
+  const prUrl = snapshot.git?.pr_url || "";
+  const branch = snapshot.git?.branch || "";
+  const commit = snapshot.git?.commit || "";
+  return `
+    <div class="roster-list">
+      <article class="roster-item">
+        <strong>Latest bakedown</strong>
+        <span>${escapeHtml(snapshot.status || "ready")} • ${escapeHtml(generatedAt)}</span>
+        <span>${escapeHtml(`${snapshot.counts?.posts || 0} posts • ${snapshot.counts?.entities || 0} entities`)}</span>
+        ${
+          branch
+            ? `<span class="mono">${escapeHtml(branch)}${commit ? ` @ ${escapeHtml(String(commit).slice(0, 12))}` : ""}</span>`
+            : ""
+        }
+        ${prUrl ? `<a class="text-link" href="${escapeAttribute(prUrl)}" target="_blank" rel="noreferrer">Open PR</a>` : ""}
+      </article>
+    </div>
+  `;
+}
+
+function resolveEntityByNameOrSlug(value) {
+  const clean = String(value || "").trim().toLowerCase();
+  return (workspaceState.publicState?.approvedEntities || []).find(
+    (entity) => entity.slug === cleanSlug(clean) || entity.name.toLowerCase() === clean
+  );
+}
+
+function logLabel(event) {
+  switch (Number(event.kind)) {
+    case SITE.nostr.kinds.snapshot:
+      return "Snapshot bakedown";
+    case SITE.nostr.kinds.adminClaim:
+      return "Root admin claim";
+    case SITE.nostr.kinds.adminRole:
+      return "Admin role change";
+    case SITE.nostr.kinds.userMod:
+      return "User moderation";
+    case SITE.nostr.kinds.snapshotRequest:
+      return "Snapshot request";
+    case SITE.nostr.kinds.entity:
+      return "Entity update";
+    case SITE.nostr.kinds.draft:
+      return "Draft update";
+    case SITE.nostr.kinds.commentMod:
+      return "Comment moderation";
+    case SITE.nostr.kinds.submissionStatus:
+      return "Submission status";
+    case SITE.nostr.kinds.adminKeyShare:
+      return "Site key share";
+    case SITE.nostr.kinds.siteKey:
+      return "Site key rotation";
+    default:
+      return `Event ${event.kind}`;
+  }
+}
+
+function logTarget(event) {
+  const slug = firstTag(event, "d");
+  switch (Number(event.kind)) {
+    case SITE.nostr.kinds.snapshot:
+    case SITE.nostr.kinds.snapshotRequest:
+      return { href: "./admin.html?tab=dashboard", description: slug || shortKey(event.pubkey) };
+    case SITE.nostr.kinds.adminClaim:
+    case SITE.nostr.kinds.adminRole:
+    case SITE.nostr.kinds.userMod:
+    case SITE.nostr.kinds.adminKeyShare:
+    case SITE.nostr.kinds.siteKey:
+      return { href: "./admin.html?tab=users", description: shortKey(event.pubkey) };
+    case SITE.nostr.kinds.entity:
+      return { href: "./admin.html?tab=entities", description: slug || shortKey(event.pubkey) };
+    case SITE.nostr.kinds.draft:
+      return { href: "./admin.html?tab=drafts", description: slug || shortKey(event.pubkey) };
+    case SITE.nostr.kinds.commentMod:
+      return { href: "./admin.html?tab=comments", description: firstTag(event, "e") || shortKey(event.pubkey) };
+    case SITE.nostr.kinds.submissionStatus:
+      return { href: "./admin.html?tab=submissions", description: slug || shortKey(event.pubkey) };
+    default:
+      return { href: "./admin.html?tab=dashboard", description: shortKey(event.pubkey) };
+  }
+}
+
+function firstTag(event, key) {
+  const hit = (event.tags || []).find((tag) => Array.isArray(tag) && tag[0] === key);
+  return hit ? String(hit[1] || "") : "";
+}
+
+function activeSitePubkey() {
+  return resolveSitePubkey(workspaceState.publicState);
+}
+
+function findSiteKeyShare(sitePubkey = "") {
+  const targetPubkey = String(sitePubkey || "").trim().toLowerCase() || activeSitePubkey();
+  return workspaceState.siteKeyShares.find((share) => share.sitePubkey === targetPubkey) || null;
+}
+
+function renderSiteKeyShareStatus() {
+  if (workspaceState.siteKeyShare) {
+    const olderCount = Math.max(0, workspaceState.siteKeyShares.length - 1);
+    return olderCount
+      ? `This account holds the current site inbox key share and ${olderCount} older share${olderCount === 1 ? "" : "s"} for earlier encrypted material.`
+      : "This account currently holds the active site inbox key share.";
+  }
+  if (workspaceState.siteKeyShares.length) {
+    return "Only older site inbox key shares are loaded for this account. Ask another admin to share the current key.";
+  }
+  return "No site inbox key share has been loaded for this account yet.";
+}
+
+function applyLocalCommentModeration(commentId, action, note) {
+  const publicState = workspaceState.publicState;
+  if (!publicState || !Array.isArray(publicState.allComments)) return;
+  const moderation = {
+    action: action === "restore" ? "restore" : "hide",
+    note: String(note || "").trim(),
+    updated_at: Math.floor(Date.now() / 1000),
+    by: workspaceState.viewer?.pubkey || ""
+  };
+  publicState.allComments = publicState.allComments.map((comment) =>
+    comment.id === commentId
+      ? {
+          ...comment,
+          visibility: moderation.action === "hide" ? "hidden" : "visible",
+          moderation
+        }
+      : comment
+  );
+  publicState.comments = publicState.allComments.filter((comment) => comment.visibility !== "hidden");
+  publicState.hiddenComments = publicState.allComments.filter((comment) => comment.visibility === "hidden");
+  publicState.commentsByPost = regroupComments(publicState.comments, "post_slug");
+  publicState.commentsByAuthor = regroupComments(publicState.comments, "author");
+  if (publicState.metrics) {
+    publicState.metrics.commentCount = publicState.comments.length;
+    publicState.metrics.hiddenCommentCount = publicState.hiddenComments.length;
+  }
+  for (const user of publicState.users || []) {
+    user.commentCount = (publicState.commentsByAuthor.get(user.pubkey) || []).length;
+  }
+}
+
+function regroupComments(comments, key) {
+  const buckets = new Map();
+  for (const comment of Array.isArray(comments) ? comments : []) {
+    const bucketKey = String(comment?.[key] || "").trim();
+    if (!bucketKey) continue;
+    const bucket = buckets.get(bucketKey) || [];
+    bucket.push(comment);
+    buckets.set(bucketKey, bucket);
+  }
+  return buckets;
+}
+
+async function rotateSiteInboxKey(excludedPubkeys = [], reason = "rotation") {
+  if (!workspaceState.session || !workspaceState.siteKeyShare) {
+    throw new Error("Load the current site inbox key share before rotating it.");
+  }
+  const nextSiteSecretKeyHex = await generateSecretKeyHex();
+  const previousSitePubkey = activeSitePubkey();
+  const recipients = dedupe(
+    (workspaceState.publicState?.admins || []).filter((pubkey) => !excludedPubkeys.includes(pubkey))
+  );
+  await publishSiteKeyEvent(workspaceState.session.secretKeyHex, nextSiteSecretKeyHex, {
+    previousSitePubkey,
+    reason
+  });
+  for (const pubkey of recipients) {
+    await publishAdminKeyShare(
+      workspaceState.session.secretKeyHex,
+      pubkey,
+      nextSiteSecretKeyHex
+    );
+  }
+}
+
+async function loadStaticSlugs() {
+  const response = await fetch("./content/investigations/index.json");
+  if (!response.ok) return [];
+  const data = await response.json();
+  return (Array.isArray(data.files) ? data.files : []).map((file) => cleanSlug(String(file).replace(/\.md$/i, "")));
+}
+
+function dedupe(values) {
+  return [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
+function trimmed(value, length) {
+  const text = String(value || "").trim();
+  return text.length > length ? `${text.slice(0, length - 1)}...` : text;
+}
+
+function parseMaybeNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function triggerBrowserDownload(file) {
+  const url = URL.createObjectURL(file.blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = file.name || "download.bin";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function escapeAttribute(value) {
+  return escapeHtml(value).replace(/`/g, "");
+}

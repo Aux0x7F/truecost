@@ -1,0 +1,22 @@
+# Roadmap
+
+The current build is meant to be a practical, low-overhead publishing and coordination system for accountability work. The public site is already in place; the next phase is focused on making the operator workflow more durable, easier to run, and safer to hand off.
+
+## Near Term
+
+- Harden the admin lifecycle so role changes, approvals, and revocations stay easy to operate and hard to misuse.
+- Keep improving relay compatibility and degraded-mode behavior so the site remains usable even when some relays are noisy or incomplete.
+- Tighten the Linux pinner setup path into a repeatable install, update, and recovery workflow for non-developer operators.
+- Expand end-to-end browser validation around submissions, moderation, publishing, and comment handling before each release.
+
+## Publishing Workflow
+
+- Continue treating live relay state as the working layer and reviewed repository content as the stable snapshot layer.
+- Improve the bakedown path so approved cleartext content can be reviewed and merged cleanly without turning day-to-day publishing into a developer task.
+- Refine the audit trail around admin actions, submission handling, and publishing events.
+
+## Longer Term
+
+- Add stronger map and archive views as the entity and location dataset grows.
+- Improve collaboration tools for volunteers, including clearer review states and richer discussion around submissions.
+- Package the reusable parts of the system so future campaign sites can launch with less custom setup.

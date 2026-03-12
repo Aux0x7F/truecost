@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Investigation | The True Cost Project</title>
+  <meta name="description" content="Detailed investigation published by The True Cost Project.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https://unpkg.com; script-src 'self' https://unpkg.com; connect-src 'self' https: wss:; font-src 'self' data: https:; object-src 'none'; media-src 'self' blob: https:; manifest-src 'self'; worker-src 'self' blob:;">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=()">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body data-page="investigation">
+  <header class="site-header">
+    <div class="wrap site-header__inner">
+      <a class="brand" href="./index.html">
+        <span class="brand__mark">TC</span>
+        <span class="brand__text">
+          <strong>The True Cost Project</strong>
+          <span>Public records investigations into how taxpayer dollars support animal agriculture.</span>
+        </span>
+      </a>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="siteNav"></button>
+      <nav id="siteNav" class="site-nav" data-site-nav></nav>
+    </div>
+  </header>
+
+  <div class="page-shell">
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <div class="eyebrow">Investigation detail</div>
+          <p><a class="text-link" href="./investigations.html">Back to investigations</a></p>
+          <h1 data-investigation-title>Loading case file...</h1>
+          <p class="hero__lede" data-investigation-summary></p>
+          <div class="tag-row" data-investigation-kicker></div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="wrap page-layout">
+          <article class="article-shell hero__panel" data-investigation-article></article>
+
+          <aside class="article-aside">
+            <section class="surface-panel">
+              <div class="eyebrow">Case metadata</div>
+              <div class="meta-list">
+                <div>
+                  <strong>Published</strong>
+                  <span data-investigation-date></span>
+                </div>
+                <div>
+                  <strong>Location</strong>
+                  <span data-investigation-region></span>
+                </div>
+                <div>
+                  <strong>Status</strong>
+                  <span data-investigation-status></span>
+                </div>
+              </div>
+            </section>
+
+            <section class="surface-panel">
+              <div class="eyebrow">Structured notes</div>
+              <div class="record-list" data-investigation-records></div>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="wrap section__head">
+          <div>
+            <div class="eyebrow">More case files</div>
+            <h2>Related investigations</h2>
+          </div>
+        </div>
+        <div class="wrap card-grid" data-investigation-related></div>
+      </section>
+
+      <section class="section">
+        <div class="wrap">
+          <section class="surface-panel" data-comment-panel></section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <div class="wrap site-footer__grid">
+      <div>
+        <div class="eyebrow">The True Cost Project</div>
+        <h3>Investigative publishing for public accountability.</h3>
+        <p>Each investigation is meant to pair public-facing storytelling with a durable source archive.</p>
+      </div>
+      <div>
+        <h3>Explore</h3>
+        <ul>
+          <li><a href="./investigations.html">Investigations</a></li>
+          <li><a href="./guide.html">Guide</a></li>
+          <li><a href="./submit.html">Submit</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Support</h3>
+        <ul>
+          <li><a href="./get-involved.html">Donate / Get involved</a></li>
+          <li><a href="./about.html">About us</a></li>
+          <li><a href="./merch.html">Merch</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script type="module" src="./scripts/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Guide | The True Cost Project</title>
+  <meta name="description" content="Learn how to file records requests, trace subsidies, and build investigations.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https://unpkg.com; script-src 'self' https://unpkg.com; connect-src 'self' https: wss:; font-src 'self' data: https:; object-src 'none'; media-src 'self' blob: https:; manifest-src 'self'; worker-src 'self' blob:;">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=()">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body data-page="guide">
+  <header class="site-header">
+    <div class="wrap site-header__inner">
+      <a class="brand" href="./index.html">
+        <span class="brand__mark">TC</span>
+        <span class="brand__text">
+          <strong>The True Cost Project</strong>
+          <span>Public records investigations into how taxpayer dollars support animal agriculture.</span>
+        </span>
+      </a>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="siteNav"></button>
+      <nav id="siteNav" class="site-nav" data-site-nav></nav>
+    </div>
+  </header>
+
+  <div class="page-shell">
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <div class="eyebrow">Instructions / Tutorial</div>
+          <h1>Teach the method, not just the findings.</h1>
+          <p class="hero__lede">This page is meant to become a practical guide for records requests, basic subsidy research, and organizing findings for publication.</p>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="wrap page-layout">
+          <article class="article-shell hero__panel" data-markdown-article data-markdown-src="./content/pages/guide.md"></article>
+          <aside class="article-aside">
+            <section class="surface-panel">
+              <div class="eyebrow">On this page</div>
+              <nav class="toc-links" data-article-toc></nav>
+            </section>
+            <section class="surface-panel">
+              <div class="eyebrow">Use it alongside</div>
+              <p>Pair the tutorial with live case files so new volunteers can see how source documents become public-facing investigations.</p>
+              <a class="text-link" href="./investigations.html">Browse investigations</a>
+            </section>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <div class="wrap site-footer__grid">
+      <div>
+        <div class="eyebrow">The True Cost Project</div>
+        <h3>Investigative publishing for public accountability.</h3>
+        <p>The guide is markdown-backed so it can stay current without requiring a heavier content system.</p>
+      </div>
+      <div>
+        <h3>Explore</h3>
+        <ul>
+          <li><a href="./investigations.html">Investigations</a></li>
+          <li><a href="./submit.html">Submit</a></li>
+          <li><a href="./about.html">About us</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Support</h3>
+        <ul>
+          <li><a href="./get-involved.html">Donate / Get involved</a></li>
+          <li><a href="./merch.html">Merch</a></li>
+          <li><a href="./index.html">Home</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script type="module" src="./scripts/app.js"></script>
+</body>
+</html>

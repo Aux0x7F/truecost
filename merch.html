@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Merch | The True Cost Project</title>
+  <meta name="description" content="Merchandise support page for The True Cost Project.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https://unpkg.com; script-src 'self' https://unpkg.com; connect-src 'self' https: wss:; font-src 'self' data: https:; object-src 'none'; media-src 'self' blob: https:; manifest-src 'self'; worker-src 'self' blob:;">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=()">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body data-page="merch">
+  <header class="site-header">
+    <div class="wrap site-header__inner">
+      <a class="brand" href="./index.html">
+        <span class="brand__mark">TC</span>
+        <span class="brand__text">
+          <strong>The True Cost Project</strong>
+          <span>Public records investigations into how taxpayer dollars support animal agriculture.</span>
+        </span>
+      </a>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="siteNav"></button>
+      <nav id="siteNav" class="site-nav" data-site-nav></nav>
+    </div>
+  </header>
+
+  <div class="page-shell">
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <div class="eyebrow">Merch</div>
+          <h1>A simple outbound page is enough.</h1>
+          <p class="hero__lede">The first version does not need a native storefront. This page can stay lean and just point people to the external merchandise shop connected to the broader project and YouTube presence.</p>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="wrap page-layout">
+          <div class="surface-panel">
+            <div class="eyebrow">Store link</div>
+            <h2>External merchandise store</h2>
+            <p>Keep the on-site copy minimal: explain where the store lives, what merch supports, and how that support connects back to the investigations.</p>
+            <div class="button-row">
+              <a class="button" data-merch-link href="https://example.org/store" target="_blank" rel="noopener noreferrer">Open merch store</a>
+              <a class="button-ghost" data-youtube-link href="https://youtube.com/@truecostproject" target="_blank" rel="noopener noreferrer">Visit YouTube</a>
+            </div>
+          </div>
+
+          <aside class="surface-panel surface-panel--dark">
+            <div class="eyebrow">Why it stays simple</div>
+            <h3>No reason to duplicate storefront work</h3>
+            <p>GitHub Pages handles the site. The external merch platform handles checkout, fulfillment, taxes, and inventory. That keeps maintenance low.</p>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <div class="wrap site-footer__grid">
+      <div>
+        <div class="eyebrow">The True Cost Project</div>
+        <h3>Investigative publishing for public accountability.</h3>
+        <p>Merch should stay a support path, not the center of the site.</p>
+      </div>
+      <div>
+        <h3>Explore</h3>
+        <ul>
+          <li><a href="./investigations.html">Investigations</a></li>
+          <li><a href="./guide.html">Guide</a></li>
+          <li><a href="./submit.html">Submit</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>Support</h3>
+        <ul>
+          <li><a href="./get-involved.html">Donate / Get involved</a></li>
+          <li><a href="./about.html">About us</a></li>
+          <li><a href="./index.html">Home</a></li>
+        </ul>
+      </div>
+    </div>
+  </footer>
+
+  <script type="module" src="./scripts/app.js"></script>
+</body>
+</html>
