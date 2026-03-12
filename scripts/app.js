@@ -179,9 +179,8 @@ function renderNavigation() {
     <a class="${navLinkClass(page, "about")}" href="./about.html">About</a>
     <a class="${navLinkClass(page, "merch")}" href="./merch.html">Merch</a>
     <div class="profile-menu ${NAV_KEYS.workspace.includes(page) ? "is-current" : ""}" data-profile-menu>
-      <button class="profile-menu__toggle ${currentUser?.avatarUrl ? "has-avatar" : !isLoggedIn ? "is-wordmark" : ""}" type="button" data-profile-toggle aria-label="Profile options">
+      <button class="profile-menu__toggle ${currentUser?.avatarUrl ? "has-avatar" : !isLoggedIn ? "is-wordmark" : ""}" type="button" data-profile-toggle aria-label="${isLoggedIn ? "Profile options" : "Log in"}">
         <span class="profile-menu__badge ${currentUser?.avatarUrl ? "has-avatar" : !isLoggedIn ? "is-wordmark" : ""}">${profileBadgeMarkup(currentUser)}</span>
-        <span class="profile-menu__label">${isLoggedIn ? (isAdmin ? "Profile / Admin" : "Profile options") : "Log in"}</span>
       </button>
       <div class="profile-menu__panel">
         ${

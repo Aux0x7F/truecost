@@ -1305,14 +1305,16 @@ h3 {
   }
 
   .nav-link,
-  .nav-group__toggle,
-  .profile-menu__toggle {
+  .nav-group__toggle {
     justify-content: flex-start;
     width: 100%;
     min-width: 0;
   }
 
   .profile-menu__toggle {
+    justify-content: center;
+    width: 100%;
+    min-width: 0;
     height: auto;
     padding: 0.7rem 1rem;
     border-radius: 999px;

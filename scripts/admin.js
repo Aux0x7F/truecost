@@ -210,7 +210,7 @@ function renderWorkspace() {
 
   if (!workspaceState.session) {
     title.textContent = "Log in";
-    lede.textContent = "Use a username and password to derive the same keypair each time, then sync your profile and shared account record.";
+    lede.textContent = "Use the same username and password each time to return to this account.";
     shell.innerHTML = renderLoginPane();
     return;
   }
@@ -218,8 +218,8 @@ function renderWorkspace() {
   const admin = currentUserIsAdmin();
   title.textContent = admin ? "Workspace" : "Profile options";
   lede.textContent = admin
-    ? "Manage the shared roster, review submission intake, publish entities, and stage markdown drafts."
-    : "Update your shared profile, review your comment history, and keep your account record synced.";
+    ? "Manage users, submissions, entities, and draft posts."
+    : "Update your profile and review your comments.";
 
   shell.innerHTML = `
     <div class="workspace-tabs">
@@ -249,7 +249,7 @@ function renderLoginPane() {
         <div class="button-row">
           <button class="button" type="submit">Log in</button>
         </div>
-        <div class="status-box" data-workspace-status>Credentials derive the same keypair every time for this site namespace.</div>
+        <div class="status-box" data-workspace-status>This site uses your username and password to reopen the same account.</div>
       </form>
     </section>
   `;
@@ -297,12 +297,12 @@ function renderDashboardPane() {
       </section>
       <section class="surface-panel">
         <div class="eyebrow">Snapshot</div>
-        <h2>Seed bakedown</h2>
-        <p class="muted-text">Request a peer-pinner bakedown of approved entities and public posts into seed files, with an optional GitHub PR when the operator has configured repo access.</p>
+        <h2>Static snapshot</h2>
+        <p class="muted-text">Create a static snapshot of approved entities and posts. If GitHub is connected, this can also open or update a review PR.</p>
         <div class="button-row">
-          <button class="button" type="button" data-request-snapshot>Request bakedown</button>
+          <button class="button" type="button" data-request-snapshot>Create snapshot</button>
         </div>
-        <div class="status-box">${escapeHtml(workspaceState.dashboardStatus || "No bakedown request sent in this session.")}</div>
+        <div class="status-box">${escapeHtml(workspaceState.dashboardStatus || "No snapshot request sent yet.")}</div>
         ${renderSnapshotSummary(snapshot)}
       </section>
     </div>
@@ -311,12 +311,15 @@ function renderDashboardPane() {
 
 function renderProfilePane() {
   const current = currentUser();
-  const comments = workspaceState.publicState?.commentsByAuthor.get(workspaceState.viewer?.pubkey || "") || [];
+  const socialLinks = Array.isArray(current?.socialLinks) ? current.socialLinks : [];
+  const displayName = current?.displayName || current?.username || "Unnamed account";
+  const usernameLabel = current?.username ? `@${escapeHtml(current.username)}` : "No username saved yet.";
+  const roleLabel = currentUserIsAdmin() ? "Admin access" : "Member access";
   return `
     <div class="workspace-grid">
       <section class="surface-panel">
         <div class="eyebrow">Profile</div>
-        <h2>Shared account details</h2>
+        <h2>Profile settings</h2>
         <form class="tip-form" data-profile-form>
           <label>
             <span>Display name</span>
@@ -327,11 +330,7 @@ function renderProfilePane() {
             <textarea name="bio" placeholder="Short bio">${escapeHtml(current?.bio || "")}</textarea>
           </label>
           <label>
-            <span>Avatar URL</span>
-            <input name="avatarUrl" type="url" placeholder="https://example.org/avatar.jpg" value="${escapeAttribute(current?.avatarUrl || "")}">
-          </label>
-          <label>
-            <span>Avatar upload</span>
+            <span>Avatar</span>
             <input name="avatarFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif">
           </label>
           <label>
@@ -341,36 +340,35 @@ function renderProfilePane() {
           <div class="button-row">
             <button class="button" type="submit">Save profile</button>
           </div>
-          <div class="status-box" data-workspace-status>Your username claim is rebroadcast when you save.</div>
-          <p class="muted-text">Upload a clear avatar to the cache layer, or keep using a stable image URL.</p>
+          <div class="status-box" data-workspace-status>Save changes to update your public profile.</div>
         </form>
-        ${
-          currentUserIsAdmin()
-            ? `<p class="muted-text">${renderSiteKeyShareStatus()}</p>`
-            : ""
-        }
       </section>
       <section class="surface-panel">
-        <div class="eyebrow">Comment history</div>
-        <h2>Recent comments</h2>
+        <div class="eyebrow">Account</div>
+        <h2>Current account</h2>
         <div class="roster-list">
+          <article class="roster-item">
+            <strong>${escapeHtml(displayName)}</strong>
+            <span>${usernameLabel}</span>
+            <span>${escapeHtml(roleLabel)}</span>
+            <span class="mono">${escapeHtml(workspaceState.viewer?.pubkey || "")}</span>
+          </article>
           ${
-            comments.length
-              ? comments
-                  .slice()
-                  .reverse()
+            socialLinks.length
+              ? socialLinks
                   .map(
-                    (comment) => `
+                    (link) => `
                       <article class="roster-item">
-                        <strong>${escapeHtml(comment.post_slug)}</strong>
-                        <span>${escapeHtml(trimmed(comment.markdown, 180))}</span>
+                        <strong>Social link</strong>
+                        <a class="text-link" href="${escapeAttribute(link)}" target="_blank" rel="noreferrer">${escapeHtml(link)}</a>
                       </article>
                     `
                   )
                   .join("")
-              : `<div class="empty-state">No comment history yet.</div>`
+              : `<div class="empty-state">No social links added yet.</div>`
           }
         </div>
+        ${currentUserIsAdmin() ? `<p class="muted-text">${renderSiteKeyShareStatus()}</p>` : ""}
       </section>
     </div>
   `;
@@ -698,10 +696,10 @@ function renderCommentsPane() {
         <div class="workspace-list__row">
           <div>
             <div class="eyebrow">Comments</div>
-            <h2>Moderation queue</h2>
+            <h2>Review comments</h2>
           </div>
           <div class="tag-row">
-            <span class="tag">${allComments.length - hiddenCount} visible</span>
+            <span class="tag">${allComments.length - hiddenCount} shown</span>
             <span class="tag">${hiddenCount} hidden</span>
           </div>
         </div>
@@ -718,7 +716,7 @@ function renderCommentsPane() {
   return `
     <section class="surface-panel">
       <div class="eyebrow">Comments</div>
-      <h2>Your comment history</h2>
+      <h2>Your comments</h2>
       <div class="roster-list">
         ${
           ownComments.length
@@ -898,7 +896,7 @@ async function handleProfileSave(form) {
   try {
     const formData = new FormData(form);
     const current = currentUser();
-    let avatarUrl = String(formData.get("avatarUrl") || "").trim();
+    let avatarUrl = String(current?.avatarUrl || "").trim();
     let avatarBlob = current?.avatarBlob || null;
     const avatarFile = formData.get("avatarFile");
     if (avatarFile instanceof File && avatarFile.size > 0) {
@@ -909,8 +907,6 @@ async function handleProfileSave(form) {
       );
       avatarUrl = upload.url;
       avatarBlob = upload;
-    } else if (!avatarUrl || avatarUrl !== String(current?.avatarUrl || "").trim()) {
-      avatarBlob = null;
     }
     await rebroadcastAccount(workspaceState.session, {
       displayName: formData.get("displayName"),
@@ -923,7 +919,7 @@ async function handleProfileSave(form) {
         .filter(Boolean)
     });
     if (status) {
-      status.textContent = "Profile synced.";
+      status.textContent = "Profile updated.";
       status.dataset.state = "success";
     }
     await refreshWorkspace(true);
@@ -1173,7 +1169,7 @@ async function handleSnapshotRequest(button) {
         requested_at: new Date().toISOString()
       }
     });
-    workspaceState.dashboardStatus = "Snapshot request published. Peer pinner can now materialize current approved content and update its bakedown branch.";
+    workspaceState.dashboardStatus = "Snapshot request sent. The pinner can now build the latest approved content and update the review branch.";
     await refreshWorkspace(true);
   } catch (error) {
     workspaceState.dashboardStatus = String(error?.message || error || "Snapshot request failed.");
@@ -1199,7 +1195,7 @@ async function handleChatSend(form) {
   const body = String(formData.get("body") || "").trim();
   if (!body) return;
   if (!workspaceState.siteKeyShare) {
-    window.alert("No current site inbox key share is loaded for replies.");
+    window.alert("This admin account does not have the current inbox key yet.");
     return;
   }
   await publishSubmissionChat(workspaceState.siteKeyShare.siteSecretKeyHex, {
@@ -1424,7 +1420,7 @@ function renderSnapshotSummary(snapshot) {
   return `
     <div class="roster-list">
       <article class="roster-item">
-        <strong>Latest bakedown</strong>
+        <strong>Latest snapshot</strong>
         <span>${escapeHtml(snapshot.status || "ready")} • ${escapeHtml(generatedAt)}</span>
         <span>${escapeHtml(`${snapshot.counts?.posts || 0} posts • ${snapshot.counts?.entities || 0} entities`)}</span>
         ${
@@ -1448,7 +1444,7 @@ function resolveEntityByNameOrSlug(value) {
 function logLabel(event) {
   switch (Number(event.kind)) {
     case SITE.nostr.kinds.snapshot:
-      return "Snapshot bakedown";
+      return "Snapshot";
     case SITE.nostr.kinds.adminClaim:
       return "Root admin claim";
     case SITE.nostr.kinds.adminRole:
@@ -1517,13 +1513,13 @@ function renderSiteKeyShareStatus() {
   if (workspaceState.siteKeyShare) {
     const olderCount = Math.max(0, workspaceState.siteKeyShares.length - 1);
     return olderCount
-      ? `This account holds the current site inbox key share and ${olderCount} older share${olderCount === 1 ? "" : "s"} for earlier encrypted material.`
-      : "This account currently holds the active site inbox key share.";
+      ? `This account can read new private submissions and ${olderCount} older encrypted record${olderCount === 1 ? "" : "s"}.`
+      : "This account can read new private submissions.";
   }
   if (workspaceState.siteKeyShares.length) {
-    return "Only older site inbox key shares are loaded for this account. Ask another admin to share the current key.";
+    return "This account only has older inbox access. Ask another admin to share the current key.";
   }
-  return "No site inbox key share has been loaded for this account yet.";
+  return "This account does not have inbox access yet.";
 }
 
 function applyLocalCommentModeration(commentId, action, note) {
