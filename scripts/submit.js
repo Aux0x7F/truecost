@@ -107,6 +107,7 @@ async function refreshSubmitPage(force = false) {
   submitState.viewer = deriveIdentity(submitState.session.secretKeyHex);
   submitState.publicState = await loadPublicState(force);
   submitState.submissions = await loadUserSubmissions(submitState.session.secretKeyHex).catch(() => []);
+  await maybeOpenChatFromUrl();
   renderSubmitPage();
 }
 
@@ -401,6 +402,19 @@ async function hydrateChatModal() {
   ).catch(() => []);
   submitState.chatModal.loading = false;
   renderSubmitPage();
+}
+
+async function maybeOpenChatFromUrl() {
+  const chatId = cleanSlug(new URLSearchParams(window.location.search).get("chat") || "");
+  if (!chatId) return;
+  const exists = submitState.submissions.find((item) => item.id === chatId);
+  if (!exists) return;
+  submitState.chatModal = {
+    submissionId: chatId,
+    loading: true,
+    messages: []
+  };
+  await hydrateChatModal();
 }
 
 async function handleChatSend(form) {

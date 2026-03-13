@@ -10,7 +10,11 @@ import {
   deriveIdentity,
   ensureEventToolsLoaded,
   ensureBlobAvailable,
+  loadAdminKeyShare,
+  loadInboxSubmissions,
   loadPublicState,
+  loadSubmissionThread,
+  loadUserSubmissions,
   publishTaggedJson
 } from "./core/nostr.js";
 import { clearSession, getOrCreateGuestSession, getStoredGuestSession, getStoredSession } from "./core/session.js";
@@ -40,6 +44,8 @@ const state = {
   publicState: null,
   postsPromise: null,
   commentReply: null,
+  notifications: [],
+  notificationsLoading: false,
   map: null,
   markers: null
 };
@@ -97,7 +103,11 @@ function initNavigation() {
     const profileToggle = target.closest("[data-profile-toggle]");
     if (profileToggle) {
       const menu = profileToggle.closest("[data-profile-menu]");
-      if (menu) menu.classList.toggle("is-open");
+      if (menu) {
+        const isOpen = !menu.classList.contains("is-open");
+        menu.classList.toggle("is-open", isOpen);
+        if (isOpen) markNotificationsSeen();
+      }
       return;
     }
 
@@ -144,6 +154,7 @@ async function bootstrapRelayState() {
     state.publicState = null;
   }
   void publishVisitPulse();
+  void hydrateNotifications();
   renderNavigation();
 }
 
@@ -161,6 +172,8 @@ function renderNavigation() {
       state.viewer &&
       state.publicState?.admins?.includes(state.viewer.pubkey)
   );
+  const notifications = isLoggedIn ? state.notifications.slice(0, 8) : [];
+  const unreadCount = isLoggedIn ? countUnreadNotifications(notifications) : 0;
   const mapEnabled = Boolean(state.publicState?.connected);
   const mapCurrent = NAV_KEYS.map.includes(page);
 
@@ -197,11 +210,26 @@ function renderNavigation() {
     <div class="profile-menu ${NAV_KEYS.workspace.includes(page) ? "is-current" : ""}" data-profile-menu>
       <button class="profile-menu__toggle ${currentUser?.avatarUrl ? "has-avatar" : !isLoggedIn ? "is-wordmark" : ""}" type="button" data-profile-toggle aria-label="${isLoggedIn ? "Profile options" : "Log in"}">
         <span class="profile-menu__badge ${currentUser?.avatarUrl ? "has-avatar" : !isLoggedIn ? "is-wordmark" : ""}">${profileBadgeMarkup(currentUser)}</span>
+        ${unreadCount ? `<span class="profile-menu__notice">${Math.min(unreadCount, 9)}${unreadCount > 9 ? "+" : ""}</span>` : ""}
       </button>
       <div class="profile-menu__panel">
         ${
           isLoggedIn
             ? `
+              ${
+                state.notificationsLoading
+                  ? `<div class="profile-menu__section"><div class="loading-state" role="status" aria-live="polite"><span class="loading-spinner" aria-hidden="true"></span><span>Looking up notifications...</span></div></div>`
+                  : notifications.length
+                    ? `
+                      <div class="profile-menu__section">
+                        <div class="profile-menu__section-title">Notifications</div>
+                        <div class="profile-menu__notifications">
+                          ${notifications.map((item) => renderNotificationItem(item)).join("")}
+                        </div>
+                      </div>
+                    `
+                    : ""
+              }
               <a href="./admin.html?tab=profile">Profile options</a>
               ${isAdmin ? `<a href="./admin.html?tab=dashboard">Admin</a>` : ""}
               <button type="button" data-signout>Sign out</button>
@@ -257,8 +285,7 @@ function initExternalLinks() {
 async function initInvestigationCards() {
   const homeGrid = document.querySelector("[data-home-investigations]");
   const listGrid = document.querySelector("[data-investigation-list]");
-  const draftHost = document.querySelector("[data-investigation-drafts]");
-  if (!homeGrid && !listGrid && !draftHost) return;
+  if (!homeGrid && !listGrid) return;
 
   try {
     const posts = await loadPosts();
@@ -273,32 +300,34 @@ async function initInvestigationCards() {
         .join("");
     }
     if (listGrid) {
-      listGrid.innerHTML = posts.map((post) => renderInvestigationCard(post, false)).join("");
-    }
-    if (draftHost instanceof HTMLElement) {
-      const drafts = canEdit ? buildDraftArchiveEntries(publicState.drafts || []) : [];
-      draftHost.hidden = !drafts.length;
-      draftHost.innerHTML = drafts.length ? renderDraftArchive(drafts) : "";
+      const entries = canEdit
+        ? buildInvestigationArchiveEntries(posts, publicState.drafts || [])
+        : posts.map((post) => ({
+            ...post,
+            archiveStatus: "posted",
+            statusLabel: "Posted",
+            href: `./investigation.html?slug=${encodeURIComponent(post.slug)}`,
+            actionLabel: "Open investigation"
+          }));
+      listGrid.innerHTML = `
+        ${canEdit ? renderAuthoringLeadCard() : ""}
+        ${entries.map((post) => renderInvestigationCard(post, false)).join("")}
+      `;
     }
   } catch {
-    renderError(homeGrid || listGrid || draftHost, "Investigation feed unavailable.");
+    renderError(homeGrid || listGrid, "Investigation feed unavailable.");
   }
 }
 
 async function initAuthoringEntry() {
   const host = document.querySelector("[data-authoring-entry]");
-  const panel = document.querySelector("[data-authoring-panel]");
-  if (!host && !panel) return;
-  if (panel instanceof HTMLElement) panel.hidden = true;
+  if (!host) return;
   const publicState = await getPublicState();
   if (!editorEntryAllowed(publicState)) {
-    if (host instanceof HTMLElement) host.innerHTML = "";
+    host.innerHTML = "";
     return;
   }
-  if (host instanceof HTMLElement) {
-    host.innerHTML = `<a class="button" href="./editor.html">Create investigation</a>`;
-  }
-  if (panel instanceof HTMLElement) panel.hidden = false;
+  host.innerHTML = `<a class="button" href="./editor.html">Create investigation</a>`;
 }
 
 async function initInvestigationDetail() {
@@ -306,12 +335,26 @@ async function initInvestigationDetail() {
   if (!article) return;
   article.innerHTML = renderLoadingState("Looking up article...");
   const commentPanel = document.querySelector("[data-comment-panel]");
+  const reviewPanel = document.querySelector("[data-investigation-review]");
   if (commentPanel) commentPanel.innerHTML = renderLoadingState("Looking up discussion...");
 
   try {
     const posts = await loadPosts();
-    const slug = cleanSlug(new URLSearchParams(window.location.search).get("slug") || "");
-    const post = posts.find((item) => item.slug === slug) || posts[0];
+    const publicState = await getPublicState();
+    const params = new URLSearchParams(window.location.search);
+    const slug = cleanSlug(params.get("slug") || "");
+    const draftSlug = cleanSlug(params.get("draft") || "");
+    const canReview = editorEntryAllowed(publicState);
+    const draft = draftSlug
+      ? (publicState.drafts || []).find((item) => item.slug === draftSlug) || null
+      : null;
+    const isDraftPreview = Boolean(draft && canReview);
+    if (draftSlug && !isDraftPreview) {
+      throw new Error("Draft preview unavailable.");
+    }
+    const post = isDraftPreview
+      ? draftToInvestigationPreview(draft)
+      : posts.find((item) => item.slug === slug) || posts[0];
     if (!post) throw new Error("No investigations found.");
 
     renderMarkdown(article, post.body);
@@ -319,26 +362,48 @@ async function initInvestigationDetail() {
     setText("[data-investigation-summary]", post.summary);
     setText("[data-investigation-date]", formatDate(post.date));
     setText("[data-investigation-region]", post.location);
-    setText("[data-investigation-status]", post.status);
+    setText("[data-investigation-status]", post.statusLabel || post.status);
     const tags = document.querySelector("[data-investigation-kicker]");
     if (tags) tags.innerHTML = renderTagList(post.tags);
     const records = document.querySelector("[data-investigation-records]");
     if (records) records.innerHTML = renderRecordList(post.records);
     const related = document.querySelector("[data-investigation-related]");
     if (related) {
-      related.innerHTML = posts
-        .filter((item) => item.slug !== post.slug)
-        .slice(0, 2)
-        .map((item) => renderInvestigationCard(item, true))
-        .join("");
+      related.innerHTML = isDraftPreview
+        ? ""
+        : posts
+            .filter((item) => item.slug !== post.slug)
+            .slice(0, 2)
+            .map((item) => renderInvestigationCard(item, true))
+            .join("");
     }
 
-    const publicState = await getPublicState();
     enrichArticleEntities(article, publicState);
-    await renderComments(post.slug, publicState);
+    if (reviewPanel instanceof HTMLElement) {
+      if (isDraftPreview) {
+        reviewPanel.hidden = false;
+        reviewPanel.innerHTML = renderReviewPreviewPanel(draft);
+        bindReviewPreviewPanel(reviewPanel, draft);
+      } else {
+        reviewPanel.hidden = true;
+        reviewPanel.innerHTML = "";
+      }
+    }
+    if (commentPanel instanceof HTMLElement) {
+      commentPanel.hidden = isDraftPreview;
+      if (!isDraftPreview) {
+        await renderComments(post.slug, publicState);
+      } else {
+        commentPanel.innerHTML = "";
+      }
+    }
     document.title = `${post.title} | ${SITE.shortName}`;
   } catch {
     renderError(article, "This case file could not be loaded.");
+    if (reviewPanel instanceof HTMLElement) {
+      reviewPanel.hidden = true;
+      reviewPanel.innerHTML = "";
+    }
   }
 }
 
@@ -552,7 +617,7 @@ function renderComment(comment, publicState, options = {}, depth = 0) {
   const authorLabel = author?.displayName || author?.username || "User";
   const replies = Array.isArray(comment.replies) ? comment.replies : [];
   return `
-    <article class="comment-card ${depth ? "comment-card--reply" : ""}" data-comment-id="${escapeAttribute(comment.id)}">
+    <article class="comment-card ${depth ? "comment-card--reply" : ""}" id="comment-${escapeAttribute(comment.id)}" data-comment-id="${escapeAttribute(comment.id)}">
       <div class="comment-card__shell">
         ${renderAvatarBadge(author, authorLabel, "comment-card__avatar")}
         <div class="comment-card__main">
@@ -640,11 +705,17 @@ function renderInvestigationCard(post, compact) {
   const href = post.href || `./investigation.html?slug=${encodeURIComponent(post.slug)}`;
   const eyebrow = post.eyebrow || "Case file";
   const actionLabel = post.actionLabel || "Open investigation";
+  const statusPill = post.statusLabel
+    ? `<span class="status-pill status-pill--${escapeAttribute(post.archiveStatus || "posted")}">${escapeHtml(post.statusLabel)}</span>`
+    : "";
   if (!compact) {
     return `
-      <article class="investigation-card investigation-card--list">
+      <article class="investigation-card investigation-card--list ${post.cardClass || ""}">
         <div class="investigation-card__body">
-          <div class="eyebrow">${escapeHtml(eyebrow)}</div>
+          <div class="investigation-card__head">
+            <div class="eyebrow">${escapeHtml(eyebrow)}</div>
+            ${statusPill}
+          </div>
           <h3><a href="${href}">${escapeHtml(post.title)}</a></h3>
           <p class="card-meta">${escapeHtml(post.location)} <span>${escapeHtml(formatDate(post.date))}</span></p>
           <p class="card-summary">${escapeHtml(post.summary)}</p>
@@ -658,7 +729,10 @@ function renderInvestigationCard(post, compact) {
   }
   return `
     <article class="investigation-card ${compact ? "investigation-card--compact" : ""}">
-      <div class="eyebrow">${escapeHtml(eyebrow)}</div>
+      <div class="investigation-card__head">
+        <div class="eyebrow">${escapeHtml(eyebrow)}</div>
+        ${statusPill}
+      </div>
       <h3><a href="${href}">${escapeHtml(post.title)}</a></h3>
       <p class="card-meta">${escapeHtml(post.location)} <span>${escapeHtml(formatDate(post.date))}</span></p>
       <p>${escapeHtml(post.summary)}</p>
@@ -668,36 +742,76 @@ function renderInvestigationCard(post, compact) {
   `;
 }
 
-function buildDraftArchiveEntries(drafts) {
-  return (Array.isArray(drafts) ? drafts : [])
-    .map((draft) => ({
-      ...draft,
-      eyebrow: draftStatusLabel(draft.status),
-      actionLabel: "Open draft",
-      href: `./editor.html?slug=${encodeURIComponent(draft.slug)}`,
-      location: draft.location || "Draft location pending",
-      summary: draft.summary || "This draft does not have a summary yet."
-    }))
-    .sort((left, right) => String(right.date || "").localeCompare(String(left.date || "")));
+function buildInvestigationArchiveEntries(posts, drafts) {
+  const staticSlugs = new Set((Array.isArray(posts) ? posts : []).map((post) => post.slug));
+  const published = (Array.isArray(posts) ? posts : []).map((post) => ({
+    ...post,
+    archiveStatus: "posted",
+    statusLabel: "Posted",
+    href: `./investigation.html?slug=${encodeURIComponent(post.slug)}`,
+    actionLabel: "Open investigation"
+  }));
+  const relayEntries = (Array.isArray(drafts) ? drafts : [])
+    .filter((draft) => !(staticSlugs.has(draft.slug) && normalizeDraftStatus(draft.status) === "approved"))
+    .map((draft) => {
+      const status = normalizeDraftStatus(draft.status);
+      const reviewAction = draftReviewAction(draft);
+      const archived = status === "approved" ? "approved" : status;
+      const isEditable = status === "draft" || status === "revision";
+      const href = isEditable
+        ? `./editor.html?slug=${encodeURIComponent(draft.slug)}`
+        : `./investigation.html?draft=${encodeURIComponent(draft.slug)}`;
+      return {
+        ...draft,
+        body: draft.markdown || "",
+        archiveStatus: archived,
+        statusLabel: draftStatusLabel(status, reviewAction),
+        href,
+        actionLabel: isEditable ? "Continue writing" : "Open preview",
+        location: draft.location || "Draft location pending",
+        summary: draft.summary || "This investigation does not have a summary yet.",
+        eyebrow: "Investigation"
+      };
+    });
+  return [...relayEntries, ...published]
+    .sort((left, right) => {
+      const leftStamp = sortDateValue(left);
+      const rightStamp = sortDateValue(right);
+      if (leftStamp !== rightStamp) return rightStamp - leftStamp;
+      return String(left.title || "").localeCompare(String(right.title || ""));
+    });
 }
 
-function renderDraftArchive(drafts) {
+function renderAuthoringLeadCard() {
   return `
-    <div class="eyebrow">Drafts</div>
-    <h3>Working drafts and review queue</h3>
-    <p class="muted-text">Only admins can see this section. Open any draft to keep writing or send it forward.</p>
-    <div class="story-list story-list--drafts">
-      ${drafts.map((draft) => renderInvestigationCard(draft, false)).join("")}
-    </div>
+    <article class="surface-panel authoring-card">
+      <div class="eyebrow">For editors</div>
+      <h3>Write in the full editor</h3>
+      <p>Drafts save as you work, submitted investigations open in review preview, and approved posts roll into the next bakedown.</p>
+      <div class="button-row"><a class="button" href="./editor.html">Create investigation</a></div>
+    </article>
   `;
 }
 
-function draftStatusLabel(status) {
-  const clean = String(status || "").trim().toLowerCase();
-  if (["candidate", "review", "submitted"].includes(clean)) return "In review";
-  if (clean === "approved") return "Approved for snapshot";
-  if (clean === "rejected") return "Sent back";
-  return "Working draft";
+function normalizeDraftStatus(status) {
+  return String(status || "").trim().toLowerCase();
+}
+
+function draftReviewAction(draft) {
+  const tag = Array.isArray(draft?._event?.tags)
+    ? draft._event.tags.find((item) => Array.isArray(item) && item[0] === "review")
+    : null;
+  return String(tag?.[1] || "").trim().toLowerCase();
+}
+
+function draftStatusLabel(status, reviewAction = "") {
+  const clean = normalizeDraftStatus(status);
+  const action = String(reviewAction || "").trim().toLowerCase();
+  if (["candidate", "review", "submitted"].includes(clean)) return "Submitted";
+  if (clean === "approved") return "Approved";
+  if (clean === "revision" || action === "revise") return "Revision requested";
+  if (clean === "denied" || action === "deny") return "Denied";
+  return "Draft";
 }
 
 function renderRecordList(records) {
@@ -803,6 +917,346 @@ function buildEntityUsage(posts, entities) {
   return usage;
 }
 
+function draftOwnerPubkey(draft) {
+  const revisions = Array.isArray(draft?.revisions) ? draft.revisions : [];
+  const oldest = revisions.length ? revisions[revisions.length - 1] : null;
+  return String(oldest?.author || draft?.author || "").trim().toLowerCase();
+}
+
+function draftToInvestigationPreview(draft) {
+  const reviewAction = draftReviewAction(draft);
+  return {
+    ...draft,
+    body: draft.markdown || "",
+    statusLabel: draftStatusLabel(draft.status, reviewAction),
+    records: [],
+    tags: Array.isArray(draft.tags) ? draft.tags : [],
+    title: draft.title || "Untitled investigation",
+    summary: draft.summary || "No summary added yet.",
+    location: draft.location || "Draft location pending"
+  };
+}
+
+function renderReviewPreviewPanel(draft) {
+  const status = normalizeDraftStatus(draft.status);
+  const owner = state.publicState?.users?.find((user) => user.pubkey === draftOwnerPubkey(draft)) || null;
+  const ownerLabel = owner?.displayName || owner?.username || shortReviewKey(draftOwnerPubkey(draft));
+  const reviewAction = draftReviewAction(draft);
+  const canReview = ["candidate", "review", "submitted"].includes(status);
+  return `
+    <div class="eyebrow">Review preview</div>
+    <h3>${escapeHtml(draftStatusLabel(status, reviewAction))}</h3>
+    <p class="muted-text">Submitted by ${escapeHtml(ownerLabel)}. This view is read-only so the review decision happens against what was actually submitted.</p>
+    <div class="tag-row">
+      <span class="tag">${escapeHtml(draftStatusLabel(status, reviewAction))}</span>
+      <span class="tag">${escapeHtml(formatDate(draft.date))}</span>
+    </div>
+    <div class="button-row button-row--tight">
+      ${
+        canReview
+          ? `
+            <button class="button" type="button" data-review-action="approve" data-draft-slug="${escapeAttribute(draft.slug)}">Approve</button>
+            <button class="button-ghost" type="button" data-review-action="revise" data-draft-slug="${escapeAttribute(draft.slug)}">Request revision</button>
+            <button class="button-ghost" type="button" data-review-action="deny" data-draft-slug="${escapeAttribute(draft.slug)}">Deny</button>
+          `
+          : normalizeDraftStatus(draft.status) === "revision"
+            ? `<a class="button-ghost" href="./editor.html?slug=${encodeURIComponent(draft.slug)}">Open in editor</a>`
+            : `<a class="button-ghost" href="./investigations.html">Back to investigations</a>`
+      }
+    </div>
+    <div class="status-box" data-review-status aria-live="polite"></div>
+  `;
+}
+
+function bindReviewPreviewPanel(panel, draft) {
+  const buttons = panel.querySelectorAll("[data-review-action]");
+  for (const button of buttons) {
+    button.addEventListener("click", async () => {
+      const action = button.getAttribute("data-review-action") || "";
+      const statusBox = panel.querySelector("[data-review-status]");
+      if (!state.session || !editorEntryAllowed(state.publicState)) return;
+      button.setAttribute("disabled", "disabled");
+      if (statusBox instanceof HTMLElement) {
+        statusBox.textContent = "Saving review decision...";
+        statusBox.dataset.state = "pending";
+      }
+      try {
+        await publishTaggedJson({
+          kind: SITE.nostr.kinds.draft,
+          secretKeyHex: state.session.secretKeyHex,
+          tags: [
+            ["d", draft.slug],
+            ["status", reviewStatusForAction(action)],
+            ["review", action]
+          ],
+          content: {
+            ...draft,
+            author_pubkey: draftOwnerPubkey(draft),
+            status: reviewStatusForAction(action),
+            reviewed_at: new Date().toISOString(),
+            reviewed_by: state.viewer?.pubkey || "",
+            review_action: action
+          }
+        });
+        state.publicState = await loadPublicState(true);
+        state.notifications = [];
+        void hydrateNotifications(true);
+        if (statusBox instanceof HTMLElement) {
+          statusBox.textContent = reviewActionMessage(action);
+          statusBox.dataset.state = "success";
+        }
+        window.setTimeout(() => {
+          window.location.href = "./investigations.html";
+        }, 700);
+      } catch (error) {
+        if (statusBox instanceof HTMLElement) {
+          statusBox.textContent = String(error?.message || error || "Review action failed.");
+          statusBox.dataset.state = "error";
+        }
+      } finally {
+        button.removeAttribute("disabled");
+      }
+    });
+  }
+}
+
+function reviewStatusForAction(action) {
+  if (action === "approve") return "approved";
+  if (action === "deny") return "denied";
+  return "revision";
+}
+
+function reviewActionMessage(action) {
+  if (action === "approve") return "Investigation approved for publish.";
+  if (action === "deny") return "Investigation denied.";
+  return "Revision requested.";
+}
+
+async function hydrateNotifications(force = false) {
+  if (!state.session) {
+    state.notifications = [];
+    state.notificationsLoading = false;
+    return;
+  }
+  const publicState = await getPublicState();
+  if (!editorEntryAllowed(publicState) && !state.viewer) {
+    state.viewer = deriveIdentity(state.session.secretKeyHex);
+  }
+  if (!state.viewer) return;
+  state.notificationsLoading = true;
+  renderNavigation();
+  try {
+    state.notifications = await buildNotifications(publicState, force);
+  } catch {
+    state.notifications = [];
+  } finally {
+    state.notificationsLoading = false;
+    renderNavigation();
+  }
+}
+
+async function buildNotifications(publicState) {
+  const viewer = state.viewer;
+  if (!viewer) return [];
+  const notifications = [];
+  const seenAt = notificationSeenAt();
+  const isAdmin = publicState.admins?.includes(viewer.pubkey);
+  const commentMap = new Map((publicState.allComments || []).map((comment) => [comment.id, comment]));
+
+  for (const comment of publicState.comments || []) {
+    if (!comment.parent_id || comment.author === viewer.pubkey) continue;
+    const parent = commentMap.get(comment.parent_id);
+    if (!parent || parent.author !== viewer.pubkey) continue;
+    notifications.push({
+      id: `comment-reply:${comment.id}`,
+      createdAt: comment.created_at,
+      href: `./investigation.html?slug=${encodeURIComponent(comment.post_slug)}#comment-${encodeURIComponent(comment.id)}`,
+      unread: comment.created_at > seenAt,
+      label: "Comment reply",
+      title: "Someone replied to your comment",
+      detail: trimmed(comment.markdown, 100)
+    });
+  }
+
+  for (const status of publicState.submissionStatuses?.values?.() || []) {
+    if (status.author_pubkey !== viewer.pubkey || status.by === viewer.pubkey) continue;
+    notifications.push({
+      id: `submission-status:${status.submission_id}:${status.updated_at}`,
+      createdAt: status.updated_at,
+      href: "./submit.html",
+      unread: status.updated_at > seenAt,
+      label: "Submission update",
+      title: `Submission ${status.status}`,
+      detail: status.note || "A submission you sent has a new status."
+    });
+  }
+
+  for (const draft of publicState.drafts || []) {
+    const reviewAction = draftReviewAction(draft);
+    const ownerPubkey = draftOwnerPubkey(draft);
+    const isPending = ["candidate", "review", "submitted"].includes(normalizeDraftStatus(draft.status));
+    if (ownerPubkey === viewer.pubkey && ["approve", "revise", "deny"].includes(reviewAction)) {
+      notifications.push({
+        id: `draft-review:${draft.slug}:${draft.created_at}`,
+        createdAt: draft.created_at,
+        href: normalizeDraftStatus(draft.status) === "revision"
+          ? `./editor.html?slug=${encodeURIComponent(draft.slug)}`
+          : `./investigation.html?draft=${encodeURIComponent(draft.slug)}`,
+        unread: draft.created_at > seenAt,
+        label: "Investigation review",
+        title: reviewNotificationTitle(reviewAction),
+        detail: draft.title
+      });
+    }
+    if (isAdmin && isPending) {
+      notifications.push({
+        id: `pending-draft:${draft.slug}:${draft.created_at}`,
+        createdAt: draft.created_at,
+        href: `./investigation.html?draft=${encodeURIComponent(draft.slug)}`,
+        unread: draft.created_at > seenAt,
+        label: "Review queue",
+        title: "New investigation pending review",
+        detail: draft.title
+      });
+    }
+  }
+
+  if (isAdmin) {
+    for (const comment of publicState.comments || []) {
+      if (comment.author === viewer.pubkey) continue;
+      notifications.push({
+        id: `post-comment:${comment.id}`,
+        createdAt: comment.created_at,
+        href: `./investigation.html?slug=${encodeURIComponent(comment.post_slug)}#comment-${encodeURIComponent(comment.id)}`,
+        unread: comment.created_at > seenAt,
+        label: "Post reply",
+        title: "New comment on a published investigation",
+        detail: trimmed(comment.markdown, 100)
+      });
+    }
+  }
+
+  const submissionNotifications = await loadSubmissionNotifications(publicState, viewer.pubkey, isAdmin);
+  notifications.push(...submissionNotifications.map((item) => ({
+    ...item,
+    unread: item.createdAt > seenAt
+  })));
+
+  return notifications
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index)
+    .slice(0, 12);
+}
+
+async function loadSubmissionNotifications(publicState, viewerPubkey, isAdmin) {
+  if (!state.session?.secretKeyHex) return [];
+  const notifications = [];
+  const knownSitePubkeys = notificationSitePubkeys(publicState);
+  const ownSubmissions = await loadUserSubmissions(state.session.secretKeyHex).catch(() => []);
+  const ownThreads = await Promise.all(
+    ownSubmissions.slice(0, 8).map(async (submission) => ({
+      submissionId: submission.id,
+      messages: await loadSubmissionThread(state.session.secretKeyHex, submission.id, knownSitePubkeys).catch(() => [])
+    }))
+  );
+  for (const thread of ownThreads) {
+    for (const message of thread.messages) {
+      if (message.author === viewerPubkey) continue;
+      notifications.push({
+        id: `submission-chat:${thread.submissionId}:${message.id}`,
+        createdAt: Number(message.event?.created_at || 0),
+        href: `./submit.html?chat=${encodeURIComponent(thread.submissionId)}`,
+        label: "Submission chat",
+        title: "New message in a submission thread",
+        detail: trimmed(message.payload?.body || "", 100)
+      });
+    }
+  }
+  if (isAdmin) {
+    const activeSitePubkey = state.publicState?.siteInfo?.activePubkey || "";
+    const share = activeSitePubkey
+      ? await loadAdminKeyShare(state.session.secretKeyHex, activeSitePubkey).catch(() => null)
+      : null;
+    if (share?.siteSecretKeyHex) {
+      const inboxSubmissions = await loadInboxSubmissions(share.siteSecretKeyHex).catch(() => []);
+      const inboxThreads = await Promise.all(
+        inboxSubmissions.slice(0, 8).map(async (submission) => ({
+          submissionId: submission.id,
+          messages: await loadSubmissionThread(share.siteSecretKeyHex, submission.id, [submission.author]).catch(() => [])
+        }))
+      );
+      for (const thread of inboxThreads) {
+        for (const message of thread.messages) {
+          if (message.author === viewerPubkey) continue;
+          notifications.push({
+            id: `admin-chat:${thread.submissionId}:${message.id}`,
+            createdAt: Number(message.event?.created_at || 0),
+            href: `./admin.html?tab=submissions`,
+            label: "Submission chat",
+            title: "New submission message in the shared inbox",
+            detail: trimmed(message.payload?.body || "", 100)
+          });
+        }
+      }
+    }
+  }
+  return notifications;
+}
+
+function notificationSitePubkeys(publicState) {
+  return dedupe([
+    publicState?.siteInfo?.activePubkey || "",
+    publicState?.siteInfo?.fallbackPubkey || "",
+    ...((publicState?.siteInfo?.events || []).map((event) => event.site_pubkey || ""))
+  ]);
+}
+
+function notificationSeenAt() {
+  if (!state.viewer?.pubkey) return 0;
+  const raw = window.localStorage.getItem(notificationSeenKey(state.viewer.pubkey));
+  const value = Number(raw || 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function notificationSeenKey(pubkey) {
+  return `${SITE.nostr.storageNamespace}.notifications.seen.${pubkey}`;
+}
+
+function markNotificationsSeen() {
+  if (!state.viewer?.pubkey || !state.notifications.length) return;
+  const latest = state.notifications.reduce((max, item) => Math.max(max, Number(item.createdAt || 0)), 0);
+  if (!latest) return;
+  window.localStorage.setItem(notificationSeenKey(state.viewer.pubkey), String(latest));
+  state.notifications = state.notifications.map((item) => ({ ...item, unread: false }));
+  const badge = document.querySelector(".profile-menu__notice");
+  if (badge) badge.remove();
+}
+
+function countUnreadNotifications(notifications) {
+  return (Array.isArray(notifications) ? notifications : []).filter((item) => item.unread).length;
+}
+
+function renderNotificationItem(item) {
+  return `
+    <a class="profile-menu__notice-item" href="${escapeAttribute(item.href)}">
+      <span class="profile-menu__notice-label">${escapeHtml(item.label)}</span>
+      <strong>${escapeHtml(item.title)}</strong>
+      <span>${escapeHtml(item.detail || "")}</span>
+    </a>
+  `;
+}
+
+function reviewNotificationTitle(action) {
+  if (action === "approve") return "Your investigation was approved";
+  if (action === "deny") return "An investigation was denied";
+  return "Revision was requested on your investigation";
+}
+
+function shortReviewKey(value) {
+  const clean = String(value || "").trim();
+  return clean.length > 12 ? `${clean.slice(0, 8)}...${clean.slice(-4)}` : clean || "Editor";
+}
+
 function renderEntityCard(entity, posts) {
   return `
     <article class="entity-card" id="entity-card-${escapeAttribute(entity.slug)}" data-entity-card="${escapeAttribute(entity.slug)}">
@@ -902,6 +1356,9 @@ async function getPublicState() {
     state.publicState = await loadPublicState();
     if (state.session && !state.viewer) {
       state.viewer = deriveIdentity(state.session.secretKeyHex);
+    }
+    if (state.session) {
+      void hydrateNotifications();
     }
     renderNavigation();
     return state.publicState;
@@ -1046,6 +1503,23 @@ function formatDateTime(unixSeconds) {
     hour: "numeric",
     minute: "2-digit"
   }).format(new Date(unixSeconds * 1000));
+}
+
+function sortDateValue(item) {
+  const raw = String(item?.date || "").trim();
+  const parsed = raw ? Date.parse(`${raw}T00:00:00`) : NaN;
+  if (Number.isFinite(parsed)) return parsed;
+  const createdAt = Number(item?.created_at || 0);
+  return Number.isFinite(createdAt) ? createdAt * 1000 : 0;
+}
+
+function trimmed(value, length) {
+  const text = String(value || "").trim();
+  return text.length > length ? `${text.slice(0, Math.max(0, length - 1))}...` : text;
+}
+
+function dedupe(values) {
+  return [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
 function escapeHtml(value) {

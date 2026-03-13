@@ -330,6 +330,7 @@ function buildDraftPayload(status = "draft") {
     date: document.date,
     location: primaryEntity?.name || primaryEntity?.location || "Undisclosed location",
     status,
+    author_pubkey: draftOwnerPubkey(),
     summary: document.summary,
     tags: document.tags,
     entity_refs: dedupe(resolvedRefs),
@@ -478,8 +479,15 @@ function reviewVersionLabel(status) {
   const clean = String(status || "").toLowerCase();
   if (clean === "candidate" || clean === "review" || clean === "submitted") return "Sent to review";
   if (clean === "approved") return "Approved";
-  if (clean === "rejected") return "Sent back";
+  if (clean === "revision") return "Revision requested";
+  if (clean === "denied") return "Denied";
   return "Working draft";
+}
+
+function draftOwnerPubkey() {
+  const revisions = Array.isArray(editorState.relayVersions) ? editorState.relayVersions : [];
+  const oldest = revisions.length ? revisions[revisions.length - 1] : null;
+  return String(oldest?.author_pubkey || oldest?.author || editorState.viewer?.pubkey || "").trim().toLowerCase();
 }
 
 function applyDocument(nextDocument) {
