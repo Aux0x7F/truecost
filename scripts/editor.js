@@ -35,12 +35,17 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 async function initEditorPage(force = false) {
+  editorState.session = getStoredSession();
+  editorState.viewer = null;
+  if (!editorState.session) {
+    editorState.publicState = editorState.publicState || { admins: [] };
+    editorState.staticSlugs = [];
+    renderEditorShell();
+    return;
+  }
   renderEditorLoading("Looking up editor...");
   await ensureEventToolsLoaded();
-  editorState.session = getStoredSession();
-  editorState.viewer = editorState.session
-    ? deriveIdentity(editorState.session.secretKeyHex)
-    : null;
+  editorState.viewer = deriveIdentity(editorState.session.secretKeyHex);
   editorState.publicState = await loadPublicState(force);
   editorState.staticSlugs = await loadStaticSlugs().catch(() => []);
   renderEditorShell();
@@ -967,10 +972,17 @@ function formatTime(value) {
 }
 
 function renderLoadingState(message) {
+  const reloadHref = `${window.location.pathname}${window.location.search}${window.location.hash}`;
   return `
     <div class="loading-state loading-state--panel" role="status" aria-live="polite">
-      <span class="loading-spinner" aria-hidden="true"></span>
-      <span>${escapeHtml(message)}</span>
+      <div class="loading-state__message">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <span>${escapeHtml(message)}</span>
+      </div>
+      <div class="loading-state__slow">
+        <span>This is taking longer than expected.</span>
+        <a class="button-ghost loading-state__reload" href="${escapeAttribute(reloadHref)}">Reload</a>
+      </div>
     </div>
   `;
 }
