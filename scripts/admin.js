@@ -7,7 +7,6 @@ import {
   ensureEventToolsLoaded,
   generateSecretKeyHex,
   loadAdminKeyShares,
-  loadAdminKeyShare,
   loadInboxSubmissions,
   loadPublicState,
   lookupUsers,
@@ -220,6 +219,7 @@ async function refreshWorkspace(force = false) {
   workspaceState.staticSlugs = await loadStaticSlugs().catch(() => []);
   workspaceState.activeTab = chooseInitialTab(workspaceState.activeTab);
   renderWorkspace();
+  await maybeOpenAdminChatFromUrl();
   scheduleWorkspaceSync();
 }
 
@@ -246,15 +246,15 @@ async function hydrateWorkspaceState(force = false) {
     ? deriveIdentity(workspaceState.session.secretKeyHex)
     : null;
   workspaceState.publicState = await loadPublicState(force);
-  workspaceState.siteKeyShares = workspaceState.session
+  const remoteShares = workspaceState.session
     ? await loadAdminKeyShares(workspaceState.session.secretKeyHex).catch(() => [])
     : [];
-  workspaceState.siteKeyShare = workspaceState.session
-    ? await loadAdminKeyShare(
-        workspaceState.session.secretKeyHex,
-        resolveSitePubkey(workspaceState.publicState)
-      ).catch(() => null)
-    : null;
+  workspaceState.siteKeyShares = mergeSiteKeyShares(remoteShares, loadCachedSiteKeyShares());
+  persistCachedSiteKeyShares(workspaceState.siteKeyShares);
+  workspaceState.siteKeyShare = findSiteKeyShareInList(
+    workspaceState.siteKeyShares,
+    resolveSitePubkey(workspaceState.publicState)
+  );
 }
 
 function captureWorkspaceAccessState() {
@@ -337,6 +337,7 @@ async function syncWorkspaceState(force = true) {
       didRefresh = true;
       renderWorkspace({ soft: true });
     }
+    await maybeOpenAdminChatFromUrl();
   } finally {
     workspaceState.backgroundSyncInFlight = false;
     if (!didRefresh) scheduleWorkspaceSync();
@@ -531,6 +532,7 @@ function renderProfilePane() {
 }
 
 function renderUsersPane() {
+  const visibleUsers = visibleWorkspaceUsers();
   return `
     <div class="workspace-grid">
       <section class="surface-panel">
@@ -558,7 +560,7 @@ function renderUsersPane() {
         <h2>Shared roster</h2>
         <div class="roster-list">
           ${
-            (workspaceState.publicState?.users || [])
+            visibleUsers
               .map((user) => renderUserCard(user))
               .join("") || `<div class="empty-state">No users visible yet.</div>`
           }
@@ -667,8 +669,8 @@ function renderSubmissionsPane() {
       <h2>Metadata view</h2>
       <p class="muted-text">${
         currentUserPendingKeyRequest() || workspaceState.keyRequestState === "pending"
-          ? "Waiting for the current shared inbox key. Public status updates still work while that access catches up."
-          : "This account can manage public status updates while shared inbox access is still catching up."
+          ? "The shared inbox is still syncing to this admin account."
+          : "This admin account can manage public status updates while the shared inbox catches up."
       }</p>
       <div class="roster-list">
         ${
@@ -1532,6 +1534,31 @@ async function hydrateChatModal() {
   renderWorkspace();
 }
 
+async function maybeOpenAdminChatFromUrl() {
+  if (!currentUserHasInboxAccess()) return;
+  const params = new URLSearchParams(window.location.search);
+  const submissionId = cleanSlug(params.get("chat") || "");
+  const targetPubkey = String(params.get("with") || "").trim().toLowerCase();
+  if (!submissionId) return;
+  const submission = workspaceState.inboxSubmissions.find((item) => item.id === submissionId);
+  if (!submission) return;
+  const nextTargetPubkey = targetPubkey || submission.author;
+  if (
+    workspaceState.chatModal?.submissionId === submissionId &&
+    workspaceState.chatModal?.targetPubkey === nextTargetPubkey
+  ) {
+    return;
+  }
+  workspaceState.chatModal = {
+    submissionId,
+    targetPubkey: nextTargetPubkey,
+    loading: true,
+    messages: []
+  };
+  renderWorkspace();
+  await hydrateChatModal();
+}
+
 async function handleChatSend(form) {
   if (!currentUserHasInboxAccess()) return;
   const formData = new FormData(form);
@@ -1875,10 +1902,10 @@ function renderSiteKeyShareStatus() {
       : "This account can read new private submissions.";
   }
   if (currentUserPendingKeyRequest() || workspaceState.keyRequestState === "pending") {
-    return "Checking shared inbox access. This usually updates on its own in a few seconds.";
+    return "The shared inbox is syncing to this admin account.";
   }
   if (workspaceState.siteKeyShares.length) {
-    return "Waiting for the current shared inbox key.";
+    return "This account still needs the current shared inbox key.";
   }
   return "Waiting for shared inbox access.";
 }
@@ -1932,8 +1959,11 @@ async function rotateSiteInboxKey(excludedPubkeys = [], reason = "rotation") {
   }
   const nextSiteSecretKeyHex = await generateSecretKeyHex();
   const previousSitePubkey = activeSitePubkey();
+  const sharedAt = new Date().toISOString();
   const recipients = dedupe(
-    (workspaceState.publicState?.admins || []).filter((pubkey) => !excludedPubkeys.includes(pubkey))
+    (workspaceState.publicState?.admins || []).filter(
+      (pubkey) => !excludedPubkeys.includes(pubkey) && pubkey !== workspaceState.viewer?.pubkey
+    )
   );
   await publishSiteKeyEvent(workspaceState.session.secretKeyHex, nextSiteSecretKeyHex, {
     previousSitePubkey,
@@ -1945,6 +1975,20 @@ async function rotateSiteInboxKey(excludedPubkeys = [], reason = "rotation") {
       pubkey,
       nextSiteSecretKeyHex
     );
+  }
+  const currentShare = buildCachedSiteKeyShare(nextSiteSecretKeyHex, {
+    senderPubkey: workspaceState.viewer?.pubkey || "",
+    sharedAt
+  });
+  workspaceState.siteKeyShares = mergeSiteKeyShares([currentShare, ...workspaceState.siteKeyShares], []);
+  workspaceState.siteKeyShare = currentShare;
+  persistCachedSiteKeyShares(workspaceState.siteKeyShares);
+  workspaceState.keyRequestState = "";
+  if (workspaceState.publicState?.siteInfo) {
+    workspaceState.publicState.siteInfo = {
+      ...workspaceState.publicState.siteInfo,
+      activePubkey: currentShare.sitePubkey
+    };
   }
 }
 
@@ -2013,6 +2057,75 @@ function dedupe(values) {
   return [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
+function siteKeyShareCacheKey(pubkey = workspaceState.viewer?.pubkey || "") {
+  return `${SITE.nostr.storageNamespace}.admin-site-shares.${pubkey}`;
+}
+
+function loadCachedSiteKeyShares() {
+  if (!workspaceState.viewer?.pubkey) return [];
+  try {
+    const raw = window.localStorage.getItem(siteKeyShareCacheKey());
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((entry) => buildCachedSiteKeyShare(entry?.siteSecretKeyHex || entry?.site_secret_key_hex || "", entry || {}))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function persistCachedSiteKeyShares(shares) {
+  if (!workspaceState.viewer?.pubkey) return;
+  const serialized = mergeSiteKeyShares(shares, []).map((share) => ({
+    siteSecretKeyHex: share.siteSecretKeyHex,
+    sitePubkey: share.sitePubkey,
+    senderPubkey: share.senderPubkey || "",
+    sharedAt: share.sharedAt || ""
+  }));
+  window.localStorage.setItem(siteKeyShareCacheKey(), JSON.stringify(serialized));
+}
+
+function mergeSiteKeyShares(primary, secondary) {
+  const merged = new Map();
+  for (const share of [...(Array.isArray(primary) ? primary : []), ...(Array.isArray(secondary) ? secondary : [])]) {
+    const normalized = normalizeCachedSiteKeyShare(share);
+    if (!normalized || merged.has(normalized.sitePubkey)) continue;
+    merged.set(normalized.sitePubkey, normalized);
+  }
+  return [...merged.values()];
+}
+
+function normalizeCachedSiteKeyShare(share) {
+  if (!share) return null;
+  if (typeof share === "string") return buildCachedSiteKeyShare(share);
+  return buildCachedSiteKeyShare(share.siteSecretKeyHex || share.site_secret_key_hex || "", share);
+}
+
+function buildCachedSiteKeyShare(siteSecretKeyHex, meta = {}) {
+  const clean = String(siteSecretKeyHex || "").trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(clean)) return null;
+  let identity;
+  try {
+    identity = deriveIdentity(clean);
+  } catch {
+    return null;
+  }
+  return {
+    siteSecretKeyHex: clean,
+    sitePubkey: identity.pubkey,
+    senderPubkey: String(meta.senderPubkey || meta.sender_pubkey || meta.shared_by || "").trim().toLowerCase(),
+    sharedAt: String(meta.sharedAt || meta.shared_at || "").trim(),
+    event: meta.event || null
+  };
+}
+
+function findSiteKeyShareInList(shares, sitePubkey = "") {
+  const targetSitePubkey = String(sitePubkey || "").trim().toLowerCase();
+  if (!targetSitePubkey) return (Array.isArray(shares) ? shares : [])[0] || null;
+  return (Array.isArray(shares) ? shares : []).find((share) => share.sitePubkey === targetSitePubkey) || null;
+}
+
 function resolveDirectUserPubkey() {
   return workspaceState.userLookupResult?.pubkey || normalizeDirectPubkey(workspaceState.userLookupQuery);
 }
@@ -2033,6 +2146,17 @@ function findLocalUserCandidate(value) {
     lowered === String(user.displayName || "").trim().toLowerCase()
   );
   return match ? hydrateLookupCandidate(match) : null;
+}
+
+function visibleWorkspaceUsers() {
+  return (workspaceState.publicState?.users || []).filter((user) => {
+    if (user.isAdmin || user.submissionCount > 0 || user.commentCount > 0 || user.moderation) return true;
+    if (user.username) return true;
+    if (String(user.bio || "").trim()) return true;
+    if (Array.isArray(user.socialLinks) && user.socialLinks.length) return true;
+    if (user.avatarUrl || user.avatarBlob) return true;
+    return false;
+  });
 }
 
 function hydrateLookupCandidate(user) {

@@ -46,6 +46,7 @@ const state = {
   commentReply: null,
   notifications: [],
   notificationsLoading: false,
+  notificationsExpanded: false,
   map: null,
   markers: null
 };
@@ -106,13 +107,26 @@ function initNavigation() {
       if (menu) {
         const isOpen = !menu.classList.contains("is-open");
         menu.classList.toggle("is-open", isOpen);
+        state.notificationsExpanded = false;
       }
+      return;
+    }
+
+    if (target.closest("[data-notification-toggle]")) {
+      event.preventDefault();
+      if (!state.notifications.length && !state.notificationsLoading) {
+        state.notificationsExpanded = false;
+      } else {
+        state.notificationsExpanded = !state.notificationsExpanded;
+      }
+      renderNavigation();
       return;
     }
 
     if (target.closest("[data-clear-notifications]")) {
       event.preventDefault();
       clearNotifications();
+      state.notificationsExpanded = false;
       renderNavigation();
       return;
     }
@@ -120,6 +134,7 @@ function initNavigation() {
     const notificationLink = target.closest("[data-notification-link]");
     if (notificationLink) {
       dismissNotification(notificationLink.getAttribute("data-notification-link") || "");
+      if (!state.notifications.length) state.notificationsExpanded = false;
       return;
     }
 
@@ -134,7 +149,10 @@ function initNavigation() {
     }
 
     for (const menu of document.querySelectorAll("[data-profile-menu].is-open")) {
-      if (!menu.contains(target)) menu.classList.remove("is-open");
+      if (!menu.contains(target)) {
+        menu.classList.remove("is-open");
+        state.notificationsExpanded = false;
+      }
     }
     for (const group of document.querySelectorAll("[data-nav-group].is-open")) {
       if (!group.contains(target)) group.classList.remove("is-open");
@@ -186,6 +204,9 @@ function renderNavigation() {
   );
   const notifications = isLoggedIn ? state.notifications.slice(0, 8) : [];
   const unreadCount = isLoggedIn ? notifications.length : 0;
+  const notificationsExpanded = unreadCount || state.notificationsLoading
+    ? state.notificationsExpanded
+    : false;
   const mapEnabled = Boolean(state.publicState?.connected);
   const mapCurrent = NAV_KEYS.map.includes(page);
 
@@ -229,25 +250,39 @@ function renderNavigation() {
           isLoggedIn
             ? `
               <div class="profile-menu__section">
-                <div class="profile-menu__section-title">Notifications</div>
-                <div class="profile-menu__notification-shell">
-                  <div class="profile-menu__notification-head">
-                    <span>Notifications</span>
-                    ${unreadCount ? `<span class="profile-menu__inline-badge">${Math.min(unreadCount, 9)}${unreadCount > 9 ? "+" : ""}</span>` : `<span class="profile-menu__inline-badge is-muted">0</span>`}
-                  </div>
-                  ${
-                    state.notificationsLoading
-                      ? `<div class="loading-state" role="status" aria-live="polite"><span class="loading-spinner" aria-hidden="true"></span><span>Looking up notifications...</span></div>`
-                      : notifications.length
-                        ? `
-                          <div class="profile-menu__notifications">
-                            ${notifications.map((item) => renderNotificationItem(item)).join("")}
-                          </div>
-                          <button class="profile-menu__clear" type="button" data-clear-notifications>Clear notifications</button>
-                        `
-                        : `<div class="profile-menu__notification-empty">No notifications right now.</div>`
-                  }
-                </div>
+                <button class="profile-menu__notification-toggle ${notificationsExpanded ? "is-open" : ""}" type="button" data-notification-toggle>
+                  <span class="profile-menu__notification-toggle-copy">
+                    <strong>Notifications</strong>
+                    <span>${
+                      state.notificationsLoading
+                        ? "Looking up updates"
+                        : unreadCount
+                          ? `${unreadCount} item${unreadCount === 1 ? "" : "s"} waiting`
+                          : "No new updates"
+                    }</span>
+                  </span>
+                  ${unreadCount ? `<span class="profile-menu__inline-badge">${Math.min(unreadCount, 9)}${unreadCount > 9 ? "+" : ""}</span>` : `<span class="profile-menu__inline-badge is-muted">0</span>`}
+                </button>
+                ${
+                  notificationsExpanded
+                    ? `
+                      <div class="profile-menu__notification-shell">
+                        ${
+                          state.notificationsLoading
+                            ? `<div class="loading-state" role="status" aria-live="polite"><span class="loading-spinner" aria-hidden="true"></span><span>Looking up notifications...</span></div>`
+                            : notifications.length
+                              ? `
+                                <div class="profile-menu__notifications">
+                                  ${notifications.map((item) => renderNotificationItem(item)).join("")}
+                                </div>
+                                <button class="profile-menu__clear" type="button" data-clear-notifications>Clear notifications</button>
+                              `
+                              : `<div class="profile-menu__notification-empty">No notifications right now.</div>`
+                        }
+                      </div>
+                    `
+                    : ""
+                }
               </div>
               <a href="./admin.html?tab=profile">Profile options</a>
               ${isAdmin ? `<a href="./admin.html?tab=dashboard">Admin</a>` : ""}
@@ -992,7 +1027,16 @@ function renderReviewPreviewPanel(draft) {
             : `<a class="button-ghost" href="./investigations.html">Back to investigations</a>`
       }
     </div>
-    <div class="status-box" data-review-status aria-live="polite"></div>
+    ${
+      canReview
+        ? ""
+        : `<p class="muted-text">${
+            normalizeDraftStatus(draft.status) === "revision"
+              ? "Revision has been requested on this investigation."
+              : "This investigation is not waiting for review right now."
+          }</p>`
+    }
+    <div class="status-box" data-review-status aria-live="polite" hidden></div>
   `;
 }
 
@@ -1005,6 +1049,7 @@ function bindReviewPreviewPanel(panel, draft) {
       if (!state.session || !editorEntryAllowed(state.publicState)) return;
       button.setAttribute("disabled", "disabled");
       if (statusBox instanceof HTMLElement) {
+        statusBox.hidden = false;
         statusBox.textContent = "Saving review decision...";
         statusBox.dataset.state = "pending";
       }
@@ -1213,7 +1258,7 @@ async function loadSubmissionNotifications(publicState, viewerPubkey, isAdmin) {
           notifications.push({
             id: `admin-chat:${thread.submissionId}:${message.id}`,
             createdAt: Number(message.event?.created_at || 0),
-            href: `./admin.html?tab=submissions`,
+            href: `./admin.html?tab=submissions&chat=${encodeURIComponent(thread.submissionId)}&with=${encodeURIComponent(submissionAuthor(thread.submissionId, inboxSubmissions))}`,
             label: "Submission chat",
             title: "New submission message in the shared inbox",
             detail: trimmed(message.payload?.body || "", 100)
@@ -1223,6 +1268,10 @@ async function loadSubmissionNotifications(publicState, viewerPubkey, isAdmin) {
     }
   }
   return notifications;
+}
+
+function submissionAuthor(submissionId, submissions) {
+  return submissions.find((submission) => submission.id === submissionId)?.author || "";
 }
 
 function notificationSitePubkeys(publicState) {
