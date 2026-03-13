@@ -5,8 +5,7 @@ import {
   deriveIdentity,
   ensureEventToolsLoaded,
   loadPublicState,
-  publishTaggedJson,
-  shortKey
+  publishTaggedJson
 } from "./core/nostr.js";
 import { getStoredSession } from "./core/session.js";
 
@@ -23,7 +22,11 @@ const editorState = {
   relayTimer: 0,
   lastLocalFingerprint: "",
   lastRelayFingerprint: "",
-  draftStatus: "draft"
+  draftStatus: "draft",
+  activePickerField: "",
+  entityModal: null,
+  modalRoot: null,
+  documentClicksBound: false
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -126,19 +129,18 @@ function renderEditorShell() {
           </label>
           <label class="editor-field editor-field--compact">
             <span class="sr-only">Lead entity</span>
-            <input name="primaryEntity" type="text" data-editor-entity-input="primaryEntity" placeholder="Lead entity" value="${escapeAttribute(editorState.document.primaryEntity)}">
+            <div class="editor-picker" data-editor-picker="primaryEntity">
+              <input name="primaryEntity" type="text" data-editor-entity-input="primaryEntity" autocomplete="off" placeholder="Lead entity" value="${escapeAttribute(editorState.document.primaryEntity)}">
+              <div class="picker-results picker-results--dropdown" data-editor-entity-results="primaryEntity"></div>
+            </div>
           </label>
           <label class="editor-field editor-field--compact editor-field--wide">
             <span class="sr-only">Related entities</span>
-            <input name="entityRefs" type="text" data-editor-entity-input="entityRefs" placeholder="Related entities" value="${escapeAttribute(editorState.document.entityRefs.join(", "))}">
+            <div class="editor-picker" data-editor-picker="entityRefs">
+              <input name="entityRefs" type="text" data-editor-entity-input="entityRefs" autocomplete="off" placeholder="Related entities" value="${escapeAttribute(editorState.document.entityRefs.join(", "))}">
+              <div class="picker-results picker-results--dropdown" data-editor-entity-results="entityRefs"></div>
+            </div>
           </label>
-        </div>
-
-        <div class="picker-results" data-editor-entity-results="primaryEntity"></div>
-        <div class="picker-results" data-editor-entity-results="entityRefs"></div>
-
-        <div class="editor-inline-note">
-          Need a new entity? <a class="text-link" href="./admin.html?tab=entities">Add it in Entities</a> and come back here.
         </div>
 
         <div class="editor-markdown-field" role="group" aria-label="Body">
@@ -150,6 +152,7 @@ function renderEditorShell() {
   `;
 
   bindEditorShell();
+  renderEntityModal();
   updateMetaPanel();
   updateHistoryPanels();
   hydrateEntityResults();
@@ -180,14 +183,14 @@ function bindEditorShell() {
     usageStatistics: false,
     placeholder: "Write the full investigation here. Use headings, quotes, links, and lists.",
     toolbarItems: [
-      ["heading", "bold", "italic", "strike"],
-      ["hr", "quote"],
-      ["ul", "ol", "task", "indent", "outdent"],
+      ["heading", "bold", "italic"],
+      ["quote", "ul", "ol"],
       ["link"],
       ["code", "codeblock"]
     ]
   });
   surface.__cmsEditor = editorState.editor;
+  decorateToolbar(surface);
 
   const queueSave = () => {
     syncSlugPreview();
@@ -198,6 +201,14 @@ function bindEditorShell() {
 
   form.addEventListener("input", queueSave);
   editorState.editor.on("change", queueSave);
+  form.addEventListener("focusin", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.matches("[data-editor-entity-input]")) {
+      editorState.activePickerField = target.getAttribute("data-editor-entity-input") || "";
+      hydrateEntityResults();
+    }
+  });
 
   form.addEventListener("click", async (event) => {
     const target = event.target;
@@ -221,6 +232,12 @@ function bindEditorShell() {
       return;
     }
 
+    const createEntity = target.closest("[data-editor-create-entity]");
+    if (createEntity) {
+      openEntityModal(createEntity.getAttribute("data-editor-create-entity") || "");
+      return;
+    }
+
     if (target.closest("[data-editor-save]")) {
       await saveDraftNow("draft");
       return;
@@ -230,6 +247,11 @@ function bindEditorShell() {
       await saveDraftNow("candidate");
     }
   });
+
+  if (!editorState.documentClicksBound) {
+    document.addEventListener("click", handleDocumentClick, true);
+    editorState.documentClicksBound = true;
+  }
 }
 
 function hydrateDraftState() {
@@ -486,23 +508,33 @@ function renderEntityResults(fieldName) {
   const input = document.querySelector(`[name="${fieldName}"]`);
   if (!(host instanceof HTMLElement) || !(input instanceof HTMLInputElement)) return;
   const query = fieldName === "entityRefs" ? lastCommaValue(input.value) : input.value.trim();
-  if (!query) {
+  const isActive = editorState.activePickerField === fieldName;
+  if (!query && !isActive) {
     host.innerHTML = "";
+    host.removeAttribute("data-open");
     return;
   }
   const matches = matchEntities(query).slice(0, 6);
-  host.innerHTML = matches.length
-    ? matches
-        .map(
-          (entity) => `
-            <button class="picker-chip" type="button" data-editor-entity-pick="${escapeAttribute(entity.slug)}" data-target-field="${fieldName}">
-              <strong>${escapeHtml(entity.name)}</strong>
-              <span>${escapeHtml(entity.location)}</span>
-            </button>
-          `
-        )
-        .join("")
-    : `<div class="picker-hint">No match found yet.</div>`;
+  const createLabel = query ? `Add "${query}" as a new entity` : "Add a new entity";
+  host.setAttribute("data-open", "true");
+  host.innerHTML = `
+    ${matches.length
+      ? matches
+          .map(
+            (entity) => `
+              <button class="picker-chip" type="button" data-editor-entity-pick="${escapeAttribute(entity.slug)}" data-target-field="${fieldName}">
+                <strong>${escapeHtml(entity.name)}</strong>
+                <span>${escapeHtml(entity.location || entity.type || "Entity")}</span>
+              </button>
+            `
+          )
+          .join("")
+      : `<div class="picker-hint">${query ? "No saved entity matches that search yet." : "Start typing to search existing entities."}</div>`}
+    <button class="picker-create" type="button" data-editor-create-entity="${fieldName}">
+      <strong>${escapeHtml(createLabel)}</strong>
+      <span>Create it here</span>
+    </button>
+  `;
 }
 
 function applyEntityPick(button) {
@@ -517,13 +549,19 @@ function applyEntityPick(button) {
   } else {
     input.value = entity.name;
   }
+  editorState.activePickerField = "";
   hydrateEntityResults();
 }
 
 function matchEntities(query) {
   const clean = String(query || "").trim().toLowerCase();
-  if (!clean) return [];
-  return (editorState.publicState?.approvedEntities || []).filter((entity) => {
+  const entities = (editorState.publicState?.approvedEntities || []).slice().sort((left, right) => {
+    const leftName = String(left?.name || "").toLowerCase();
+    const rightName = String(right?.name || "").toLowerCase();
+    return leftName.localeCompare(rightName);
+  });
+  if (!clean) return entities;
+  return entities.filter((entity) => {
     const values = [
       entity.name,
       entity.slug,
@@ -533,6 +571,262 @@ function matchEntities(query) {
       .map((value) => String(value || "").toLowerCase())
       .filter(Boolean);
     return values.some((value) => value.includes(clean));
+  });
+}
+
+function openEntityModal(fieldName) {
+  editorState.entityModal = createEntityModalState(fieldName);
+  renderEntityModal();
+}
+
+function closeEntityModal() {
+  editorState.entityModal = null;
+  renderEntityModal();
+}
+
+function createEntityModalState(fieldName) {
+  const input = document.querySelector(`[name="${fieldName}"]`);
+  const rawValue = input instanceof HTMLInputElement ? input.value.trim() : "";
+  return {
+    fieldName,
+    seedName: fieldName === "entityRefs" ? lastCommaValue(rawValue) : rawValue,
+    seedLocation: "",
+    seedType: "",
+    seedNotes: ""
+  };
+}
+
+function renderEntityModal() {
+  const root = ensureModalRoot();
+  if (!editorState.entityModal) {
+    root.innerHTML = "";
+    return;
+  }
+  const { seedName, seedLocation, seedType, seedNotes } = editorState.entityModal;
+  root.innerHTML = `
+    <div class="modal-backdrop" data-editor-modal-backdrop>
+      <section class="modal-card modal-card--editor" aria-label="Add entity">
+        <div class="section-heading">
+          <div>
+            <div class="eyebrow">Add entity</div>
+            <h3>Create an entity without leaving the draft</h3>
+            <p>Save it once, then keep writing.</p>
+          </div>
+          <button class="button-ghost" type="button" data-editor-modal-close>Close</button>
+        </div>
+        <form class="form-grid editor-entity-form" data-editor-entity-form>
+          <label>
+            <span class="sr-only">Entity name</span>
+            <input name="name" type="text" maxlength="120" placeholder="Entity name" value="${escapeAttribute(seedName)}" required>
+          </label>
+          <label>
+            <span class="sr-only">Entity type</span>
+            <input name="type" type="text" maxlength="80" placeholder="Type: factory farm, processor, store" value="${escapeAttribute(seedType)}">
+          </label>
+          <label class="editor-field editor-field--wide">
+            <span class="sr-only">Location</span>
+            <div class="editor-picker editor-picker--modal">
+              <input name="location" type="text" maxlength="160" data-editor-location-input autocomplete="off" placeholder="Location" value="${escapeAttribute(seedLocation)}">
+              <div class="picker-results picker-results--dropdown" data-editor-location-results></div>
+            </div>
+          </label>
+          <label class="editor-field editor-field--compact">
+            <span class="sr-only">Latitude</span>
+            <input name="lat" type="text" inputmode="decimal" placeholder="Latitude (optional)">
+          </label>
+          <label class="editor-field editor-field--compact">
+            <span class="sr-only">Longitude</span>
+            <input name="lng" type="text" inputmode="decimal" placeholder="Longitude (optional)">
+          </label>
+          <label class="editor-field editor-field--wide">
+            <span class="sr-only">Notes</span>
+            <textarea name="notes" rows="4" placeholder="Notes for admins or future map context">${escapeHtml(seedNotes)}</textarea>
+          </label>
+          <div class="button-row">
+            <button class="button-ghost" type="button" data-editor-modal-close>Cancel</button>
+            <button class="button" type="submit">Save entity</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  `;
+  bindEntityModal();
+  renderLocationResults();
+}
+
+function bindEntityModal() {
+  const root = ensureModalRoot();
+  const form = root.querySelector("[data-editor-entity-form]");
+  if (!(form instanceof HTMLFormElement)) return;
+  root.onclick = (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.matches("[data-editor-modal-backdrop]")) {
+      closeEntityModal();
+      return;
+    }
+    if (target.closest("[data-editor-modal-close]")) {
+      closeEntityModal();
+      return;
+    }
+    const locationPick = target.closest("[data-editor-location-pick]");
+    if (locationPick) {
+      applyLocationPick(locationPick);
+    }
+  };
+  form.oninput = (event) => {
+    const target = event.target;
+    if (target instanceof HTMLInputElement && target.matches("[data-editor-location-input]")) {
+      renderLocationResults();
+    }
+  };
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    await handleEntitySave(form);
+  };
+}
+
+async function handleEntitySave(form) {
+  if (!editorState.session || !currentUserIsAdmin()) return;
+  const formData = new FormData(form);
+  const name = String(formData.get("name") || "").trim();
+  if (!name) return;
+  const taken = (editorState.publicState?.entities || []).map((entity) => entity.slug);
+  const slug = createUniqueSlug(name, taken);
+  const entity = {
+    slug,
+    name,
+    location: String(formData.get("location") || "").trim(),
+    type: String(formData.get("type") || "").trim() || "entity",
+    lat: parseMaybeNumber(formData.get("lat")),
+    lng: parseMaybeNumber(formData.get("lng")),
+    notes: String(formData.get("notes") || "").trim(),
+    aliases: [],
+    status: "approved"
+  };
+  await publishTaggedJson({
+    kind: SITE.nostr.kinds.entity,
+    secretKeyHex: editorState.session.secretKeyHex,
+    tags: [["d", slug]],
+    content: entity
+  });
+  mergeEntityIntoState(entity);
+  applyNewEntityToField(entity, editorState.entityModal?.fieldName || "");
+  closeEntityModal();
+  setEditorStatus(`Saved ${entity.name}.`, "success");
+}
+
+function mergeEntityIntoState(entity) {
+  if (!editorState.publicState) return;
+  const nextEntities = [
+    ...(editorState.publicState.entities || []).filter((item) => item.slug !== entity.slug),
+    entity
+  ].sort((left, right) => String(left.name || "").localeCompare(String(right.name || "")));
+  editorState.publicState.entities = nextEntities;
+  editorState.publicState.approvedEntities = nextEntities.filter((item) => item.status === "approved");
+}
+
+function applyNewEntityToField(entity, fieldName) {
+  const input = document.querySelector(`[name="${fieldName}"]`);
+  if (!(input instanceof HTMLInputElement)) return;
+  if (fieldName === "entityRefs") {
+    const existing = splitTags(input.value)
+      .map((value) => resolveEntityByNameOrSlug(value)?.name || value)
+      .filter(Boolean);
+    input.value = dedupe([...existing, entity.name]).join(", ");
+  } else {
+    input.value = entity.name;
+  }
+  editorState.activePickerField = fieldName;
+  hydrateEntityResults();
+}
+
+function renderLocationResults() {
+  const host = document.querySelector("[data-editor-location-results]");
+  const input = document.querySelector("[data-editor-location-input]");
+  if (!(host instanceof HTMLElement) || !(input instanceof HTMLInputElement)) return;
+  const query = input.value.trim();
+  const matches = uniqueLocations(query).slice(0, 6);
+  if (!query && !matches.length) {
+    host.innerHTML = "";
+    host.removeAttribute("data-open");
+    return;
+  }
+  host.setAttribute("data-open", "true");
+  host.innerHTML = `
+    ${matches.length
+      ? matches
+          .map(
+            (location) => `
+              <button class="picker-chip" type="button" data-editor-location-pick="${escapeAttribute(location)}">
+                <strong>${escapeHtml(location)}</strong>
+              </button>
+            `
+          )
+          .join("")
+      : `<div class="picker-hint">${query ? "No saved location matches yet." : "Start typing to reuse a location."}</div>`}
+    ${query
+      ? `<button class="picker-create" type="button" data-editor-location-pick="${escapeAttribute(query)}">
+          <strong>Use "${escapeHtml(query)}"</strong>
+          <span>Keep this exact location</span>
+        </button>`
+      : ""}
+  `;
+}
+
+function applyLocationPick(button) {
+  const value = button.getAttribute("data-editor-location-pick") || "";
+  const input = document.querySelector("[data-editor-location-input]");
+  if (!(input instanceof HTMLInputElement)) return;
+  input.value = value;
+  renderLocationResults();
+}
+
+function uniqueLocations(query = "") {
+  const clean = String(query || "").trim().toLowerCase();
+  const values = dedupe((editorState.publicState?.entities || []).map((entity) => entity.location));
+  if (!clean) return values;
+  return values.filter((location) => location.toLowerCase().includes(clean));
+}
+
+function ensureModalRoot() {
+  if (editorState.modalRoot instanceof HTMLElement) return editorState.modalRoot;
+  const existing = document.querySelector("[data-editor-modal-root]");
+  if (existing instanceof HTMLElement) {
+    editorState.modalRoot = existing;
+    return existing;
+  }
+  const root = document.createElement("div");
+  root.dataset.editorModalRoot = "";
+  document.body.append(root);
+  editorState.modalRoot = root;
+  return root;
+}
+
+function handleDocumentClick(event) {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  if (target.closest("[data-editor-picker]") || target.closest("[data-editor-modal-root]")) return;
+  editorState.activePickerField = "";
+  hydrateEntityResults();
+}
+
+function decorateToolbar(surface) {
+  const labels = new Map([
+    ["Headings", "Headings"],
+    ["Bold", "Bold"],
+    ["Italic", "Italic"],
+    ["Blockquote", "Quote"],
+    ["Unordered list", "Bullets"],
+    ["Ordered list", "Numbers"],
+    ["Insert link", "Link"],
+    ["Inline code", "Code"],
+    ["Insert codeBlock", "Code block"],
+    ["Insert code block", "Code block"]
+  ]);
+  surface.querySelectorAll(".toastui-editor-defaultUI-toolbar button").forEach((button) => {
+    const label = labels.get(String(button.getAttribute("aria-label") || "").trim());
+    if (label) button.setAttribute("data-button-label", label);
   });
 }
 
@@ -641,6 +935,11 @@ function fingerprintDocument(document, status = "draft") {
 
 function lastCommaValue(value) {
   return String(value || "").split(",").pop().trim();
+}
+
+function parseMaybeNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function dedupe(values) {
