@@ -863,6 +863,130 @@ h3 {
   align-items: start;
 }
 
+.editor-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  gap: 1.2rem;
+  align-items: start;
+}
+
+.editor-main,
+.editor-sidebar {
+  display: grid;
+  gap: 1rem;
+}
+
+.editor-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.editor-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.editor-history {
+  display: grid;
+  gap: 1rem;
+}
+
+.editor-history > div {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.review-stack {
+  display: grid;
+  gap: 1.2rem;
+}
+
+.review-card {
+  display: grid;
+  gap: 0.65rem;
+  padding: 1.15rem 1.2rem;
+  border-radius: 18px;
+  background: rgba(18, 18, 18, 0.05);
+  border: 1px solid rgba(18, 18, 18, 0.06);
+}
+
+.review-card--history {
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.review-card__summary {
+  margin: 0;
+  color: var(--ink);
+}
+
+.editor-inline-note {
+  color: var(--ink-soft);
+  font-size: 0.95rem;
+}
+
+.editor-markdown-field > span {
+  display: block;
+  margin-bottom: 0.45rem;
+}
+
+.editor-gate {
+  display: grid;
+  gap: 1rem;
+  max-width: 42rem;
+}
+
+.EasyMDEContainer {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.EasyMDEContainer .CodeMirror {
+  border: 0;
+  min-height: 28rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.98rem;
+  background: transparent;
+}
+
+.EasyMDEContainer .editor-toolbar {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: rgba(18, 18, 18, 0.03);
+}
+
+.EasyMDEContainer .editor-toolbar button {
+  color: var(--ink);
+}
+
+.EasyMDEContainer .editor-toolbar button.active,
+.EasyMDEContainer .editor-toolbar button:hover {
+  background: rgba(156, 29, 24, 0.08);
+  border-color: transparent;
+}
+
+.EasyMDEContainer .editor-preview,
+.EasyMDEContainer .editor-preview-side {
+  padding: 1.2rem 1.3rem;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.EasyMDEContainer .editor-preview-side {
+  border-left: 1px solid var(--line);
+}
+
+.EasyMDEContainer .editor-preview h1,
+.EasyMDEContainer .editor-preview h2,
+.EasyMDEContainer .editor-preview h3,
+.EasyMDEContainer .editor-preview-side h1,
+.EasyMDEContainer .editor-preview-side h2,
+.EasyMDEContainer .editor-preview-side h3 {
+  color: var(--ink);
+}
+
 .map-shell,
 .admin-grid {
   display: grid;
@@ -1481,6 +1605,7 @@ h3 {
   .hero__grid,
   .page-layout,
   .form-layout,
+  .editor-layout,
   .map-shell,
   .admin-grid,
   .card-grid,
@@ -1504,6 +1629,10 @@ h3 {
   .site-nav.is-open {
     display: grid;
     gap: 0.5rem;
+  }
+
+  .editor-header {
+    flex-direction: column;
   }
 
   .nav-link,

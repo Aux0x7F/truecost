@@ -28,10 +28,12 @@ export const SITE = Object.freeze({
     protocolPrefix: "true-cost",
     storageNamespace: "truecost.v2",
     relays: ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"],
+    authorityRelays: ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"],
     inboxPubkey: "a2841b1f4971d2a646b476982a353d0165df07f8ae88d795e4a75cd1e0d3d42f",
     rootAdminPubkey: "4e1b9528032c874fb5f2ad864afd29d26e31613fbff15150b8d5cd28c3a74933",
     maxAttachmentBytes: 90000,
     connectTimeoutMs: 3200,
+    authorityConnectTimeoutMs: 6500,
     publicLoadLimit: 400,
     privateLoadLimit: 200,
     filterChunkSize: 12,
@@ -53,7 +55,8 @@ export const SITE = Object.freeze({
       blobRequest: 34139,
       blobFulfillment: 34140,
       visitPulse: 34141,
-      siteKey: 34142
+      siteKey: 34142,
+      adminKeyRequest: 34143
     }
   }
 });

@@ -17,7 +17,7 @@ import { clearSession, getOrCreateGuestSession, getStoredGuestSession, getStored
 
 const NAV_KEYS = {
   home: ["home"],
-  investigations: ["investigations", "investigation"],
+  investigations: ["investigations", "investigation", "editor"],
   guide: ["guide"],
   submit: ["submit"],
   "get-involved": ["get-involved"],
@@ -51,6 +51,7 @@ document.addEventListener("DOMContentLoaded", () => {
   void initInvestigationDetail();
   void initMarkdownArticles();
   void initMapPage();
+  void initAuthoringEntry();
 });
 
 function initNavigation() {
@@ -260,6 +261,17 @@ async function initInvestigationCards() {
   } catch {
     renderError(homeGrid || listGrid, "Investigation feed unavailable.");
   }
+}
+
+async function initAuthoringEntry() {
+  const host = document.querySelector("[data-authoring-entry]");
+  if (!host) return;
+  const publicState = await getPublicState();
+  if (!editorEntryAllowed(publicState)) {
+    host.innerHTML = "";
+    return;
+  }
+  host.innerHTML = `<a class="button" href="./editor.html">Create investigation</a>`;
 }
 
 async function initInvestigationDetail() {
@@ -848,6 +860,14 @@ async function getViewer() {
   await ensureEventToolsLoaded();
   state.viewer = deriveIdentity(state.session.secretKeyHex);
   return state.viewer;
+}
+
+function editorEntryAllowed(publicState) {
+  if (!state.session || !publicState?.admins?.length) return false;
+  if (!state.viewer) {
+    state.viewer = deriveIdentity(state.session.secretKeyHex);
+  }
+  return publicState.admins.includes(state.viewer.pubkey);
 }
 
 async function getRequestSignerSecretKey() {

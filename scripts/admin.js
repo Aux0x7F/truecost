@@ -10,8 +10,11 @@ import {
   loadAdminKeyShare,
   loadInboxSubmissions,
   loadPublicState,
+  lookupUsers,
   loadSubmissionThread,
+  normalizeUsername,
   publishAdminKeyShare,
+  publishAdminKeyRequest,
   publishSiteKeyEvent,
   publishSubmissionChat,
   publishTaggedJson,
@@ -33,12 +36,23 @@ const workspaceState = {
   entityModal: null,
   chatModal: null,
   exportValue: "",
-  dashboardStatus: ""
+  dashboardStatus: "",
+  userDirectStatus: "",
+  userLookupQuery: "",
+  userLookupResult: null,
+  keyRequestState: "",
+  keyRequestTimer: 0,
+  backgroundSyncTimer: 0,
+  backgroundSyncInFlight: false,
+  respondedKeyRequests: new Set(),
+  keyRequestCache: null
 };
 
 document.addEventListener("DOMContentLoaded", () => {
   if (!document.querySelector("[data-workspace-page]")) return;
   bindWorkspace();
+  document.addEventListener("visibilitychange", handleWorkspaceVisibilityChange);
+  window.addEventListener("focus", handleWorkspaceWindowFocus);
   void refreshWorkspace();
 });
 
@@ -64,20 +78,21 @@ function bindWorkspace() {
       return;
     }
 
-    if (target.closest("[data-load-draft]")) {
-      const slug = target.getAttribute("data-load-draft") || "";
-      loadDraft(slug);
-      return;
-    }
-
-    if (target.closest("[data-copy-export]")) {
-      await copyExport();
-      return;
-    }
-
     const moderationButton = target.closest("[data-user-action]");
     if (moderationButton) {
       await handleUserAction(moderationButton);
+      return;
+    }
+
+    const directUserAction = target.closest("[data-quick-user-action]");
+    if (directUserAction) {
+      await handleDirectUserAction(directUserAction);
+      return;
+    }
+
+    const findUserAction = target.closest("[data-find-user]");
+    if (findUserAction) {
+      await handleDirectUserLookup();
       return;
     }
 
@@ -90,6 +105,12 @@ function bindWorkspace() {
     const commentAction = target.closest("[data-comment-action]");
     if (commentAction) {
       await handleCommentAction(commentAction);
+      return;
+    }
+
+    const reviewAction = target.closest("[data-review-action]");
+    if (reviewAction) {
+      await handleReviewAction(reviewAction);
       return;
     }
 
@@ -160,10 +181,6 @@ function bindWorkspace() {
       await handleEntitySave(form);
       return;
     }
-    if (form.matches("[data-draft-form]")) {
-      await handleDraftSave(form);
-      return;
-    }
     if (form.matches("[data-chat-form]")) {
       await handleChatSend(form);
     }
@@ -179,8 +196,51 @@ function bindWorkspace() {
 }
 
 async function refreshWorkspace(force = false) {
+  if (workspaceState.keyRequestTimer) {
+    window.clearTimeout(workspaceState.keyRequestTimer);
+    workspaceState.keyRequestTimer = 0;
+  }
+  if (workspaceState.backgroundSyncTimer) {
+    window.clearTimeout(workspaceState.backgroundSyncTimer);
+    workspaceState.backgroundSyncTimer = 0;
+  }
   renderWorkspaceLoading(workspaceState.session ? "Looking up workspace..." : "Looking up account...");
   await ensureEventToolsLoaded();
+  await hydrateWorkspaceState(force);
+  workspaceState.keyRequestState = "";
+  await maybeAutoRespondToKeyRequests().catch(() => {});
+  await maybeEnsureCurrentKeyRequest().catch(() => {
+    workspaceState.keyRequestState = "error";
+  });
+  if (currentUserHasInboxAccess()) {
+    workspaceState.inboxSubmissions = await loadInboxSubmissions(workspaceState.siteKeyShares).catch(() => []);
+  } else {
+    workspaceState.inboxSubmissions = [];
+  }
+  workspaceState.staticSlugs = await loadStaticSlugs().catch(() => []);
+  workspaceState.activeTab = chooseInitialTab(workspaceState.activeTab);
+  renderWorkspace();
+  scheduleWorkspaceSync();
+}
+
+function renderWorkspaceLoading(message) {
+  const shell = document.querySelector("[data-workspace-shell]");
+  const lede = document.querySelector("[data-workspace-lede]");
+  if (lede) lede.textContent = message;
+  if (shell) shell.innerHTML = renderLoadingState(message);
+}
+
+function handleWorkspaceVisibilityChange() {
+  if (document.visibilityState === "visible") {
+    void syncWorkspaceState(true);
+  }
+}
+
+function handleWorkspaceWindowFocus() {
+  void syncWorkspaceState(true);
+}
+
+async function hydrateWorkspaceState(force = false) {
   workspaceState.session = getStoredSession();
   workspaceState.viewer = workspaceState.session
     ? deriveIdentity(workspaceState.session.secretKeyHex)
@@ -195,21 +255,66 @@ async function refreshWorkspace(force = false) {
         resolveSitePubkey(workspaceState.publicState)
       ).catch(() => null)
     : null;
-  if (currentUserHasInboxAccess()) {
-    workspaceState.inboxSubmissions = await loadInboxSubmissions(workspaceState.siteKeyShares).catch(() => []);
-  } else {
-    workspaceState.inboxSubmissions = [];
-  }
-  workspaceState.staticSlugs = await loadStaticSlugs().catch(() => []);
-  workspaceState.activeTab = chooseInitialTab(workspaceState.activeTab);
-  renderWorkspace();
 }
 
-function renderWorkspaceLoading(message) {
-  const shell = document.querySelector("[data-workspace-shell]");
-  const lede = document.querySelector("[data-workspace-lede]");
-  if (lede) lede.textContent = message;
-  if (shell) shell.innerHTML = renderLoadingState(message);
+function captureWorkspaceAccessState() {
+  return JSON.stringify({
+    sessionPubkey: workspaceState.viewer?.pubkey || "",
+    admin: currentUserIsAdmin(),
+    inbox: currentUserHasInboxAccess(),
+    pendingRequest: currentUserPendingKeyRequest()?.id || "",
+    activeSitePubkey: activeSitePubkey(),
+    knownShares: workspaceState.siteKeyShares.map((share) => share.sitePubkey).sort()
+  });
+}
+
+function workspaceSyncDelayMs() {
+  if (!workspaceState.session) return 0;
+  if (currentUserIsAdmin() && !currentUserHasInboxAccess()) return 2600;
+  if (currentUserIsAdmin()) return 6000;
+  return 15000;
+}
+
+function scheduleWorkspaceSync(delay = workspaceSyncDelayMs()) {
+  if (workspaceState.backgroundSyncTimer) {
+    window.clearTimeout(workspaceState.backgroundSyncTimer);
+    workspaceState.backgroundSyncTimer = 0;
+  }
+  if (!delay || document.visibilityState === "hidden") return;
+  workspaceState.backgroundSyncTimer = window.setTimeout(() => {
+    void syncWorkspaceState(true);
+  }, delay);
+}
+
+async function syncWorkspaceState(force = true) {
+  if (workspaceState.backgroundSyncInFlight) return;
+  if (!document.querySelector("[data-workspace-page]")) return;
+  if (document.visibilityState === "hidden") {
+    scheduleWorkspaceSync();
+    return;
+  }
+  if (!getStoredSession()) return;
+
+  const before = captureWorkspaceAccessState();
+  workspaceState.backgroundSyncInFlight = true;
+  let didRefresh = false;
+  try {
+    await ensureEventToolsLoaded();
+    await hydrateWorkspaceState(force);
+    workspaceState.keyRequestState = "";
+    await maybeAutoRespondToKeyRequests().catch(() => {});
+    await maybeEnsureCurrentKeyRequest().catch(() => {
+      workspaceState.keyRequestState = "error";
+    });
+    const after = captureWorkspaceAccessState();
+    if (before !== after) {
+      didRefresh = true;
+      await refreshWorkspace(true);
+    }
+  } finally {
+    workspaceState.backgroundSyncInFlight = false;
+    if (!didRefresh) scheduleWorkspaceSync();
+  }
 }
 
 function renderWorkspace() {
@@ -228,7 +333,7 @@ function renderWorkspace() {
   const admin = currentUserIsAdmin();
   title.textContent = admin ? "Workspace" : "Profile options";
   lede.textContent = admin
-    ? "Manage users, submissions, entities, and draft posts."
+    ? "Manage users, submissions, entities, and post review."
     : "Update your profile and review your comments.";
 
   shell.innerHTML = `
@@ -275,8 +380,8 @@ function renderActivePane() {
       return renderSubmissionsPane();
     case "entities":
       return renderEntitiesPane();
-    case "drafts":
-      return renderDraftsPane();
+    case "review":
+      return renderReviewPane();
     case "log":
       return renderLogPane();
     case "comments":
@@ -386,17 +491,39 @@ function renderProfilePane() {
 
 function renderUsersPane() {
   return `
-    <section class="surface-panel">
-      <div class="eyebrow">User Management</div>
-      <h2>Shared roster</h2>
-      <div class="roster-list">
-        ${
-          (workspaceState.publicState?.users || [])
-            .map((user) => renderUserCard(user))
-            .join("") || `<div class="empty-state">No users visible yet.</div>`
-        }
-      </div>
-    </section>
+    <div class="workspace-grid">
+      <section class="surface-panel">
+        <div class="eyebrow">Find user</div>
+        <h2>Lookup by username or pubkey</h2>
+        <p class="muted-text">Use a username when the roster is behind. If you already have the pubkey, you can act on it directly.</p>
+        <label>
+          <span>Username or pubkey</span>
+          <input data-quick-user-input type="text" maxlength="80" placeholder="aux or 64-character pubkey" value="${escapeAttribute(workspaceState.userLookupQuery || "")}">
+        </label>
+        <div class="button-row button-row--tight">
+          <button class="button-ghost" type="button" data-find-user>Find user</button>
+          <button class="button-ghost" type="button" data-quick-user-action="admin" data-mode="grant">Make admin</button>
+          ${
+            workspaceState.siteKeyShare
+              ? `<button class="button-ghost" type="button" data-quick-user-action="share-site-key">Share current key</button>`
+              : ""
+          }
+        </div>
+        <div class="status-box">${escapeHtml(workspaceState.userDirectStatus || "Find a user first, or paste a pubkey to act directly.")}</div>
+        ${renderLookupCandidate()}
+      </section>
+      <section class="surface-panel">
+        <div class="eyebrow">User Management</div>
+        <h2>Shared roster</h2>
+        <div class="roster-list">
+          ${
+            (workspaceState.publicState?.users || [])
+              .map((user) => renderUserCard(user))
+              .join("") || `<div class="empty-state">No users visible yet.</div>`
+          }
+        </div>
+      </section>
+    </div>
   `;
 }
 
@@ -444,6 +571,25 @@ function renderUserCard(user) {
   `;
 }
 
+function renderLookupCandidate() {
+  const user = workspaceState.userLookupResult;
+  if (!user) return "";
+  return `
+    <article class="roster-item">
+      <div class="workspace-list__row">
+        <div>
+          <strong>${escapeHtml(user.displayName || user.username || shortKey(user.pubkey))}</strong>
+          <span>${user.username ? `@${escapeHtml(user.username)}` : shortKey(user.pubkey)}</span>
+        </div>
+        <div class="tag-row">
+          ${user.isAdmin ? `<span class="tag">admin</span>` : `<span class="tag">member</span>`}
+        </div>
+      </div>
+      <span class="mono">${escapeHtml(user.pubkey)}</span>
+    </article>
+  `;
+}
+
 function renderLogEvent(event) {
   const target = logTarget(event);
   return `
@@ -478,7 +624,11 @@ function renderSubmissionsPane() {
     <section class="surface-panel">
       <div class="eyebrow">Submission intake</div>
       <h2>Metadata view</h2>
-      <p class="muted-text">This admin key can manage public status events, but no inbox key share is currently loaded for it.</p>
+      <p class="muted-text">${
+        currentUserPendingKeyRequest() || workspaceState.keyRequestState === "pending"
+          ? "Waiting for the current shared inbox key. Public status updates still work while that access catches up."
+          : "This account can manage public status updates while shared inbox access is still catching up."
+      }</p>
       <div class="roster-list">
         ${
           (workspaceState.publicState?.users || [])
@@ -615,84 +765,82 @@ function renderEntitiesPane() {
   `;
 }
 
-function renderDraftsPane() {
+function renderReviewPane() {
+  const drafts = (workspaceState.publicState?.drafts || []).slice();
+  const pending = drafts.filter((draft) => ["candidate", "submitted", "review"].includes(String(draft.status || "").toLowerCase()));
+  const recentlyDecided = drafts.filter((draft) => !pending.includes(draft)).slice(0, 10);
   return `
-    <div class="workspace-grid">
+    <div class="review-stack">
       <section class="surface-panel">
-        <div class="eyebrow">Draft post</div>
-        <h2>Markdown export</h2>
-        <form class="tip-form" data-draft-form>
-          <label>
-            <span>Title</span>
-            <input name="title" type="text" maxlength="140" placeholder="Placeholder title" required>
-          </label>
-          <div class="tip-form__split">
-            <label>
-              <span>Date</span>
-              <input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}">
-            </label>
-            <label>
-              <span>Status</span>
-              <input name="status" type="text" value="draft">
-            </label>
+        <div class="workspace-list__row">
+          <div>
+            <div class="eyebrow">Post Review</div>
+            <h2>Ready for review</h2>
           </div>
-          <label>
-            <span>Summary</span>
-            <textarea name="summary" placeholder="Short archive summary"></textarea>
-          </label>
-          <div class="tip-form__split">
-            <label>
-              <span>Tags</span>
-              <input name="tags" type="text" placeholder="placeholder, archive-demo">
-            </label>
-            <label>
-              <span>Primary entity</span>
-              <input name="primaryEntity" type="text" data-entity-picker-input="primaryEntity" placeholder="Search existing entities">
-              <div class="picker-results" data-entity-picker-results="primaryEntity"></div>
-            </label>
+          <div class="tag-row">
+            <span class="tag">${pending.length} waiting</span>
           </div>
-          <label>
-            <span>Related entities</span>
-            <input name="entityRefs" type="text" data-entity-picker-input="entityRefs" placeholder="Comma-separated slugs or names">
-            <div class="picker-results" data-entity-picker-results="entityRefs"></div>
-          </label>
-          <label>
-            <span>Markdown body</span>
-            <textarea name="markdown" placeholder="# Title&#10;&#10;Lorem ipsum..." required></textarea>
-          </label>
-          <div class="button-row">
-            <button class="button" type="submit">Publish draft</button>
-            <button class="button-ghost" type="button" data-open-entity-modal data-entity-seed-from="primaryEntity">Create entity</button>
-            <button class="button-ghost" type="button" data-open-entity-modal>Add entity</button>
-          </div>
-        </form>
-        <label class="draft-export">
-          <span>Markdown export</span>
-          <textarea data-draft-export>${escapeHtml(workspaceState.exportValue)}</textarea>
-        </label>
-        <div class="button-row">
-          <button class="button-ghost" type="button" data-copy-export>Copy markdown export</button>
+        </div>
+        <p class="muted-text">Writers use the editor to save working drafts and send finished versions here for review. Approving keeps the post in the next bakedown queue.</p>
+        <div class="roster-list">
+          ${
+            pending.length
+              ? pending.map((draft) => renderReviewCard(draft)).join("")
+              : `<div class="empty-state">No posts are waiting for review.</div>`
+          }
         </div>
       </section>
       <section class="surface-panel">
-        <div class="eyebrow">Published drafts</div>
-        <h2>Relay draft list</h2>
+        <div class="eyebrow">Recent decisions</div>
+        <h2>Reviewed posts</h2>
         <div class="roster-list">
           ${
-            (workspaceState.publicState?.drafts || [])
-              .map(
-                (draft) => `
-                  <button class="roster-item roster-item--button" type="button" data-load-draft="${draft.slug}">
-                    <strong>${escapeHtml(draft.title)}</strong>
-                    <span>${escapeHtml(draft.status)} • ${escapeHtml(draft.date)}</span>
-                  </button>
-                `
-              )
-              .join("") || `<div class="empty-state">No drafts published yet.</div>`
+            recentlyDecided.length
+              ? recentlyDecided.map((draft) => renderReviewedCard(draft)).join("")
+              : `<div class="empty-state">Approved and rejected posts will appear here.</div>`
           }
         </div>
       </section>
     </div>
+  `;
+}
+
+function renderReviewCard(draft) {
+  const author = (workspaceState.publicState?.users || []).find((user) => user.pubkey === draft.author);
+  const authorLabel = author?.displayName || author?.username || shortKey(draft.author);
+  const revisionLabel = draft.revisionCount > 1 ? `${draft.revisionCount} saved versions` : "1 saved version";
+  return `
+    <article class="review-card">
+      <div class="workspace-list__row">
+        <div>
+          <strong>${escapeHtml(draft.title)}</strong>
+          <span>${escapeHtml(draft.date)} • ${escapeHtml(revisionLabel)}</span>
+        </div>
+        <div class="tag-row">
+          <span class="tag">Ready for review</span>
+        </div>
+      </div>
+      <p class="review-card__summary">${escapeHtml(draft.summary || "No summary added yet.")}</p>
+      <span class="muted-text">By ${escapeHtml(authorLabel)}${draft.entity_refs?.length ? ` • ${escapeHtml(draft.entity_refs.map(resolveEntityDisplayValue).join(", "))}` : ""}</span>
+      <div class="button-row button-row--tight">
+        <a class="text-link" href="./editor.html?slug=${encodeURIComponent(draft.slug)}">Open draft</a>
+        <button class="button-ghost" type="button" data-review-action="approve" data-draft-slug="${escapeAttribute(draft.slug)}">Approve for publish</button>
+        <button class="button-ghost" type="button" data-review-action="reject" data-draft-slug="${escapeAttribute(draft.slug)}">Send back</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderReviewedCard(draft) {
+  return `
+    <article class="review-card review-card--history">
+      <strong>${escapeHtml(draft.title)}</strong>
+      <span>${escapeHtml(draft.status || "draft")} • ${escapeHtml(draft.date)}</span>
+      <p class="review-card__summary">${escapeHtml(trimmed(draft.summary || draft.markdown || "", 180))}</p>
+      <div class="button-row button-row--tight">
+        <a class="text-link" href="./editor.html?slug=${encodeURIComponent(draft.slug)}">Open draft</a>
+      </div>
+    </article>
   `;
 }
 
@@ -981,7 +1129,78 @@ async function handleUserAction(button) {
   const targetPubkey = button.getAttribute("data-target-pubkey") || "";
   const action = button.getAttribute("data-user-action") || "";
   const mode = button.getAttribute("data-mode") || "";
+  await performUserAction(targetPubkey, action, mode);
+  await refreshWorkspace(true);
+}
 
+async function handleDirectUserAction(button) {
+  if (!currentUserIsAdmin()) return;
+  const targetPubkey = resolveDirectUserPubkey();
+  if (!targetPubkey) {
+    workspaceState.userDirectStatus = "Find a user first, or paste a valid 64-character pubkey.";
+    renderWorkspace();
+    return;
+  }
+  const action = button.getAttribute("data-quick-user-action") || "";
+  const mode = button.getAttribute("data-mode") || "";
+  await performUserAction(targetPubkey, action, mode);
+  workspaceState.userDirectStatus =
+    action === "share-site-key"
+      ? `Shared the current inbox key with ${shortKey(targetPubkey)}.`
+      : `${mode === "grant" ? "Granted" : "Updated"} access for ${shortKey(targetPubkey)}.`;
+  await refreshWorkspace(true);
+}
+
+async function handleDirectUserLookup() {
+  const input = document.querySelector("[data-quick-user-input]");
+  const rawValue = String(input instanceof HTMLInputElement ? input.value : workspaceState.userLookupQuery || "").trim();
+  workspaceState.userLookupQuery = rawValue;
+  workspaceState.userLookupResult = null;
+  if (!rawValue) {
+    workspaceState.userDirectStatus = "Enter a username or pubkey.";
+    renderWorkspace();
+    return;
+  }
+
+  const localMatch = findLocalUserCandidate(rawValue);
+  if (localMatch) {
+    workspaceState.userLookupQuery = localMatch.pubkey;
+    workspaceState.userLookupResult = localMatch;
+    workspaceState.userDirectStatus = `Found ${localMatch.username ? `@${localMatch.username}` : shortKey(localMatch.pubkey)} in the current roster.`;
+    renderWorkspace();
+    return;
+  }
+
+  const remoteMatches = await lookupUsers(rawValue).catch(() => []);
+  if (remoteMatches.length) {
+    const match = hydrateLookupCandidate(remoteMatches[0]);
+    workspaceState.userLookupQuery = match.pubkey;
+    workspaceState.userLookupResult = match;
+    workspaceState.userDirectStatus = `Found ${match.username ? `@${match.username}` : shortKey(match.pubkey)} from the authority relays.`;
+    renderWorkspace();
+    return;
+  }
+
+  const directPubkey = normalizeDirectPubkey(rawValue);
+  if (directPubkey) {
+    workspaceState.userLookupQuery = directPubkey;
+    workspaceState.userLookupResult = hydrateLookupCandidate({
+      pubkey: directPubkey,
+      username: "",
+      displayName: "Direct pubkey",
+      isAdmin: workspaceState.publicState?.admins?.includes(directPubkey)
+    });
+    workspaceState.userDirectStatus = "No public profile found yet. You can still act on this pubkey.";
+    renderWorkspace();
+    return;
+  }
+
+  workspaceState.userDirectStatus = "No matching user found yet.";
+  renderWorkspace();
+}
+
+async function performUserAction(targetPubkey, action, mode = "") {
+  if (!currentUserIsAdmin() || !targetPubkey) return;
   if (action === "share-site-key" && workspaceState.siteKeyShare) {
     await publishAdminKeyShare(
       workspaceState.session.secretKeyHex,
@@ -1027,8 +1246,6 @@ async function handleUserAction(button) {
       }
     });
   }
-
-  await refreshWorkspace(true);
 }
 
 async function handleEntitySave(form) {
@@ -1103,6 +1320,32 @@ async function handleCommentAction(button) {
   window.setTimeout(() => {
     void refreshWorkspace(true);
   }, 1800);
+}
+
+async function handleReviewAction(button) {
+  if (!currentUserIsAdmin() || !workspaceState.session) return;
+  const action = button.getAttribute("data-review-action") || "";
+  const slug = cleanSlug(button.getAttribute("data-draft-slug") || "");
+  const draft = (workspaceState.publicState?.drafts || []).find((item) => item.slug === slug);
+  if (!draft || !["approve", "reject"].includes(action)) return;
+  const nextStatus = action === "approve" ? "approved" : "rejected";
+  button.setAttribute("disabled", "disabled");
+  try {
+    await publishTaggedJson({
+      kind: SITE.nostr.kinds.draft,
+      secretKeyHex: workspaceState.session.secretKeyHex,
+      tags: [["d", draft.slug], ["status", nextStatus]],
+      content: {
+        ...draft,
+        status: nextStatus,
+        reviewed_at: new Date().toISOString(),
+        reviewed_by: workspaceState.viewer?.pubkey || ""
+      }
+    });
+    await refreshWorkspace(true);
+  } finally {
+    button.removeAttribute("disabled");
+  }
 }
 
 async function handleDraftSave(form) {
@@ -1387,6 +1630,7 @@ function setActiveTab(tab) {
 }
 
 function normalizeWorkspaceTab(value) {
+  if (cleanSlug(value) === "drafts") return "review";
   const valid = new Set(tabButtons().map((tab) => tab.id));
   const requested = cleanSlug(value);
   if (requested && valid.has(requested)) return requested;
@@ -1403,7 +1647,7 @@ function tabButtons() {
     { id: "users", label: "User Management" },
     { id: "submissions", label: "Submissions" },
     { id: "entities", label: "Entities" },
-    { id: "drafts", label: "Draft Post" },
+    { id: "review", label: "Post Review" },
     { id: "log", label: "Log" }
   ];
 }
@@ -1426,6 +1670,15 @@ function currentUserHasInboxAccess() {
       workspaceState.siteKeyShare &&
       workspaceState.siteKeyShare.sitePubkey === activeSitePubkey()
   );
+}
+
+function currentUserPendingKeyRequest() {
+  if (!workspaceState.viewer) return null;
+  return (workspaceState.publicState?.pendingAdminKeyRequests || []).find(
+    (request) =>
+      request.requester_pubkey === workspaceState.viewer.pubkey &&
+      request.site_pubkey === activeSitePubkey()
+  ) || null;
 }
 
 function renderSnapshotSummary(snapshot) {
@@ -1477,7 +1730,7 @@ function logLabel(event) {
     case SITE.nostr.kinds.entity:
       return "Entity update";
     case SITE.nostr.kinds.draft:
-      return "Draft update";
+      return "Post update";
     case SITE.nostr.kinds.commentMod:
       return "Comment moderation";
     case SITE.nostr.kinds.submissionStatus:
@@ -1506,7 +1759,7 @@ function logTarget(event) {
     case SITE.nostr.kinds.entity:
       return { href: "./admin.html?tab=entities", description: slug || shortKey(event.pubkey) };
     case SITE.nostr.kinds.draft:
-      return { href: "./admin.html?tab=drafts", description: slug || shortKey(event.pubkey) };
+      return { href: "./admin.html?tab=review", description: slug || shortKey(event.pubkey) };
     case SITE.nostr.kinds.commentMod:
       return { href: "./admin.html?tab=comments", description: firstTag(event, "e") || shortKey(event.pubkey) };
     case SITE.nostr.kinds.submissionStatus:
@@ -1537,10 +1790,13 @@ function renderSiteKeyShareStatus() {
       ? `This account can read new private submissions and ${olderCount} older encrypted record${olderCount === 1 ? "" : "s"}.`
       : "This account can read new private submissions.";
   }
-  if (workspaceState.siteKeyShares.length) {
-    return "This account only has older inbox access. Ask another admin to share the current key.";
+  if (currentUserPendingKeyRequest() || workspaceState.keyRequestState === "pending") {
+    return "Checking shared inbox access. This usually updates on its own in a few seconds.";
   }
-  return "This account does not have inbox access yet.";
+  if (workspaceState.siteKeyShares.length) {
+    return "Waiting for the current shared inbox key.";
+  }
+  return "Waiting for shared inbox access.";
 }
 
 function applyLocalCommentModeration(commentId, action, note) {
@@ -1608,6 +1864,50 @@ async function rotateSiteInboxKey(excludedPubkeys = [], reason = "rotation") {
   }
 }
 
+async function maybeAutoRespondToKeyRequests() {
+  if (!currentUserHasInboxAccess() || !workspaceState.session || !workspaceState.siteKeyShare) return;
+  for (const request of workspaceState.publicState?.pendingAdminKeyRequests || []) {
+    if (!request || request.requester_pubkey === workspaceState.viewer?.pubkey) continue;
+    if (workspaceState.respondedKeyRequests.has(request.id)) continue;
+    try {
+      await publishAdminKeyShare(
+        workspaceState.session.secretKeyHex,
+        request.requester_pubkey,
+        workspaceState.siteKeyShare.siteSecretKeyHex
+      );
+      workspaceState.respondedKeyRequests.add(request.id);
+    } catch {
+      continue;
+    }
+  }
+}
+
+async function maybeEnsureCurrentKeyRequest() {
+  if (!workspaceState.session || !currentUserIsAdmin() || currentUserHasInboxAccess()) return;
+  const sitePubkey = activeSitePubkey();
+  if (!sitePubkey) return;
+
+  const pendingRequest = currentUserPendingKeyRequest();
+  if (!pendingRequest) {
+    const recentlyRequested =
+      workspaceState.keyRequestCache &&
+      workspaceState.keyRequestCache.sitePubkey === sitePubkey &&
+      Date.now() - workspaceState.keyRequestCache.requestedAt < 20000;
+    if (!recentlyRequested) {
+      await publishAdminKeyRequest(workspaceState.session.secretKeyHex, sitePubkey);
+      workspaceState.keyRequestCache = {
+        sitePubkey,
+        requestedAt: Date.now()
+      };
+    }
+  }
+
+  workspaceState.keyRequestState = "pending";
+  workspaceState.keyRequestTimer = window.setTimeout(() => {
+    void refreshWorkspace(true);
+  }, 3200);
+}
+
 async function loadStaticSlugs() {
   const response = await fetch("./content/investigations/index.json");
   if (!response.ok) return [];
@@ -1617,6 +1917,39 @@ async function loadStaticSlugs() {
 
 function dedupe(values) {
   return [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || "").trim()).filter(Boolean))];
+}
+
+function resolveDirectUserPubkey() {
+  return workspaceState.userLookupResult?.pubkey || normalizeDirectPubkey(workspaceState.userLookupQuery);
+}
+
+function normalizeDirectPubkey(value) {
+  const clean = String(value || "").trim().toLowerCase();
+  return /^[0-9a-f]{64}$/.test(clean) ? clean : "";
+}
+
+function findLocalUserCandidate(value) {
+  const raw = String(value || "").trim();
+  const username = normalizeUsername(raw);
+  const pubkey = normalizeDirectPubkey(raw);
+  const lowered = raw.toLowerCase();
+  const match = (workspaceState.publicState?.users || []).find((user) =>
+    (pubkey && user.pubkey === pubkey) ||
+    (username && normalizeUsername(user.username) === username) ||
+    lowered === String(user.displayName || "").trim().toLowerCase()
+  );
+  return match ? hydrateLookupCandidate(match) : null;
+}
+
+function hydrateLookupCandidate(user) {
+  const current = (workspaceState.publicState?.users || []).find((item) => item.pubkey === user.pubkey) || {};
+  return {
+    ...current,
+    ...user,
+    displayName: user.displayName || current.displayName || user.username || shortKey(user.pubkey),
+    username: user.username || current.username || "",
+    isAdmin: workspaceState.publicState?.admins?.includes(user.pubkey) || current.isAdmin || false
+  };
 }
 
 function renderLoadingState(message) {

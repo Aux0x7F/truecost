@@ -20,9 +20,11 @@ export const {
   publishSubmission,
   publishSubmissionChat,
   publishAdminKeyShare,
+  publishAdminKeyRequest,
   publishSiteKeyEvent,
   loadAdminKeyShares,
   loadAdminKeyShare,
+  lookupUsers,
   loadUserSubmissions,
   loadInboxSubmissions,
   loadSubmissionThread
