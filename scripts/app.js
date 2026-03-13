@@ -106,8 +106,20 @@ function initNavigation() {
       if (menu) {
         const isOpen = !menu.classList.contains("is-open");
         menu.classList.toggle("is-open", isOpen);
-        if (isOpen) markNotificationsSeen();
       }
+      return;
+    }
+
+    if (target.closest("[data-clear-notifications]")) {
+      event.preventDefault();
+      clearNotifications();
+      renderNavigation();
+      return;
+    }
+
+    const notificationLink = target.closest("[data-notification-link]");
+    if (notificationLink) {
+      dismissNotification(notificationLink.getAttribute("data-notification-link") || "");
       return;
     }
 
@@ -173,7 +185,7 @@ function renderNavigation() {
       state.publicState?.admins?.includes(state.viewer.pubkey)
   );
   const notifications = isLoggedIn ? state.notifications.slice(0, 8) : [];
-  const unreadCount = isLoggedIn ? countUnreadNotifications(notifications) : 0;
+  const unreadCount = isLoggedIn ? notifications.length : 0;
   const mapEnabled = Boolean(state.publicState?.connected);
   const mapCurrent = NAV_KEYS.map.includes(page);
 
@@ -216,20 +228,27 @@ function renderNavigation() {
         ${
           isLoggedIn
             ? `
-              ${
-                state.notificationsLoading
-                  ? `<div class="profile-menu__section"><div class="loading-state" role="status" aria-live="polite"><span class="loading-spinner" aria-hidden="true"></span><span>Looking up notifications...</span></div></div>`
-                  : notifications.length
-                    ? `
-                      <div class="profile-menu__section">
-                        <div class="profile-menu__section-title">Notifications</div>
-                        <div class="profile-menu__notifications">
-                          ${notifications.map((item) => renderNotificationItem(item)).join("")}
-                        </div>
-                      </div>
-                    `
-                    : ""
-              }
+              <div class="profile-menu__section">
+                <div class="profile-menu__section-title">Notifications</div>
+                <div class="profile-menu__notification-shell">
+                  <div class="profile-menu__notification-head">
+                    <span>Notifications</span>
+                    ${unreadCount ? `<span class="profile-menu__inline-badge">${Math.min(unreadCount, 9)}${unreadCount > 9 ? "+" : ""}</span>` : `<span class="profile-menu__inline-badge is-muted">0</span>`}
+                  </div>
+                  ${
+                    state.notificationsLoading
+                      ? `<div class="loading-state" role="status" aria-live="polite"><span class="loading-spinner" aria-hidden="true"></span><span>Looking up notifications...</span></div>`
+                      : notifications.length
+                        ? `
+                          <div class="profile-menu__notifications">
+                            ${notifications.map((item) => renderNotificationItem(item)).join("")}
+                          </div>
+                          <button class="profile-menu__clear" type="button" data-clear-notifications>Clear notifications</button>
+                        `
+                        : `<div class="profile-menu__notification-empty">No notifications right now.</div>`
+                  }
+                </div>
+              </div>
               <a href="./admin.html?tab=profile">Profile options</a>
               ${isAdmin ? `<a href="./admin.html?tab=dashboard">Admin</a>` : ""}
               <button type="button" data-signout>Sign out</button>
@@ -335,7 +354,7 @@ async function initInvestigationDetail() {
   if (!article) return;
   article.innerHTML = renderLoadingState("Looking up article...");
   const commentPanel = document.querySelector("[data-comment-panel]");
-  const reviewPanel = document.querySelector("[data-investigation-review]");
+  const recordsShell = document.querySelector("[data-investigation-records-shell]");
   if (commentPanel) commentPanel.innerHTML = renderLoadingState("Looking up discussion...");
 
   try {
@@ -360,13 +379,15 @@ async function initInvestigationDetail() {
     renderMarkdown(article, post.body);
     setText("[data-investigation-title]", post.title);
     setText("[data-investigation-summary]", post.summary);
-    setText("[data-investigation-date]", formatDate(post.date));
-    setText("[data-investigation-region]", post.location);
-    setText("[data-investigation-status]", post.statusLabel || post.status);
+    setText("[data-investigation-meta]", buildArticleMetaLine(post));
     const tags = document.querySelector("[data-investigation-kicker]");
     if (tags) tags.innerHTML = renderTagList(post.tags);
     const records = document.querySelector("[data-investigation-records]");
-    if (records) records.innerHTML = renderRecordList(post.records);
+    if (records) {
+      const hasRecords = Array.isArray(post.records) && post.records.length;
+      records.innerHTML = renderRecordList(post.records);
+      if (recordsShell instanceof HTMLElement) recordsShell.hidden = !hasRecords;
+    }
     const related = document.querySelector("[data-investigation-related]");
     if (related) {
       related.innerHTML = isDraftPreview
@@ -379,14 +400,20 @@ async function initInvestigationDetail() {
     }
 
     enrichArticleEntities(article, publicState);
-    if (reviewPanel instanceof HTMLElement) {
+    let reviewShell = document.querySelector("[data-investigation-review-shell]");
+    if (isDraftPreview && !(reviewShell instanceof HTMLElement)) {
+      reviewShell = document.createElement("section");
+      reviewShell.className = "surface-panel article-review-panel";
+      reviewShell.setAttribute("data-investigation-review-shell", "");
+      article.insertAdjacentElement("afterend", reviewShell);
+    }
+    if (reviewShell instanceof HTMLElement) {
       if (isDraftPreview) {
-        reviewPanel.hidden = false;
-        reviewPanel.innerHTML = renderReviewPreviewPanel(draft);
-        bindReviewPreviewPanel(reviewPanel, draft);
+        reviewShell.hidden = false;
+        reviewShell.innerHTML = renderReviewPreviewPanel(draft);
+        bindReviewPreviewPanel(reviewShell, draft);
       } else {
-        reviewPanel.hidden = true;
-        reviewPanel.innerHTML = "";
+        reviewShell.remove();
       }
     }
     if (commentPanel instanceof HTMLElement) {
@@ -400,10 +427,11 @@ async function initInvestigationDetail() {
     document.title = `${post.title} | ${SITE.shortName}`;
   } catch {
     renderError(article, "This case file could not be loaded.");
-    if (reviewPanel instanceof HTMLElement) {
-      reviewPanel.hidden = true;
-      reviewPanel.innerHTML = "";
+    const reviewShell = document.querySelector("[data-investigation-review-shell]");
+    if (reviewShell instanceof HTMLElement) {
+      reviewShell.remove();
     }
+    if (recordsShell instanceof HTMLElement) recordsShell.hidden = true;
   }
 }
 
@@ -1059,7 +1087,6 @@ async function buildNotifications(publicState) {
   const viewer = state.viewer;
   if (!viewer) return [];
   const notifications = [];
-  const seenAt = notificationSeenAt();
   const isAdmin = publicState.admins?.includes(viewer.pubkey);
   const commentMap = new Map((publicState.allComments || []).map((comment) => [comment.id, comment]));
 
@@ -1071,7 +1098,6 @@ async function buildNotifications(publicState) {
       id: `comment-reply:${comment.id}`,
       createdAt: comment.created_at,
       href: `./investigation.html?slug=${encodeURIComponent(comment.post_slug)}#comment-${encodeURIComponent(comment.id)}`,
-      unread: comment.created_at > seenAt,
       label: "Comment reply",
       title: "Someone replied to your comment",
       detail: trimmed(comment.markdown, 100)
@@ -1084,7 +1110,6 @@ async function buildNotifications(publicState) {
       id: `submission-status:${status.submission_id}:${status.updated_at}`,
       createdAt: status.updated_at,
       href: "./submit.html",
-      unread: status.updated_at > seenAt,
       label: "Submission update",
       title: `Submission ${status.status}`,
       detail: status.note || "A submission you sent has a new status."
@@ -1102,7 +1127,6 @@ async function buildNotifications(publicState) {
         href: normalizeDraftStatus(draft.status) === "revision"
           ? `./editor.html?slug=${encodeURIComponent(draft.slug)}`
           : `./investigation.html?draft=${encodeURIComponent(draft.slug)}`,
-        unread: draft.created_at > seenAt,
         label: "Investigation review",
         title: reviewNotificationTitle(reviewAction),
         detail: draft.title
@@ -1113,7 +1137,6 @@ async function buildNotifications(publicState) {
         id: `pending-draft:${draft.slug}:${draft.created_at}`,
         createdAt: draft.created_at,
         href: `./investigation.html?draft=${encodeURIComponent(draft.slug)}`,
-        unread: draft.created_at > seenAt,
         label: "Review queue",
         title: "New investigation pending review",
         detail: draft.title
@@ -1128,7 +1151,6 @@ async function buildNotifications(publicState) {
         id: `post-comment:${comment.id}`,
         createdAt: comment.created_at,
         href: `./investigation.html?slug=${encodeURIComponent(comment.post_slug)}#comment-${encodeURIComponent(comment.id)}`,
-        unread: comment.created_at > seenAt,
         label: "Post reply",
         title: "New comment on a published investigation",
         detail: trimmed(comment.markdown, 100)
@@ -1137,14 +1159,14 @@ async function buildNotifications(publicState) {
   }
 
   const submissionNotifications = await loadSubmissionNotifications(publicState, viewer.pubkey, isAdmin);
-  notifications.push(...submissionNotifications.map((item) => ({
-    ...item,
-    unread: item.createdAt > seenAt
-  })));
+  notifications.push(...submissionNotifications);
+
+  const dismissed = dismissedNotificationIds();
 
   return notifications
     .sort((left, right) => right.createdAt - left.createdAt)
     .filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index)
+    .filter((item) => !dismissed.has(item.id))
     .slice(0, 12);
 }
 
@@ -1211,34 +1233,44 @@ function notificationSitePubkeys(publicState) {
   ]);
 }
 
-function notificationSeenAt() {
-  if (!state.viewer?.pubkey) return 0;
-  const raw = window.localStorage.getItem(notificationSeenKey(state.viewer.pubkey));
-  const value = Number(raw || 0);
-  return Number.isFinite(value) ? value : 0;
+function dismissedNotificationIds() {
+  if (!state.viewer?.pubkey) return new Set();
+  try {
+    const raw = window.localStorage.getItem(notificationDismissedKey(state.viewer.pubkey));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.map((item) => String(item || "").trim()).filter(Boolean) : []);
+  } catch {
+    return new Set();
+  }
 }
 
-function notificationSeenKey(pubkey) {
-  return `${SITE.nostr.storageNamespace}.notifications.seen.${pubkey}`;
+function notificationDismissedKey(pubkey) {
+  return `${SITE.nostr.storageNamespace}.notifications.dismissed.${pubkey}`;
 }
 
-function markNotificationsSeen() {
+function dismissNotification(id) {
+  if (!state.viewer?.pubkey || !id) return;
+  const dismissed = dismissedNotificationIds();
+  dismissed.add(String(id));
+  window.localStorage.setItem(notificationDismissedKey(state.viewer.pubkey), JSON.stringify([...dismissed]));
+  state.notifications = state.notifications.filter((item) => item.id !== id);
+}
+
+function clearNotifications() {
   if (!state.viewer?.pubkey || !state.notifications.length) return;
-  const latest = state.notifications.reduce((max, item) => Math.max(max, Number(item.createdAt || 0)), 0);
-  if (!latest) return;
-  window.localStorage.setItem(notificationSeenKey(state.viewer.pubkey), String(latest));
-  state.notifications = state.notifications.map((item) => ({ ...item, unread: false }));
-  const badge = document.querySelector(".profile-menu__notice");
-  if (badge) badge.remove();
+  const dismissed = dismissedNotificationIds();
+  for (const item of state.notifications) dismissed.add(item.id);
+  window.localStorage.setItem(notificationDismissedKey(state.viewer.pubkey), JSON.stringify([...dismissed]));
+  state.notifications = [];
 }
 
 function countUnreadNotifications(notifications) {
-  return (Array.isArray(notifications) ? notifications : []).filter((item) => item.unread).length;
+  return Array.isArray(notifications) ? notifications.length : 0;
 }
 
 function renderNotificationItem(item) {
   return `
-    <a class="profile-menu__notice-item" href="${escapeAttribute(item.href)}">
+    <a class="profile-menu__notice-item" href="${escapeAttribute(item.href)}" data-notification-link="${escapeAttribute(item.id)}">
       <span class="profile-menu__notice-label">${escapeHtml(item.label)}</span>
       <strong>${escapeHtml(item.title)}</strong>
       <span>${escapeHtml(item.detail || "")}</span>
@@ -1503,6 +1535,13 @@ function formatDateTime(unixSeconds) {
     hour: "numeric",
     minute: "2-digit"
   }).format(new Date(unixSeconds * 1000));
+}
+
+function buildArticleMetaLine(post) {
+  const parts = [formatDate(post.date)];
+  if (post.location) parts.push(String(post.location));
+  if (post.statusLabel || post.status) parts.push(String(post.statusLabel || post.status));
+  return parts.filter(Boolean).join(" · ");
 }
 
 function sortDateValue(item) {
