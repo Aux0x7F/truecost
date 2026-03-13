@@ -33,7 +33,7 @@ export const SITE = Object.freeze({
     rootAdminPubkey: "4e1b9528032c874fb5f2ad864afd29d26e31613fbff15150b8d5cd28c3a74933",
     maxAttachmentBytes: 90000,
     connectTimeoutMs: 3200,
-    authorityConnectTimeoutMs: 6500,
+    authorityConnectTimeoutMs: 9000,
     publicLoadLimit: 400,
     privateLoadLimit: 200,
     filterChunkSize: 12,

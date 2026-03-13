@@ -46,6 +46,7 @@ const state = {
   commentReply: null,
   notifications: [],
   notificationsLoading: false,
+  profileMenuOpen: false,
   notificationsExpanded: false,
   map: null,
   markers: null
@@ -59,6 +60,7 @@ document.addEventListener("DOMContentLoaded", () => {
   void initMarkdownArticles();
   void initMapPage();
   void initAuthoringEntry();
+  window.addEventListener("truecost:session-changed", handleSessionChanged);
 });
 
 function initNavigation() {
@@ -103,17 +105,15 @@ function initNavigation() {
 
     const profileToggle = target.closest("[data-profile-toggle]");
     if (profileToggle) {
-      const menu = profileToggle.closest("[data-profile-menu]");
-      if (menu) {
-        const isOpen = !menu.classList.contains("is-open");
-        menu.classList.toggle("is-open", isOpen);
-        state.notificationsExpanded = false;
-      }
+      state.profileMenuOpen = !state.profileMenuOpen;
+      if (!state.profileMenuOpen) state.notificationsExpanded = false;
+      renderNavigation();
       return;
     }
 
     if (target.closest("[data-notification-toggle]")) {
       event.preventDefault();
+      state.profileMenuOpen = true;
       if (!state.notifications.length && !state.notificationsLoading) {
         state.notificationsExpanded = false;
       } else {
@@ -127,6 +127,7 @@ function initNavigation() {
       event.preventDefault();
       clearNotifications();
       state.notificationsExpanded = false;
+      state.profileMenuOpen = true;
       renderNavigation();
       return;
     }
@@ -150,8 +151,9 @@ function initNavigation() {
 
     for (const menu of document.querySelectorAll("[data-profile-menu].is-open")) {
       if (!menu.contains(target)) {
-        menu.classList.remove("is-open");
+        state.profileMenuOpen = false;
         state.notificationsExpanded = false;
+        renderNavigation();
       }
     }
     for (const group of document.querySelectorAll("[data-nav-group].is-open")) {
@@ -186,6 +188,26 @@ async function bootstrapRelayState() {
   void publishVisitPulse();
   void hydrateNotifications();
   renderNavigation();
+}
+
+function handleSessionChanged() {
+  state.session = getStoredSession();
+  state.viewer = null;
+  state.notifications = [];
+  state.notificationsLoading = false;
+  state.profileMenuOpen = false;
+  state.notificationsExpanded = false;
+  if (state.session && hasNostrTools()) {
+    try {
+      state.viewer = deriveIdentity(state.session.secretKeyHex);
+    } catch {
+      state.viewer = null;
+    }
+  }
+  renderNavigation();
+  if (state.session) {
+    void hydrateNotifications(true);
+  }
 }
 
 function renderNavigation() {
@@ -240,7 +262,7 @@ function renderNavigation() {
     </div>
     <a class="${navLinkClass(page, "about")}" href="./about.html">About</a>
     <a class="${navLinkClass(page, "merch")}" href="./merch.html">Merch</a>
-    <div class="profile-menu ${NAV_KEYS.workspace.includes(page) ? "is-current" : ""}" data-profile-menu>
+    <div class="profile-menu ${NAV_KEYS.workspace.includes(page) ? "is-current" : ""} ${state.profileMenuOpen ? "is-open" : ""}" data-profile-menu>
       <button class="profile-menu__toggle ${currentUser?.avatarUrl ? "has-avatar" : !isLoggedIn ? "is-wordmark" : ""}" type="button" data-profile-toggle aria-label="${isLoggedIn ? "Profile options" : "Log in"}">
         <span class="profile-menu__badge ${currentUser?.avatarUrl ? "has-avatar" : !isLoggedIn ? "is-wordmark" : ""}">${profileBadgeMarkup(currentUser)}</span>
         ${unreadCount ? `<span class="profile-menu__notice">${Math.min(unreadCount, 9)}${unreadCount > 9 ? "+" : ""}</span>` : ""}
@@ -363,10 +385,23 @@ async function initInvestigationCards() {
             href: `./investigation.html?slug=${encodeURIComponent(post.slug)}`,
             actionLabel: "Open investigation"
           }));
-      listGrid.innerHTML = `
-        ${canEdit ? renderAuthoringLeadCard() : ""}
-        ${entries.map((post) => renderInvestigationCard(post, false)).join("")}
-      `;
+      const renderArchive = () => {
+        const filters = currentArchiveFilters(canEdit);
+        const filteredEntries = filterArchiveEntries(entries, publicState, filters);
+        listGrid.innerHTML = `
+          ${canEdit ? renderAuthoringLeadCard() : ""}
+          ${renderInvestigationFilters(entries, publicState, filters, canEdit)}
+          <div class="story-list__results">
+            ${
+              filteredEntries.length
+                ? filteredEntries.map((post) => renderInvestigationCard(post, false)).join("")
+                : `<div class="empty-state">No investigations match these filters yet.</div>`
+            }
+          </div>
+        `;
+        bindInvestigationFilters(renderArchive);
+      };
+      renderArchive();
     }
   } catch {
     renderError(homeGrid || listGrid, "Investigation feed unavailable.");
@@ -819,7 +854,11 @@ function buildInvestigationArchiveEntries(posts, drafts) {
     .map((draft) => {
       const status = normalizeDraftStatus(draft.status);
       const reviewAction = draftReviewAction(draft);
-      const archived = status === "approved" ? "approved" : status;
+      const archived = ["candidate", "review", "submitted"].includes(status)
+        ? "submitted"
+        : status === "approved"
+          ? "approved"
+          : status;
       const isEditable = status === "draft" || status === "revision";
       const href = isEditable
         ? `./editor.html?slug=${encodeURIComponent(draft.slug)}`
@@ -854,6 +893,130 @@ function renderAuthoringLeadCard() {
       <div class="button-row"><a class="button" href="./editor.html">Create investigation</a></div>
     </article>
   `;
+}
+
+function currentArchiveFilters(canEdit = false) {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    tag: String(params.get("tag") || "").trim(),
+    entity: String(params.get("entity") || "").trim(),
+    status: canEdit ? String(params.get("status") || "").trim().toLowerCase() : ""
+  };
+}
+
+function renderInvestigationFilters(entries, publicState, filters, canEdit) {
+  const tags = dedupe(entries.flatMap((entry) => Array.isArray(entry.tags) ? entry.tags : []));
+  const entities = dedupe(entries.flatMap((entry) => archiveEntryEntityOptions(entry, publicState)));
+  return `
+    <section class="surface-panel archive-filters">
+      <div class="workspace-list__row">
+        <div>
+          <div class="eyebrow">Filter archive</div>
+          <h3>Refine the list</h3>
+        </div>
+        ${
+          filters.tag || filters.entity || filters.status
+            ? `<a class="text-link" href="./investigations.html">Clear filters</a>`
+            : ""
+        }
+      </div>
+      <form class="archive-filters__form" data-investigation-filters>
+        ${
+          canEdit
+            ? `
+              <label class="archive-filters__field">
+                <span class="sr-only">Status</span>
+                <select name="status" aria-label="Filter by status">
+                  ${renderArchiveStatusOption("", filters.status, "All statuses")}
+                  ${renderArchiveStatusOption("draft", filters.status, "Draft")}
+                  ${renderArchiveStatusOption("submitted", filters.status, "In review")}
+                  ${renderArchiveStatusOption("approved", filters.status, "Approved")}
+                  ${renderArchiveStatusOption("posted", filters.status, "Posted")}
+                </select>
+              </label>
+            `
+            : ""
+        }
+        <label class="archive-filters__field">
+          <span class="sr-only">Filter by tag</span>
+          <input name="tag" type="text" list="investigation-tag-options" placeholder="Filter by tag" value="${escapeAttribute(filters.tag)}" autocomplete="off">
+        </label>
+        <label class="archive-filters__field">
+          <span class="sr-only">Filter by entity</span>
+          <input name="entity" type="text" list="investigation-entity-options" placeholder="Filter by entity" value="${escapeAttribute(filters.entity)}" autocomplete="off">
+        </label>
+      </form>
+      <datalist id="investigation-tag-options">
+        ${tags.map((tag) => `<option value="${escapeAttribute(tag)}"></option>`).join("")}
+      </datalist>
+      <datalist id="investigation-entity-options">
+        ${entities.map((entity) => `<option value="${escapeAttribute(entity)}"></option>`).join("")}
+      </datalist>
+    </section>
+  `;
+}
+
+function renderArchiveStatusOption(value, selectedValue, label) {
+  return `<option value="${escapeAttribute(value)}" ${String(selectedValue || "") === String(value || "") ? "selected" : ""}>${escapeHtml(label)}</option>`;
+}
+
+function bindInvestigationFilters(rerender) {
+  const form = document.querySelector("[data-investigation-filters]");
+  if (!(form instanceof HTMLFormElement)) return;
+  const apply = () => {
+    const url = new URL(window.location.href);
+    const params = url.searchParams;
+    const tag = String(form.elements.namedItem("tag")?.value || "").trim();
+    const entity = String(form.elements.namedItem("entity")?.value || "").trim();
+    const status = String(form.elements.namedItem("status")?.value || "").trim().toLowerCase();
+    if (tag) params.set("tag", tag);
+    else params.delete("tag");
+    if (entity) params.set("entity", entity);
+    else params.delete("entity");
+    if (status) params.set("status", status);
+    else params.delete("status");
+    history.replaceState({}, "", url);
+    rerender();
+  };
+  form.addEventListener("input", apply);
+  form.addEventListener("change", apply);
+}
+
+function filterArchiveEntries(entries, publicState, filters) {
+  const tagQuery = String(filters?.tag || "").trim().toLowerCase();
+  const entityQuery = String(filters?.entity || "").trim().toLowerCase();
+  const statusQuery = String(filters?.status || "").trim().toLowerCase();
+  return (Array.isArray(entries) ? entries : []).filter((entry) => {
+    if (statusQuery && normalizeDraftStatus(entry.archiveStatus) !== statusQuery) return false;
+    if (tagQuery) {
+      const matchesTag = (Array.isArray(entry.tags) ? entry.tags : [])
+        .map((tag) => String(tag || "").trim().toLowerCase())
+        .some((tag) => tag.includes(tagQuery));
+      if (!matchesTag) return false;
+    }
+    if (entityQuery) {
+      const matchesEntity = archiveEntryEntityOptions(entry, publicState)
+        .map((value) => String(value || "").trim().toLowerCase())
+        .some((value) => value.includes(entityQuery));
+      if (!matchesEntity) return false;
+    }
+    return true;
+  });
+}
+
+function archiveEntryEntityOptions(entry, publicState) {
+  const entityMap = new Map((publicState?.approvedEntities || []).map((entity) => [entity.slug, entity]));
+  const refs = dedupe([
+    ...(Array.isArray(entry?.entity_refs) ? entry.entity_refs : []),
+    ...(entry?.body ? collectEntityRefsFromText(entry.body, publicState?.approvedEntities || []) : [])
+  ]);
+  return dedupe(
+    refs.flatMap((slug) => {
+      const entity = entityMap.get(slug);
+      if (!entity) return [slug];
+      return [entity.slug, entity.name, entity.location];
+    })
+  );
 }
 
 function normalizeDraftStatus(status) {
@@ -1541,17 +1704,24 @@ function renderError(node, message) {
 }
 
 function renderLoadingState(message) {
+  const reloadHref = `${window.location.pathname}${window.location.search}${window.location.hash}`;
   return `
     <div class="loading-state loading-state--panel" role="status" aria-live="polite">
-      <span class="loading-spinner" aria-hidden="true"></span>
-      <span>${escapeHtml(message)}</span>
+      <div class="loading-state__message">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <span>${escapeHtml(message)}</span>
+      </div>
+      <div class="loading-state__slow">
+        <span>This is taking longer than expected.</span>
+        <a class="button-ghost loading-state__reload" href="${escapeAttribute(reloadHref)}">Reload</a>
+      </div>
     </div>
   `;
 }
 
 function renderTagList(tags) {
   return (Array.isArray(tags) ? tags : [])
-    .map((tag) => `<span class="tag">${escapeHtml(String(tag))}</span>`)
+    .map((tag) => `<a class="tag tag--link" href="./investigations.html?tag=${encodeURIComponent(String(tag || "").trim())}">${escapeHtml(String(tag))}</a>`)
     .join("");
 }
 

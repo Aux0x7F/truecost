@@ -6,6 +6,7 @@ import {
   deriveIdentity,
   ensureEventToolsLoaded,
   generateSecretKeyHex,
+  loadAdminKeyShare,
   loadAdminKeyShares,
   loadInboxSubmissions,
   loadPublicState,
@@ -43,6 +44,7 @@ const workspaceState = {
   keyRequestTimer: 0,
   backgroundSyncTimer: 0,
   backgroundSyncInFlight: false,
+  inboxLoading: false,
   respondedKeyRequests: new Set(),
   keyRequestCache: null
 };
@@ -203,23 +205,36 @@ async function refreshWorkspace(force = false) {
     window.clearTimeout(workspaceState.backgroundSyncTimer);
     workspaceState.backgroundSyncTimer = 0;
   }
-  renderWorkspaceLoading(workspaceState.session ? "Looking up workspace..." : "Looking up account...");
+  workspaceState.session = getStoredSession();
+  workspaceState.viewer = null;
+  if (!workspaceState.session) {
+    workspaceState.publicState = workspaceState.publicState || null;
+    workspaceState.siteKeyShares = [];
+    workspaceState.siteKeyShare = null;
+    workspaceState.inboxSubmissions = [];
+    workspaceState.activeTab = "login";
+    renderWorkspace();
+    return;
+  }
+
+  renderWorkspaceLoading("Looking up workspace...");
   await ensureEventToolsLoaded();
   await hydrateWorkspaceState(force);
+  workspaceState.staticSlugs = await loadStaticSlugs().catch(() => []);
+  workspaceState.activeTab = chooseInitialTab(workspaceState.activeTab);
+  renderWorkspace();
+  await maybeResolveUserDeepLink();
   workspaceState.keyRequestState = "";
   await maybeAutoRespondToKeyRequests().catch(() => {});
   await maybeEnsureCurrentKeyRequest().catch(() => {
     workspaceState.keyRequestState = "error";
   });
   if (currentUserHasInboxAccess()) {
-    workspaceState.inboxSubmissions = await loadInboxSubmissions(workspaceState.siteKeyShares).catch(() => []);
+    void hydrateInboxSubmissions();
   } else {
+    workspaceState.inboxLoading = false;
     workspaceState.inboxSubmissions = [];
   }
-  workspaceState.staticSlugs = await loadStaticSlugs().catch(() => []);
-  workspaceState.activeTab = chooseInitialTab(workspaceState.activeTab);
-  renderWorkspace();
-  await maybeOpenAdminChatFromUrl();
   scheduleWorkspaceSync();
 }
 
@@ -245,15 +260,25 @@ async function hydrateWorkspaceState(force = false) {
   workspaceState.viewer = workspaceState.session
     ? deriveIdentity(workspaceState.session.secretKeyHex)
     : null;
-  workspaceState.publicState = await loadPublicState(force);
-  const remoteShares = workspaceState.session
-    ? await loadAdminKeyShares(workspaceState.session.secretKeyHex).catch(() => [])
-    : [];
-  workspaceState.siteKeyShares = mergeSiteKeyShares(remoteShares, loadCachedSiteKeyShares());
+  const cachedShares = loadCachedSiteKeyShares();
+  const [publicState, remoteShares] = await Promise.all([
+    loadPublicState(force),
+    workspaceState.session
+      ? loadAdminKeyShares(workspaceState.session.secretKeyHex).catch(() => [])
+      : Promise.resolve([])
+  ]);
+  workspaceState.publicState = publicState;
+  const activeSitePubkey = resolveSitePubkey(workspaceState.publicState);
+  let mergedShares = mergeSiteKeyShares(remoteShares, cachedShares);
+  if (workspaceState.session && activeSitePubkey && !findSiteKeyShareInList(mergedShares, activeSitePubkey)) {
+    const currentShare = await loadAdminKeyShare(workspaceState.session.secretKeyHex, activeSitePubkey).catch(() => null);
+    mergedShares = mergeSiteKeyShares(currentShare ? [currentShare, ...mergedShares] : mergedShares, []);
+  }
+  workspaceState.siteKeyShares = mergedShares;
   persistCachedSiteKeyShares(workspaceState.siteKeyShares);
   workspaceState.siteKeyShare = findSiteKeyShareInList(
     workspaceState.siteKeyShares,
-    resolveSitePubkey(workspaceState.publicState)
+    activeSitePubkey
   );
 }
 
@@ -322,8 +347,9 @@ async function syncWorkspaceState(force = true) {
       workspaceState.keyRequestState = "error";
     });
     if (currentUserHasInboxAccess()) {
-      workspaceState.inboxSubmissions = await loadInboxSubmissions(workspaceState.siteKeyShares).catch(() => []);
+      void hydrateInboxSubmissions();
     } else {
+      workspaceState.inboxLoading = false;
       workspaceState.inboxSubmissions = [];
     }
     workspaceState.staticSlugs = await loadStaticSlugs().catch(() => []);
@@ -338,6 +364,7 @@ async function syncWorkspaceState(force = true) {
       renderWorkspace({ soft: true });
     }
     await maybeOpenAdminChatFromUrl();
+    await maybeResolveUserDeepLink();
   } finally {
     workspaceState.backgroundSyncInFlight = false;
     if (!didRefresh) scheduleWorkspaceSync();
@@ -539,9 +566,9 @@ function renderUsersPane() {
         <div class="eyebrow">Find user</div>
         <h2>Lookup by username or pubkey</h2>
         <p class="muted-text">Use a username when the roster is behind. If you already have the pubkey, you can act on it directly.</p>
-        <label>
-          <span>Username or pubkey</span>
-          <input data-quick-user-input type="text" maxlength="80" placeholder="aux or 64-character pubkey" value="${escapeAttribute(workspaceState.userLookupQuery || "")}">
+        <label class="workspace-search">
+          <span class="sr-only">Username or pubkey</span>
+          <input class="workspace-search__input" data-quick-user-input type="text" maxlength="80" placeholder="username or 64-character pubkey" value="${escapeAttribute(workspaceState.userLookupQuery || "")}">
         </label>
         <div class="button-row button-row--tight">
           <button class="button-ghost" type="button" data-find-user>Find user</button>
@@ -574,7 +601,7 @@ function renderUserCard(user) {
   const isRootAdmin = user.pubkey === workspaceState.publicState?.rootAdminPubkey;
   const canChangeAdmin = currentUserIsAdmin() && !isRootAdmin && user.pubkey !== workspaceState.viewer?.pubkey;
   return `
-    <article class="roster-item">
+    <article class="roster-item" id="user-${escapeAttribute(user.pubkey)}" data-user-card="${escapeAttribute(user.pubkey)}">
       <div class="workspace-list__row">
         <div>
           <strong>${escapeHtml(user.displayName)}</strong>
@@ -618,7 +645,7 @@ function renderLookupCandidate() {
   const user = workspaceState.userLookupResult;
   if (!user) return "";
   return `
-    <article class="roster-item">
+    <article class="roster-item" data-user-card="${escapeAttribute(user.pubkey)}">
       <div class="workspace-list__row">
         <div>
           <strong>${escapeHtml(user.displayName || user.username || shortKey(user.pubkey))}</strong>
@@ -654,7 +681,9 @@ function renderSubmissionsPane() {
         <h2>Shared inbox</h2>
         <div class="roster-list">
           ${
-            workspaceState.inboxSubmissions.length
+            workspaceState.inboxLoading
+              ? renderLoadingState("Looking up submissions...")
+              : workspaceState.inboxSubmissions.length
               ? workspaceState.inboxSubmissions.map((item) => renderSubmissionCard(item)).join("")
               : `<div class="empty-state">No submissions decrypted from the inbox yet.</div>`
           }
@@ -792,8 +821,14 @@ function renderEntitiesPane() {
                     currentUserIsAdmin()
                       ? `
                         <div class="button-row button-row--tight">
-                          <button class="button-ghost" type="button" data-entity-action="approve" data-entity-slug="${entity.slug}">Approve</button>
-                          <button class="button-ghost" type="button" data-entity-action="deny" data-entity-slug="${entity.slug}">Deny</button>
+                          ${
+                            entity.status === "pending"
+                              ? `
+                                <button class="button-ghost" type="button" data-entity-action="approve" data-entity-slug="${entity.slug}">Approve</button>
+                                <button class="button-ghost" type="button" data-entity-action="deny" data-entity-slug="${entity.slug}">Deny</button>
+                              `
+                              : `<button class="button-ghost" type="button" data-entity-action="delete" data-entity-slug="${entity.slug}">Delete</button>`
+                          }
                         </div>
                       `
                       : ""
@@ -1127,6 +1162,7 @@ async function handleLogin(form) {
       status.textContent = `Signed in as @${session.username}.`;
       status.dataset.state = "success";
     }
+    window.dispatchEvent(new CustomEvent("truecost:session-changed"));
     await refreshWorkspace(true);
   } catch (error) {
     if (status) {
@@ -1163,6 +1199,7 @@ async function handleProfileSave(form) {
         .map((item) => item.trim())
         .filter(Boolean)
     });
+    window.dispatchEvent(new CustomEvent("truecost:session-changed"));
     if (status) {
       status.textContent = "Profile updated.";
       status.dataset.state = "success";
@@ -1238,11 +1275,16 @@ async function handleDirectUserAction(button) {
 async function handleDirectUserLookup() {
   const input = document.querySelector("[data-quick-user-input]");
   const rawValue = String(input instanceof HTMLInputElement ? input.value : workspaceState.userLookupQuery || "").trim();
+  await resolveUserLookupQuery(rawValue);
+}
+
+async function resolveUserLookupQuery(rawValue, options = {}) {
+  const shouldRender = options.render !== false;
   workspaceState.userLookupQuery = rawValue;
   workspaceState.userLookupResult = null;
   if (!rawValue) {
     workspaceState.userDirectStatus = "Enter a username or pubkey.";
-    renderWorkspace();
+    if (shouldRender) renderWorkspace();
     return;
   }
 
@@ -1251,7 +1293,7 @@ async function handleDirectUserLookup() {
     workspaceState.userLookupQuery = localMatch.pubkey;
     workspaceState.userLookupResult = localMatch;
     workspaceState.userDirectStatus = `Found ${localMatch.username ? `@${localMatch.username}` : shortKey(localMatch.pubkey)} in the current roster.`;
-    renderWorkspace();
+    if (shouldRender) renderWorkspace();
     return;
   }
 
@@ -1260,8 +1302,8 @@ async function handleDirectUserLookup() {
     const match = hydrateLookupCandidate(remoteMatches[0]);
     workspaceState.userLookupQuery = match.pubkey;
     workspaceState.userLookupResult = match;
-    workspaceState.userDirectStatus = `Found ${match.username ? `@${match.username}` : shortKey(match.pubkey)} from the authority relays.`;
-    renderWorkspace();
+    workspaceState.userDirectStatus = `Found ${match.username ? `@${match.username}` : shortKey(match.pubkey)} from shared site data.`;
+    if (shouldRender) renderWorkspace();
     return;
   }
 
@@ -1274,13 +1316,13 @@ async function handleDirectUserLookup() {
       displayName: "Direct pubkey",
       isAdmin: workspaceState.publicState?.admins?.includes(directPubkey)
     });
-    workspaceState.userDirectStatus = "No public profile found yet. You can still act on this pubkey.";
-    renderWorkspace();
+    workspaceState.userDirectStatus = "No profile is visible yet, but you can still act on this pubkey.";
+    if (shouldRender) renderWorkspace();
     return;
   }
 
   workspaceState.userDirectStatus = "No matching user found yet.";
-  renderWorkspace();
+  if (shouldRender) renderWorkspace();
 }
 
 async function performUserAction(targetPubkey, action, mode = "") {
@@ -1376,7 +1418,7 @@ async function handleEntityAction(button) {
       lng: entity.lng,
       notes: entity.notes,
       aliases: entity.aliases || [],
-      status: action === "approve" ? "approved" : "denied"
+      status: action === "approve" ? "approved" : action === "deny" ? "denied" : "deleted"
     }
   });
   await refreshWorkspace(true);
@@ -1534,6 +1576,16 @@ async function hydrateChatModal() {
   renderWorkspace();
 }
 
+async function hydrateInboxSubmissions() {
+  if (!currentUserHasInboxAccess()) return;
+  workspaceState.inboxLoading = true;
+  renderWorkspace({ soft: true });
+  workspaceState.inboxSubmissions = await loadInboxSubmissions(workspaceState.siteKeyShares).catch(() => []);
+  workspaceState.inboxLoading = false;
+  renderWorkspace({ soft: true });
+  await maybeOpenAdminChatFromUrl();
+}
+
 async function maybeOpenAdminChatFromUrl() {
   if (!currentUserHasInboxAccess()) return;
   const params = new URLSearchParams(window.location.search);
@@ -1557,6 +1609,24 @@ async function maybeOpenAdminChatFromUrl() {
   };
   renderWorkspace();
   await hydrateChatModal();
+}
+
+async function maybeResolveUserDeepLink() {
+  const params = new URLSearchParams(window.location.search);
+  const query = String(params.get("user") || "").trim();
+  if (!query || workspaceState.activeTab !== "users") return;
+  if (workspaceState.userLookupQuery !== query || !workspaceState.userLookupResult) {
+    await resolveUserLookupQuery(query, { render: false });
+    renderWorkspace({ soft: true });
+  }
+  const targetPubkey = workspaceState.userLookupResult?.pubkey || normalizeDirectPubkey(query);
+  if (!targetPubkey) return;
+  const card = document.querySelector(`[data-user-card="${targetPubkey}"]`);
+  if (card instanceof HTMLElement) {
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    card.classList.add("roster-item--focus");
+    window.setTimeout(() => card.classList.remove("roster-item--focus"), 1800);
+  }
 }
 
 async function handleChatSend(form) {
@@ -1857,6 +1927,7 @@ function logLabel(event) {
 
 function logTarget(event) {
   const slug = firstTag(event, "d");
+  const targetPubkey = firstTag(event, "p") || event.pubkey;
   switch (Number(event.kind)) {
     case SITE.nostr.kinds.snapshot:
     case SITE.nostr.kinds.snapshotRequest:
@@ -1866,7 +1937,10 @@ function logTarget(event) {
     case SITE.nostr.kinds.userMod:
     case SITE.nostr.kinds.adminKeyShare:
     case SITE.nostr.kinds.siteKey:
-      return { href: "./admin.html?tab=users", description: shortKey(event.pubkey) };
+      return {
+        href: `./admin.html?tab=users&user=${encodeURIComponent(targetPubkey)}`,
+        description: shortKey(targetPubkey)
+      };
     case SITE.nostr.kinds.entity:
       return { href: "./admin.html?tab=entities", description: slug || shortKey(event.pubkey) };
     case SITE.nostr.kinds.draft:
@@ -1902,10 +1976,10 @@ function renderSiteKeyShareStatus() {
       : "This account can read new private submissions.";
   }
   if (currentUserPendingKeyRequest() || workspaceState.keyRequestState === "pending") {
-    return "The shared inbox is syncing to this admin account.";
+    return "This account is waiting for the current shared inbox key.";
   }
   if (workspaceState.siteKeyShares.length) {
-    return "This account still needs the current shared inbox key.";
+    return "This account has older inbox keys, but not the current one yet.";
   }
   return "Waiting for shared inbox access.";
 }
@@ -1962,7 +2036,7 @@ async function rotateSiteInboxKey(excludedPubkeys = [], reason = "rotation") {
   const sharedAt = new Date().toISOString();
   const recipients = dedupe(
     (workspaceState.publicState?.admins || []).filter(
-      (pubkey) => !excludedPubkeys.includes(pubkey) && pubkey !== workspaceState.viewer?.pubkey
+      (pubkey) => !excludedPubkeys.includes(pubkey)
     )
   );
   await publishSiteKeyEvent(workspaceState.session.secretKeyHex, nextSiteSecretKeyHex, {
@@ -2149,13 +2223,30 @@ function findLocalUserCandidate(value) {
 }
 
 function visibleWorkspaceUsers() {
+  const query = String(workspaceState.userLookupQuery || "").trim().toLowerCase();
   return (workspaceState.publicState?.users || []).filter((user) => {
-    if (user.isAdmin || user.submissionCount > 0 || user.commentCount > 0 || user.moderation) return true;
-    if (user.username) return true;
-    if (String(user.bio || "").trim()) return true;
-    if (Array.isArray(user.socialLinks) && user.socialLinks.length) return true;
-    if (user.avatarUrl || user.avatarBlob) return true;
-    return false;
+    const visible =
+      user.isAdmin ||
+      user.submissionCount > 0 ||
+      user.commentCount > 0 ||
+      user.moderation ||
+      user.username ||
+      String(user.bio || "").trim() ||
+      (Array.isArray(user.socialLinks) && user.socialLinks.length) ||
+      user.avatarUrl ||
+      user.avatarBlob;
+    if (!visible) return false;
+    if (!query) return true;
+    const haystacks = [
+      user.pubkey,
+      user.username,
+      user.displayName,
+      user.bio,
+      ...(Array.isArray(user.socialLinks) ? user.socialLinks : [])
+    ]
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean);
+    return haystacks.some((value) => value.includes(query));
   });
 }
 
@@ -2171,10 +2262,17 @@ function hydrateLookupCandidate(user) {
 }
 
 function renderLoadingState(message) {
+  const reloadHref = `${window.location.pathname}${window.location.search}${window.location.hash}`;
   return `
     <div class="loading-state loading-state--panel" role="status" aria-live="polite">
-      <span class="loading-spinner" aria-hidden="true"></span>
-      <span>${escapeHtml(message)}</span>
+      <div class="loading-state__message">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <span>${escapeHtml(message)}</span>
+      </div>
+      <div class="loading-state__slow">
+        <span>This is taking longer than expected.</span>
+        <a class="button-ghost loading-state__reload" href="${escapeAttribute(reloadHref)}">Reload</a>
+      </div>
     </div>
   `;
 }
