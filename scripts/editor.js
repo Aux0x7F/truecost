@@ -88,95 +88,65 @@ function renderEditorShell() {
   title.textContent = editorState.currentSlug ? "Edit investigation" : "Create investigation";
   lede.textContent = "Write in the full editor, let working drafts save automatically, and send finished versions into review.";
   shell.innerHTML = `
-    <div class="editor-layout">
-      <section class="surface-panel editor-main">
-        <form class="editor-form" data-editor-form>
-          <div class="editor-header">
-            <div>
-              <div class="eyebrow">Investigation draft</div>
-              <h2>${editorState.currentSlug ? "Current draft" : "New draft"}</h2>
-            </div>
+    <section class="surface-panel editor-studio">
+      <form class="editor-form editor-form--studio" data-editor-form>
+        <div class="editor-actions">
+          <div class="editor-actions__copy">
+            <div class="eyebrow">Investigation draft</div>
+            <h2>${editorState.currentSlug ? "Continue editing" : "Start a new investigation"}</h2>
+            <p>${editorState.currentSlug ? "Keep shaping the draft, then send the next version into review when it is ready." : "Write the title, summary, and full body here. Drafts save as you work and can be sent into review when they are ready."}</p>
+          </div>
+          <div class="editor-actions__controls">
+            <div class="editor-save-state" data-editor-status aria-live="polite">Draft saves automatically as you work.</div>
             <div class="button-row">
               <button class="button-ghost" type="button" data-editor-save>Save now</button>
               <button class="button" type="button" data-editor-submit>Send to review</button>
             </div>
           </div>
+        </div>
 
-          <label>
-            <span>Title</span>
-            <input name="title" type="text" maxlength="140" placeholder="Investigation title" value="${escapeAttribute(editorState.document.title)}" required>
+        <label class="editor-field editor-field--title">
+          <span class="sr-only">Title</span>
+          <input class="editor-title-input" name="title" type="text" maxlength="140" placeholder="Investigation title" value="${escapeAttribute(editorState.document.title)}" required>
+        </label>
+
+        <label class="editor-field editor-field--summary">
+          <span class="sr-only">Summary</span>
+          <textarea class="editor-summary-input" name="summary" rows="3" placeholder="Short summary for the archive card">${escapeHtml(editorState.document.summary)}</textarea>
+        </label>
+
+        <div class="editor-meta-grid">
+          <label class="editor-field editor-field--compact">
+            <span class="sr-only">Date</span>
+            <input name="date" type="date" aria-label="Publication date" value="${escapeAttribute(editorState.document.date)}">
           </label>
-
-          <div class="tip-form__split">
-            <label>
-              <span>Date</span>
-              <input name="date" type="date" value="${escapeAttribute(editorState.document.date)}">
-            </label>
-            <label>
-              <span>Slug</span>
-              <input name="slug" type="text" value="${escapeAttribute(editorState.currentSlug || "Will be generated from the title")}" readonly>
-            </label>
-          </div>
-
-          <label>
-            <span>Summary</span>
-            <textarea name="summary" placeholder="Short summary for the archive card">${escapeHtml(editorState.document.summary)}</textarea>
+          <label class="editor-field editor-field--compact">
+            <span class="sr-only">Tags</span>
+            <input name="tags" type="text" placeholder="Tags: records, follow-up, budget" value="${escapeAttribute(editorState.document.tags.join(", "))}">
           </label>
-
-          <div class="tip-form__split">
-            <label>
-              <span>Tags</span>
-              <input name="tags" type="text" placeholder="records, follow-up, placeholder" value="${escapeAttribute(editorState.document.tags.join(", "))}">
-            </label>
-            <label>
-              <span>Lead entity</span>
-              <input name="primaryEntity" type="text" data-editor-entity-input="primaryEntity" placeholder="Search existing entities" value="${escapeAttribute(editorState.document.primaryEntity)}">
-            </label>
-          </div>
-          <div class="picker-results" data-editor-entity-results="primaryEntity"></div>
-
-          <label>
-            <span>Related entities</span>
-            <input name="entityRefs" type="text" data-editor-entity-input="entityRefs" placeholder="Add more entities by name" value="${escapeAttribute(editorState.document.entityRefs.join(", "))}">
+          <label class="editor-field editor-field--compact">
+            <span class="sr-only">Lead entity</span>
+            <input name="primaryEntity" type="text" data-editor-entity-input="primaryEntity" placeholder="Lead entity" value="${escapeAttribute(editorState.document.primaryEntity)}">
           </label>
-          <div class="picker-results" data-editor-entity-results="entityRefs"></div>
-
-          <div class="editor-inline-note">
-            Need a new entity? <a class="text-link" href="./admin.html?tab=entities">Add it in Entities</a> and come back here.
-          </div>
-
-          <label class="editor-markdown-field">
-            <span>Body</span>
-            <textarea name="markdown" data-editor-markdown>${escapeHtml(editorState.document.markdown)}</textarea>
+          <label class="editor-field editor-field--compact editor-field--wide">
+            <span class="sr-only">Related entities</span>
+            <input name="entityRefs" type="text" data-editor-entity-input="entityRefs" placeholder="Related entities" value="${escapeAttribute(editorState.document.entityRefs.join(", "))}">
           </label>
+        </div>
 
-          <div class="status-box" data-editor-status aria-live="polite">Working drafts save automatically on this device and sync to the relay as you keep writing.</div>
-        </form>
-      </section>
+        <div class="picker-results" data-editor-entity-results="primaryEntity"></div>
+        <div class="picker-results" data-editor-entity-results="entityRefs"></div>
 
-      <aside class="editor-sidebar">
-        <section class="surface-panel">
-          <div class="eyebrow">Status</div>
-          <h3>Draft details</h3>
-          <div class="roster-list" data-editor-meta></div>
-        </section>
+        <div class="editor-inline-note">
+          Need a new entity? <a class="text-link" href="./admin.html?tab=entities">Add it in Entities</a> and come back here.
+        </div>
 
-        <section class="surface-panel">
-          <div class="eyebrow">History</div>
-          <h3>Version history</h3>
-          <div class="editor-history">
-            <div>
-              <strong>Autosaves on this device</strong>
-              <div class="roster-list" data-editor-local-history></div>
-            </div>
-            <div>
-              <strong>Review history</strong>
-              <div class="roster-list" data-editor-relay-history></div>
-            </div>
-          </div>
-        </section>
-      </aside>
-    </div>
+        <label class="editor-markdown-field">
+          <span class="sr-only">Body</span>
+          <textarea name="markdown" data-editor-markdown placeholder="Write the full investigation here. Use headings, quotes, links, and lists.">${escapeHtml(editorState.document.markdown)}</textarea>
+        </label>
+      </form>
+    </section>
   `;
 
   bindEditorShell();
@@ -205,7 +175,11 @@ function bindEditorShell() {
     forceSync: true,
     status: false,
     sideBySideFullscreen: false,
+    placeholder: "Write the full investigation here. Use headings, quotes, links, and lists.",
     toolbar: [
+      "undo",
+      "redo",
+      "|",
       "bold",
       "italic",
       "heading",
@@ -220,6 +194,7 @@ function bindEditorShell() {
       "fullscreen"
     ]
   });
+  decorateEditorToolbar();
 
   const queueSave = () => {
     syncSlugPreview();
@@ -359,11 +334,8 @@ function takenSlugs() {
 }
 
 function syncSlugPreview() {
-  const slugField = document.querySelector('[name="slug"]');
-  if (!(slugField instanceof HTMLInputElement)) return;
   const title = String(document.querySelector('[name="title"]')?.value || "").trim();
-  const preview = editorState.currentSlug || createUniqueSlug(title || "untitled", takenSlugs());
-  slugField.value = preview || "Will be generated from the title";
+  return editorState.currentSlug || createUniqueSlug(title || "untitled", takenSlugs());
 }
 
 function scheduleLocalSnapshot() {
@@ -446,69 +418,30 @@ async function saveDraftNow(status = "draft", silent = false) {
 }
 
 function updateMetaPanel(message = "") {
-  const host = document.querySelector("[data-editor-meta]");
+  const host = document.querySelector("[data-editor-status]");
   if (!(host instanceof HTMLElement)) return;
   const latestRelay = editorState.relayVersions[0] || null;
-  host.innerHTML = `
-    <article class="roster-item">
-      <strong>Status</strong>
-      <span>${escapeHtml(editorState.draftStatus || "draft")}</span>
-    </article>
-    <article class="roster-item">
-      <strong>Slug</strong>
-      <span class="mono">${escapeHtml(editorState.currentSlug || "Not assigned yet")}</span>
-    </article>
-    <article class="roster-item">
-      <strong>Autosaves</strong>
-      <span>${editorState.localSnapshots.length} stored on this device</span>
-    </article>
-    <article class="roster-item">
-      <strong>Review history</strong>
-      <span>${editorState.relayVersions.length} saved version${editorState.relayVersions.length === 1 ? "" : "s"}</span>
-      <span>${latestRelay ? `Last review save ${escapeHtml(formatTime(latestRelay.created_at))}` : "No review save yet"}</span>
-    </article>
-    ${
-      message
-        ? `<article class="roster-item"><strong>Latest update</strong><span>${escapeHtml(message)}</span></article>`
-        : ""
-    }
-  `;
+  if (message) {
+    host.textContent = message;
+    delete host.dataset.state;
+    return;
+  }
+  if (latestRelay) {
+    host.textContent = `Latest review save ${formatTime(latestRelay.created_at)}.`;
+    delete host.dataset.state;
+    return;
+  }
+  if (editorState.localSnapshots.length) {
+    host.textContent = `Saved on this device ${formatTime(editorState.localSnapshots[0].saved_at)}.`;
+    delete host.dataset.state;
+    return;
+  }
+  host.textContent = "Draft saves automatically as you work.";
+  delete host.dataset.state;
 }
 
 function updateHistoryPanels() {
-  const localHost = document.querySelector("[data-editor-local-history]");
-  const relayHost = document.querySelector("[data-editor-relay-history]");
-  if (localHost instanceof HTMLElement) {
-    localHost.innerHTML = editorState.localSnapshots.length
-      ? editorState.localSnapshots
-          .map(
-            (snapshot, index) => `
-              <article class="roster-item">
-                <strong>${escapeHtml(snapshot.label || "Local save")}</strong>
-                <span>${escapeHtml(formatTime(snapshot.saved_at))}</span>
-                <button class="button-ghost" type="button" data-restore-local="${index}">Restore</button>
-              </article>
-            `
-          )
-          .join("")
-      : `<div class="empty-state">Autosaves will appear here as you write.</div>`;
-  }
-  if (relayHost instanceof HTMLElement) {
-    relayHost.innerHTML = editorState.relayVersions.length
-      ? editorState.relayVersions
-          .map(
-            (version) => `
-              <article class="roster-item">
-                <strong>${escapeHtml(reviewVersionLabel(version.status || "draft"))}</strong>
-                <span>${escapeHtml(formatTime(version.created_at))}</span>
-                <span>${escapeHtml(version.title || "Untitled investigation")}</span>
-                <button class="button-ghost" type="button" data-restore-relay="${escapeAttribute(version.id || version.slug)}">Restore</button>
-              </article>
-            `
-          )
-          .join("")
-      : `<div class="empty-state">Review history will appear after the first save.</div>`;
-  }
+  return;
 }
 
 function restoreLocalSnapshot(index) {
@@ -641,6 +574,54 @@ function setEditorStatus(message, state = "") {
   } else {
     delete box.dataset.state;
   }
+}
+
+function decorateEditorToolbar() {
+  const toolbar = document.querySelector(".EasyMDEContainer .editor-toolbar");
+  if (!(toolbar instanceof HTMLElement)) return;
+  toolbar.classList.add("editor-toolbar--labeled");
+  for (const button of toolbar.querySelectorAll("button")) {
+    if (!(button instanceof HTMLButtonElement)) continue;
+    const label = resolveToolbarButtonLabel(button);
+    if (!label) continue;
+    button.textContent = label;
+    button.classList.add("editor-toolbar__chip");
+    button.setAttribute("aria-label", button.title || label);
+  }
+}
+
+function resolveToolbarButtonLabel(button) {
+  const map = [
+    ["undo", "Undo"],
+    ["redo", "Redo"],
+    ["bold", "Bold"],
+    ["italic", "Italic"],
+    ["heading", "Heading"],
+    ["quote", "Quote"],
+    ["unordered-list", "Bullets"],
+    ["ordered-list", "Numbers"],
+    ["link", "Link"],
+    ["preview", "Preview"],
+    ["side-by-side", "Split"],
+    ["fullscreen", "Focus"]
+  ];
+  for (const [className, label] of map) {
+    if (button.classList.contains(className)) return label;
+  }
+  const title = String(button.title || button.getAttribute("aria-label") || "").toLowerCase();
+  if (title.includes("undo")) return "Undo";
+  if (title.includes("redo")) return "Redo";
+  if (title.includes("bold")) return "Bold";
+  if (title.includes("italic")) return "Italic";
+  if (title.includes("heading")) return "Heading";
+  if (title.includes("quote")) return "Quote";
+  if (title.includes("unordered")) return "Bullets";
+  if (title.includes("ordered")) return "Numbers";
+  if (title.includes("link")) return "Link";
+  if (title.includes("preview")) return "Preview";
+  if (title.includes("side")) return "Split";
+  if (title.includes("full")) return "Focus";
+  return "";
 }
 
 async function loadStaticSlugs() {
