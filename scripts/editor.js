@@ -143,7 +143,7 @@ function renderEditorShell() {
 
         <label class="editor-markdown-field">
           <span class="sr-only">Body</span>
-          <textarea name="markdown" data-editor-markdown placeholder="Write the full investigation here. Use headings, quotes, links, and lists.">${escapeHtml(editorState.document.markdown)}</textarea>
+          <div class="editor-surface" data-editor-surface></div>
         </label>
       </form>
     </section>
@@ -157,44 +157,37 @@ function renderEditorShell() {
 
 function bindEditorShell() {
   const form = document.querySelector("[data-editor-form]");
-  const textarea = document.querySelector("[data-editor-markdown]");
-  if (!(form instanceof HTMLFormElement) || !(textarea instanceof HTMLTextAreaElement)) return;
-  if (!window.EasyMDE) {
+  const surface = document.querySelector("[data-editor-surface]");
+  if (!(form instanceof HTMLFormElement) || !(surface instanceof HTMLElement)) return;
+  const ToastEditor = window.toastui?.Editor;
+  if (!ToastEditor) {
     setEditorStatus("The editor library could not be loaded.", "error");
     return;
   }
 
-  if (editorState.editor) {
-    editorState.editor.toTextArea();
+  if (editorState.editor?.destroy) {
+    editorState.editor.destroy();
     editorState.editor = null;
   }
 
-  editorState.editor = new window.EasyMDE({
-    element: textarea,
-    spellChecker: false,
-    forceSync: true,
-    status: false,
-    sideBySideFullscreen: false,
+  editorState.editor = new ToastEditor({
+    el: surface,
+    initialValue: editorState.document.markdown || "",
+    initialEditType: "wysiwyg",
+    previewStyle: "vertical",
+    height: "720px",
+    hideModeSwitch: true,
+    usageStatistics: false,
     placeholder: "Write the full investigation here. Use headings, quotes, links, and lists.",
-    toolbar: [
-      "undo",
-      "redo",
-      "|",
-      "bold",
-      "italic",
-      "heading",
-      "|",
-      "quote",
-      "unordered-list",
-      "ordered-list",
-      "|",
-      "link",
-      "preview",
-      "side-by-side",
-      "fullscreen"
+    toolbarItems: [
+      ["heading", "bold", "italic", "strike"],
+      ["hr", "quote"],
+      ["ul", "ol", "task", "indent", "outdent"],
+      ["link"],
+      ["code", "codeblock"]
     ]
   });
-  decorateEditorToolbar();
+  surface.__cmsEditor = editorState.editor;
 
   const queueSave = () => {
     syncSlugPreview();
@@ -204,7 +197,7 @@ function bindEditorShell() {
   };
 
   form.addEventListener("input", queueSave);
-  editorState.editor.codemirror.on("change", queueSave);
+  editorState.editor.on("change", queueSave);
 
   form.addEventListener("click", async (event) => {
     const target = event.target;
@@ -289,7 +282,7 @@ function draftToDocument(draft) {
 function collectDocumentFromForm() {
   const form = document.querySelector("[data-editor-form]");
   if (!(form instanceof HTMLFormElement)) return createBlankDocument();
-  const markdown = editorState.editor ? editorState.editor.value() : "";
+  const markdown = editorState.editor?.getMarkdown ? editorState.editor.getMarkdown() : "";
   return {
     title: String(form.elements.namedItem("title")?.value || "").trim(),
     date: String(form.elements.namedItem("date")?.value || "").trim() || new Date().toISOString().slice(0, 10),
@@ -476,8 +469,8 @@ function applyDocument(nextDocument) {
   form.elements.namedItem("tags").value = Array.isArray(nextDocument.tags) ? nextDocument.tags.join(", ") : "";
   form.elements.namedItem("primaryEntity").value = nextDocument.primaryEntity || "";
   form.elements.namedItem("entityRefs").value = Array.isArray(nextDocument.entityRefs) ? nextDocument.entityRefs.join(", ") : "";
-  if (editorState.editor) {
-    editorState.editor.value(nextDocument.markdown || "");
+  if (editorState.editor?.setMarkdown) {
+    editorState.editor.setMarkdown(nextDocument.markdown || "", false);
   }
   syncSlugPreview();
   hydrateEntityResults();
@@ -574,54 +567,6 @@ function setEditorStatus(message, state = "") {
   } else {
     delete box.dataset.state;
   }
-}
-
-function decorateEditorToolbar() {
-  const toolbar = document.querySelector(".EasyMDEContainer .editor-toolbar");
-  if (!(toolbar instanceof HTMLElement)) return;
-  toolbar.classList.add("editor-toolbar--labeled");
-  for (const button of toolbar.querySelectorAll("button")) {
-    if (!(button instanceof HTMLButtonElement)) continue;
-    const label = resolveToolbarButtonLabel(button);
-    if (!label) continue;
-    button.textContent = label;
-    button.classList.add("editor-toolbar__chip");
-    button.setAttribute("aria-label", button.title || label);
-  }
-}
-
-function resolveToolbarButtonLabel(button) {
-  const map = [
-    ["undo", "Undo"],
-    ["redo", "Redo"],
-    ["bold", "Bold"],
-    ["italic", "Italic"],
-    ["heading", "Heading"],
-    ["quote", "Quote"],
-    ["unordered-list", "Bullets"],
-    ["ordered-list", "Numbers"],
-    ["link", "Link"],
-    ["preview", "Preview"],
-    ["side-by-side", "Split"],
-    ["fullscreen", "Focus"]
-  ];
-  for (const [className, label] of map) {
-    if (button.classList.contains(className)) return label;
-  }
-  const title = String(button.title || button.getAttribute("aria-label") || "").toLowerCase();
-  if (title.includes("undo")) return "Undo";
-  if (title.includes("redo")) return "Redo";
-  if (title.includes("bold")) return "Bold";
-  if (title.includes("italic")) return "Italic";
-  if (title.includes("heading")) return "Heading";
-  if (title.includes("quote")) return "Quote";
-  if (title.includes("unordered")) return "Bullets";
-  if (title.includes("ordered")) return "Numbers";
-  if (title.includes("link")) return "Link";
-  if (title.includes("preview")) return "Preview";
-  if (title.includes("side")) return "Split";
-  if (title.includes("full")) return "Focus";
-  return "";
 }
 
 async function loadStaticSlugs() {
