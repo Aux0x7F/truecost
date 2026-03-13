@@ -141,10 +141,10 @@ function renderEditorShell() {
           Need a new entity? <a class="text-link" href="./admin.html?tab=entities">Add it in Entities</a> and come back here.
         </div>
 
-        <label class="editor-markdown-field">
+        <div class="editor-markdown-field" role="group" aria-label="Body">
           <span class="sr-only">Body</span>
           <div class="editor-surface" data-editor-surface></div>
-        </label>
+        </div>
       </form>
     </section>
   `;

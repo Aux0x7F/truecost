@@ -1026,11 +1026,17 @@ h3 {
 .editor-markdown-field .toastui-editor-defaultUI-toolbar {
   border-bottom: 1px solid var(--line);
   background: rgba(18, 18, 18, 0.03);
-  padding: 0.85rem 0.9rem;
+  padding: 0.9rem 1rem 0.7rem;
 }
 
 .editor-markdown-field .toastui-editor-toolbar-group {
   margin-right: 0.4rem;
+}
+
+.editor-markdown-field .toastui-editor-defaultUI-toolbar button {
+  width: 2.35rem;
+  height: 2.35rem;
+  margin: 0 0.22rem 0.32rem 0;
 }
 
 .editor-markdown-field .toastui-editor-toolbar-icons,
@@ -1038,7 +1044,6 @@ h3 {
   border-radius: 999px;
   border: 1px solid rgba(18, 18, 18, 0.08);
   background-color: rgba(255, 255, 255, 0.76);
-  margin: 0 0.22rem 0.32rem 0;
 }
 
 .editor-markdown-field .toastui-editor-toolbar-icons:hover,
@@ -1066,14 +1071,18 @@ h3 {
 
 .editor-markdown-field .toastui-editor-contents {
   font-family: "IBM Plex Sans", sans-serif;
-  font-size: 1.03rem;
-  line-height: 1.8;
+  font-size: 1.05rem;
+  line-height: 1.85;
   color: var(--ink);
 }
 
 .editor-markdown-field .toastui-editor-contents p,
 .editor-markdown-field .toastui-editor-contents li {
   color: var(--ink);
+}
+
+.editor-markdown-field .toastui-editor-contents p {
+  margin: 0 0 1rem;
 }
 
 .editor-markdown-field .toastui-editor-md-container .cm-editor {
@@ -1085,6 +1094,46 @@ h3 {
 .editor-markdown-field .toastui-editor-contents h2,
 .editor-markdown-field .toastui-editor-contents h3 {
   color: var(--ink);
+}
+
+.editor-markdown-field .toastui-editor-contents h1,
+.editor-markdown-field .toastui-editor-contents h2 {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.editor-markdown-field .toastui-editor-contents h1 {
+  margin: 0 0 1.1rem;
+  font-size: 2.5rem;
+  line-height: 1.04;
+}
+
+.editor-markdown-field .toastui-editor-contents h2 {
+  margin: 1.4rem 0 0.9rem;
+  font-size: 1.75rem;
+  line-height: 1.12;
+}
+
+.editor-markdown-field .toastui-editor-contents h3 {
+  margin: 1.2rem 0 0.7rem;
+  font-size: 1.3rem;
+  line-height: 1.18;
+}
+
+.editor-markdown-field .toastui-editor-contents blockquote {
+  margin: 1.1rem 0;
+  padding: 0.2rem 0 0.2rem 1rem;
+  border-left-color: rgba(156, 29, 24, 0.22);
+  color: var(--ink-soft);
+}
+
+.editor-markdown-field .toastui-editor-contents code {
+  border-radius: 8px;
+}
+
+.editor-markdown-field .toastui-editor-contents pre {
+  border-radius: 16px;
+  padding: 1rem 1.1rem;
 }
 
 .editor-markdown-field .toastui-editor-popup {
