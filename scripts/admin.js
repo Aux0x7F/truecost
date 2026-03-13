@@ -262,9 +262,23 @@ function captureWorkspaceAccessState() {
     sessionPubkey: workspaceState.viewer?.pubkey || "",
     admin: currentUserIsAdmin(),
     inbox: currentUserHasInboxAccess(),
-    pendingRequest: currentUserPendingKeyRequest()?.id || "",
-    activeSitePubkey: activeSitePubkey(),
-    knownShares: workspaceState.siteKeyShares.map((share) => share.sitePubkey).sort()
+    activeSitePubkey: activeSitePubkey()
+  });
+}
+
+function captureWorkspaceDataState() {
+  const publicState = workspaceState.publicState || {};
+  return JSON.stringify({
+    tab: workspaceState.activeTab,
+    keyState: workspaceState.keyRequestState || "",
+    users: (publicState.users || []).map((user) => `${user.pubkey}:${user.isAdmin ? 1 : 0}:${user.submissionCount || 0}:${user.commentCount || 0}`),
+    pendingKeyRequests: (publicState.pendingAdminKeyRequests || []).map((request) => `${request.id}:${request.requester_pubkey}:${request.site_pubkey}`),
+    submissions: (workspaceState.inboxSubmissions || []).map((submission) => `${submission.id}:${submission.latest?.status || submission.status || ""}`),
+    entities: (publicState.entities || []).map((entity) => `${entity.slug}:${entity.status}`),
+    drafts: (publicState.drafts || []).map((draft) => `${draft.slug}:${draft.status}:${draft.id || draft.created_at || ""}`),
+    comments: (publicState.allComments || []).map((comment) => `${comment.id}:${comment.visibility || "visible"}`),
+    snapshot: publicState.snapshotInfo?.id || "",
+    metrics: publicState.metrics || {}
   });
 }
 
@@ -295,7 +309,8 @@ async function syncWorkspaceState(force = true) {
   }
   if (!getStoredSession()) return;
 
-  const before = captureWorkspaceAccessState();
+  const beforeAccess = captureWorkspaceAccessState();
+  const beforeData = captureWorkspaceDataState();
   workspaceState.backgroundSyncInFlight = true;
   let didRefresh = false;
   try {
@@ -306,10 +321,21 @@ async function syncWorkspaceState(force = true) {
     await maybeEnsureCurrentKeyRequest().catch(() => {
       workspaceState.keyRequestState = "error";
     });
-    const after = captureWorkspaceAccessState();
-    if (before !== after) {
+    if (currentUserHasInboxAccess()) {
+      workspaceState.inboxSubmissions = await loadInboxSubmissions(workspaceState.siteKeyShares).catch(() => []);
+    } else {
+      workspaceState.inboxSubmissions = [];
+    }
+    workspaceState.staticSlugs = await loadStaticSlugs().catch(() => []);
+    workspaceState.activeTab = chooseInitialTab(workspaceState.activeTab);
+    const afterAccess = captureWorkspaceAccessState();
+    const afterData = captureWorkspaceDataState();
+    if (beforeAccess !== afterAccess) {
       didRefresh = true;
-      await refreshWorkspace(true);
+      renderWorkspace({ soft: true });
+    } else if (beforeData !== afterData && shouldSoftRefreshWorkspace()) {
+      didRefresh = true;
+      renderWorkspace({ soft: true });
     }
   } finally {
     workspaceState.backgroundSyncInFlight = false;
@@ -317,7 +343,8 @@ async function syncWorkspaceState(force = true) {
   }
 }
 
-function renderWorkspace() {
+function renderWorkspace(options = {}) {
+  const soft = Boolean(options.soft);
   const shell = document.querySelector("[data-workspace-shell]");
   const title = document.querySelector("[data-workspace-title]");
   const lede = document.querySelector("[data-workspace-lede]");
@@ -336,16 +363,30 @@ function renderWorkspace() {
     ? "Manage users, submissions, entities, and post review."
     : "Update your profile and review your comments.";
 
-  shell.innerHTML = `
-    <div class="workspace-tabs">
-      ${tabButtons().map((tab) => renderTabButton(tab)).join("")}
-    </div>
-    <div class="workspace-pane">
-      ${renderActivePane()}
-    </div>
-    ${renderEntityModal()}
-    ${renderChatModal()}
-  `;
+  const tabsMarkup = tabButtons().map((tab) => renderTabButton(tab)).join("");
+  const paneMarkup = renderActivePane();
+  const overlayMarkup = `${renderEntityModal()}${renderChatModal()}`;
+  const tabs = shell.querySelector("[data-workspace-tabs]");
+  const pane = shell.querySelector("[data-workspace-pane]");
+  const overlays = shell.querySelector("[data-workspace-overlays]");
+
+  if (soft && tabs && pane && overlays) {
+    tabs.innerHTML = tabsMarkup;
+    pane.innerHTML = paneMarkup;
+    overlays.innerHTML = overlayMarkup;
+  } else {
+    shell.innerHTML = `
+      <div class="workspace-tabs" data-workspace-tabs>
+        ${tabsMarkup}
+      </div>
+      <div class="workspace-pane" data-workspace-pane>
+        ${paneMarkup}
+      </div>
+      <div data-workspace-overlays>
+        ${overlayMarkup}
+      </div>
+    `;
+  }
   hydrateWorkspaceEnhancements();
 }
 
@@ -1904,8 +1945,18 @@ async function maybeEnsureCurrentKeyRequest() {
 
   workspaceState.keyRequestState = "pending";
   workspaceState.keyRequestTimer = window.setTimeout(() => {
-    void refreshWorkspace(true);
+    void syncWorkspaceState(true);
   }, 3200);
+}
+
+function shouldSoftRefreshWorkspace() {
+  if (workspaceState.entityModal || workspaceState.chatModal) return false;
+  const active = document.activeElement;
+  return !(
+    active instanceof HTMLElement &&
+    active.closest("[data-workspace-shell]") &&
+    active.matches("input, textarea, select, [contenteditable='true']")
+  );
 }
 
 async function loadStaticSlugs() {

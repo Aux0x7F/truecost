@@ -17,6 +17,7 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 
 ## Longer Term
 
+- Add transparent page editing for static pages such as Home and About. The intended workflow is a keyboard shortcut (`Ctrl+Shift+E`) that reveals a fixed bottom control bar with revert, undo, redo, and save actions while the page itself is edited in place. This editing mode is meant for queued snapshot-to-GitHub bakedown, not synchronized live co-editing.
 - Add stronger map and archive views as the entity and location dataset grows.
 - Improve collaboration tools for volunteers, including clearer review states and richer discussion around submissions.
 - Package the reusable parts of the system so future campaign sites can launch with less custom setup.
