@@ -38,35 +38,13 @@
       </section>
 
       <section class="section">
-        <div class="wrap page-layout">
-          <article class="article-shell hero__panel" data-investigation-article></article>
-
-          <aside class="article-aside">
-            <section class="surface-panel">
-              <div class="eyebrow">Case metadata</div>
-              <div class="meta-list">
-                <div>
-                  <strong>Published</strong>
-                  <span data-investigation-date></span>
-                </div>
-                <div>
-                  <strong>Location</strong>
-                  <span data-investigation-region></span>
-                </div>
-                <div>
-                  <strong>Status</strong>
-                  <span data-investigation-status></span>
-                </div>
-              </div>
-            </section>
-
-            <section class="surface-panel" data-investigation-review hidden></section>
-
-            <section class="surface-panel">
-              <div class="eyebrow">Structured notes</div>
-              <div class="record-list" data-investigation-records></div>
-            </section>
-          </aside>
+        <div class="wrap article-stack">
+          <p class="article-inline-meta" data-investigation-meta></p>
+          <article class="article-shell surface-panel article-shell--light" data-investigation-article></article>
+          <section class="surface-panel article-notes-panel" data-investigation-records-shell hidden>
+            <div class="eyebrow">Structured notes</div>
+            <div class="record-list" data-investigation-records></div>
+          </section>
         </div>
       </section>
 
