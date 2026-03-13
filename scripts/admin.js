@@ -809,7 +809,9 @@ function renderEntitiesPane() {
 function renderReviewPane() {
   const drafts = (workspaceState.publicState?.drafts || []).slice();
   const pending = drafts.filter((draft) => ["candidate", "submitted", "review"].includes(String(draft.status || "").toLowerCase()));
-  const recentlyDecided = drafts.filter((draft) => !pending.includes(draft)).slice(0, 10);
+  const recentlyDecided = drafts
+    .filter((draft) => ["approved", "revision", "denied"].includes(String(draft.status || "").toLowerCase()))
+    .slice(0, 10);
   return `
     <div class="review-stack">
       <section class="surface-panel">
@@ -838,7 +840,7 @@ function renderReviewPane() {
           ${
             recentlyDecided.length
               ? recentlyDecided.map((draft) => renderReviewedCard(draft)).join("")
-              : `<div class="empty-state">Approved and rejected posts will appear here.</div>`
+              : `<div class="empty-state">Approved, denied, and revision requests will appear here.</div>`
           }
         </div>
       </section>
@@ -847,8 +849,9 @@ function renderReviewPane() {
 }
 
 function renderReviewCard(draft) {
-  const author = (workspaceState.publicState?.users || []).find((user) => user.pubkey === draft.author);
-  const authorLabel = author?.displayName || author?.username || shortKey(draft.author);
+  const authorPubkey = draftOwnerPubkey(draft);
+  const author = (workspaceState.publicState?.users || []).find((user) => user.pubkey === authorPubkey);
+  const authorLabel = author?.displayName || author?.username || shortKey(authorPubkey);
   const revisionLabel = draft.revisionCount > 1 ? `${draft.revisionCount} saved versions` : "1 saved version";
   return `
     <article class="review-card">
@@ -864,25 +867,63 @@ function renderReviewCard(draft) {
       <p class="review-card__summary">${escapeHtml(draft.summary || "No summary added yet.")}</p>
       <span class="muted-text">By ${escapeHtml(authorLabel)}${draft.entity_refs?.length ? ` • ${escapeHtml(draft.entity_refs.map(resolveEntityDisplayValue).join(", "))}` : ""}</span>
       <div class="button-row button-row--tight">
-        <a class="text-link" href="./editor.html?slug=${encodeURIComponent(draft.slug)}">Open draft</a>
+        <a class="text-link" href="./investigation.html?draft=${encodeURIComponent(draft.slug)}">Open preview</a>
         <button class="button-ghost" type="button" data-review-action="approve" data-draft-slug="${escapeAttribute(draft.slug)}">Approve for publish</button>
-        <button class="button-ghost" type="button" data-review-action="reject" data-draft-slug="${escapeAttribute(draft.slug)}">Send back</button>
+        <button class="button-ghost" type="button" data-review-action="revise" data-draft-slug="${escapeAttribute(draft.slug)}">Request revision</button>
+        <button class="button-ghost" type="button" data-review-action="deny" data-draft-slug="${escapeAttribute(draft.slug)}">Deny</button>
       </div>
     </article>
   `;
 }
 
 function renderReviewedCard(draft) {
+  const reviewAction = draftReviewAction(draft);
   return `
     <article class="review-card review-card--history">
       <strong>${escapeHtml(draft.title)}</strong>
-      <span>${escapeHtml(draft.status || "draft")} • ${escapeHtml(draft.date)}</span>
+      <span>${escapeHtml(reviewStatusLabel(draft.status, reviewAction))} • ${escapeHtml(draft.date)}</span>
       <p class="review-card__summary">${escapeHtml(trimmed(draft.summary || draft.markdown || "", 180))}</p>
       <div class="button-row button-row--tight">
-        <a class="text-link" href="./editor.html?slug=${encodeURIComponent(draft.slug)}">Open draft</a>
+        <a class="text-link" href="${escapeAttribute(reviewedDraftHref(draft))}">${escapeHtml(reviewedDraftAction(draft))}</a>
       </div>
     </article>
   `;
+}
+
+function draftOwnerPubkey(draft) {
+  const revisions = Array.isArray(draft?.revisions) ? draft.revisions : [];
+  const oldest = revisions.length ? revisions[revisions.length - 1] : null;
+  return String(oldest?.author || draft?.author || "").trim().toLowerCase();
+}
+
+function draftReviewAction(draft) {
+  const tag = Array.isArray(draft?._event?.tags)
+    ? draft._event.tags.find((item) => Array.isArray(item) && item[0] === "review")
+    : null;
+  return String(tag?.[1] || "").trim().toLowerCase();
+}
+
+function reviewStatusLabel(status, reviewAction = "") {
+  const cleanStatus = String(status || "").trim().toLowerCase();
+  const cleanAction = String(reviewAction || "").trim().toLowerCase();
+  if (cleanStatus === "approved" || cleanAction === "approve") return "Approved";
+  if (cleanStatus === "denied" || cleanAction === "deny") return "Denied";
+  if (cleanStatus === "revision" || cleanAction === "revise") return "Revision requested";
+  if (["candidate", "submitted", "review"].includes(cleanStatus)) return "Submitted";
+  return "Draft";
+}
+
+function reviewedDraftHref(draft) {
+  const status = String(draft?.status || "").trim().toLowerCase();
+  return status === "revision"
+    ? `./editor.html?slug=${encodeURIComponent(draft.slug)}`
+    : `./investigation.html?draft=${encodeURIComponent(draft.slug)}`;
+}
+
+function reviewedDraftAction(draft) {
+  return String(draft?.status || "").trim().toLowerCase() === "revision"
+    ? "Open draft"
+    : "Open preview";
 }
 
 function renderCommentsPane() {
@@ -1368,19 +1409,21 @@ async function handleReviewAction(button) {
   const action = button.getAttribute("data-review-action") || "";
   const slug = cleanSlug(button.getAttribute("data-draft-slug") || "");
   const draft = (workspaceState.publicState?.drafts || []).find((item) => item.slug === slug);
-  if (!draft || !["approve", "reject"].includes(action)) return;
-  const nextStatus = action === "approve" ? "approved" : "rejected";
+  if (!draft || !["approve", "revise", "deny"].includes(action)) return;
+  const nextStatus = action === "approve" ? "approved" : action === "deny" ? "denied" : "revision";
   button.setAttribute("disabled", "disabled");
   try {
     await publishTaggedJson({
       kind: SITE.nostr.kinds.draft,
       secretKeyHex: workspaceState.session.secretKeyHex,
-      tags: [["d", draft.slug], ["status", nextStatus]],
+      tags: [["d", draft.slug], ["status", nextStatus], ["review", action]],
       content: {
         ...draft,
+        author_pubkey: draftOwnerPubkey(draft),
         status: nextStatus,
         reviewed_at: new Date().toISOString(),
-        reviewed_by: workspaceState.viewer?.pubkey || ""
+        reviewed_by: workspaceState.viewer?.pubkey || "",
+        review_action: action
       }
     });
     await refreshWorkspace(true);

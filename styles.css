@@ -284,6 +284,7 @@ h3 {
 }
 
 .profile-menu__toggle {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -351,6 +352,67 @@ h3 {
 
 .profile-menu__panel {
   min-width: 11rem;
+}
+
+.profile-menu__notice {
+  position: absolute;
+  top: -0.2rem;
+  right: -0.15rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.2rem;
+  height: 1.2rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: #fff4f1;
+  color: var(--accent-deep);
+  font-size: 0.72rem;
+  font-weight: 700;
+  border: 1px solid rgba(18, 18, 18, 0.08);
+}
+
+.profile-menu__section {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.35rem 0.25rem 0.6rem;
+}
+
+.profile-menu__section-title {
+  padding: 0 0.65rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", monospace;
+  color: var(--ink-soft);
+}
+
+.profile-menu__notifications {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.profile-menu__notice-item {
+  display: grid;
+  gap: 0.18rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 14px;
+  text-decoration: none;
+  background: rgba(18, 18, 18, 0.04);
+}
+
+.profile-menu__notice-item strong,
+.profile-menu__notice-item span,
+.profile-menu__notice-item .profile-menu__notice-label {
+  color: var(--ink);
+}
+
+.profile-menu__notice-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", monospace;
+  color: var(--accent);
 }
 
 .draft-note {
@@ -565,14 +627,10 @@ h3 {
   gap: 1.25rem;
 }
 
-.draft-archive {
+.authoring-card {
   display: grid;
-  gap: 0.9rem;
-  padding: 1.35rem;
-}
-
-.story-list--drafts {
-  margin-top: 0.2rem;
+  gap: 0.8rem;
+  padding: 1.45rem;
 }
 
 .investigation-card,
@@ -587,6 +645,14 @@ h3 {
   align-items: start;
 }
 
+.investigation-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
 .investigation-card__body {
   min-width: 0;
 }
@@ -597,6 +663,43 @@ h3 {
   justify-content: flex-end;
   min-width: 11rem;
   padding-top: 0.15rem;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(18, 18, 18, 0.06);
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-family: "IBM Plex Mono", monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.status-pill--submitted {
+  background: rgba(156, 29, 24, 0.12);
+  color: var(--accent-deep);
+}
+
+.status-pill--approved,
+.status-pill--posted {
+  background: rgba(19, 74, 47, 0.1);
+  color: #134a2f;
+}
+
+.status-pill--draft,
+.status-pill--revision {
+  background: rgba(18, 18, 18, 0.08);
+  color: var(--ink-soft);
+}
+
+.status-pill--denied {
+  background: rgba(111, 13, 9, 0.12);
+  color: #6b1b16;
 }
 
 .investigation-card h3 a,
@@ -755,6 +858,10 @@ h3 {
 .page-layout {
   grid-template-columns: minmax(0, 1fr) 320px;
   align-items: start;
+}
+
+.page-layout > :only-child {
+  grid-column: 1 / -1;
 }
 
 .article-shell {
@@ -955,6 +1062,11 @@ h3 {
 .review-card__summary {
   margin: 0;
   color: var(--ink);
+}
+
+[data-investigation-review] {
+  display: grid;
+  gap: 0.9rem;
 }
 
 .editor-field {
