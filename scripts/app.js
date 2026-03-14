@@ -52,7 +52,8 @@ const state = {
   archiveFilterOpenField: "",
   archiveFilterTimer: null,
   map: null,
-  markers: null
+  markers: null,
+  markerIndex: null
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -365,7 +366,8 @@ async function initInvestigationCards() {
   const homeGrid = document.querySelector("[data-home-investigations]");
   const listGrid = document.querySelector("[data-investigation-list]");
   const rail = document.querySelector("[data-investigation-rail]");
-  if (!homeGrid && !listGrid) return;
+  const archiveSummaryHosts = document.querySelectorAll("[data-archive-summary]");
+  if (!homeGrid && !listGrid && !archiveSummaryHosts.length) return;
   if (homeGrid) homeGrid.innerHTML = renderLoadingState("Looking up featured investigations...");
   if (listGrid) listGrid.innerHTML = renderLoadingState("Looking up investigations...");
   if (rail) rail.innerHTML = renderLoadingState("Looking up filters and map data...");
@@ -374,6 +376,9 @@ async function initInvestigationCards() {
     const posts = await loadPosts();
     const publicState = await getPublicState();
     const canEdit = editorEntryAllowed(publicState);
+    if (archiveSummaryHosts.length) {
+      hydrateArchiveSummaryLinks(posts, publicState);
+    }
     if (homeGrid) {
       const count = Number(homeGrid.getAttribute("data-count") || "2");
       homeGrid.innerHTML = posts
@@ -381,7 +386,6 @@ async function initInvestigationCards() {
         .slice(0, count)
         .map((post) => renderInvestigationCard(post, true))
         .join("");
-      hydrateHomeHeroSnapshot(posts, publicState);
     }
     if (listGrid) {
       const entries = canEdit
@@ -412,27 +416,30 @@ async function initAuthoringEntry() {
   host.innerHTML = `<a class="button" href="./editor.html">Create investigation</a>`;
 }
 
-function hydrateHomeHeroSnapshot(posts, publicState) {
-  const host = document.querySelector("[data-home-summary]");
-  if (!(host instanceof HTMLElement)) return;
+function hydrateArchiveSummaryLinks(posts, publicState) {
+  const hosts = [...document.querySelectorAll("[data-archive-summary]")];
+  if (!hosts.length) return;
   const publishedCount = Array.isArray(posts) ? posts.length : 0;
   const entities = Array.isArray(publicState?.approvedEntities) ? publicState.approvedEntities : [];
   const mappedCount = entities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng)).length;
   const locationCount = dedupe(entities.map((entity) => String(entity.location || "").trim()).filter(Boolean)).length;
-  host.innerHTML = `
-    <div class="hero-summary__item">
+  const markup = `
+    <a class="hero-summary__item" href="./investigations.html">
       <strong>${publishedCount}</strong>
       <span>Published investigations</span>
-    </div>
-    <div class="hero-summary__item">
+    </a>
+    <a class="hero-summary__item" href="./map.html#entity-index">
       <strong>${entities.length}</strong>
       <span>Tracked entities</span>
-    </div>
-    <div class="hero-summary__item">
+    </a>
+    <a class="hero-summary__item" href="./map.html#map-board">
       <strong>${Math.max(mappedCount, locationCount)}</strong>
-      <span>Locations tied to the archive</span>
-    </div>
+      <span>Locations</span>
+    </a>
   `;
+  for (const host of hosts) {
+    if (host instanceof HTMLElement) host.innerHTML = markup;
+  }
 }
 
 async function initInvestigationDetail() {
@@ -559,6 +566,7 @@ async function initMapPage() {
     .map((entity) => renderEntityCard(entity, entityUsage.get(entity.slug) || []))
     .join("");
   renderLeafletMap(canvas, publicState.approvedEntities);
+  bindMapEntityCards();
   focusRequestedEntity();
 }
 
@@ -932,21 +940,16 @@ function renderInvestigationRail(entries, publicState, filters, canEdit) {
   return `
     <div class="archive-rail">
       <section class="surface-panel archive-filters">
-        <div class="workspace-list__row archive-filters__head">
-          <div>
-            <div class="eyebrow">Filter archive</div>
-            <h3>Refine what is visible</h3>
-          </div>
+        <div class="workspace-list__row archive-filters__head archive-filters__head--bare">
+          <div></div>
           <button class="text-link archive-filters__clear" type="button" data-clear-investigation-filters ${archiveHasActiveFilters(filters) ? "" : "hidden"}>Clear</button>
         </div>
-        <p class="archive-filter-count" data-archive-filter-count></p>
         <div class="archive-filters__form" data-investigation-filters>
           ${
             canEdit
               ? `
                 <label class="archive-filters__field">
-                  <span class="archive-filters__label">Status</span>
-                  <select name="status" aria-label="Filter by status">
+                  <select name="status" aria-label="Filter by status" title="Filter by status">
                     ${renderArchiveStatusOption("", filters.status, "All statuses")}
                     ${renderArchiveStatusOption("draft", filters.status, "Draft")}
                     ${renderArchiveStatusOption("submitted", filters.status, "In review")}
@@ -958,21 +961,16 @@ function renderInvestigationRail(entries, publicState, filters, canEdit) {
               : ""
           }
           <label class="archive-filters__field" data-filter-field="tag">
-            <span class="archive-filters__label">Tag</span>
             <input name="tag" type="text" placeholder="Search tags" value="${escapeAttribute(filters.tag)}" autocomplete="off" data-filter-input="tag">
             <div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="tag"></div>
           </label>
           <label class="archive-filters__field" data-filter-field="entity">
-            <span class="archive-filters__label">Entity</span>
             <input name="entity" type="text" placeholder="Search entities" value="${escapeAttribute(filters.entity)}" autocomplete="off" data-filter-input="entity">
             <div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="entity"></div>
           </label>
         </div>
       </section>
       <section class="surface-panel archive-map-card">
-        <div class="eyebrow">Map view</div>
-        <h3>Entity view of the current results</h3>
-        <p class="archive-map-card__summary" data-investigation-map-summary></p>
         <div class="tag-row archive-map-card__tags" data-investigation-map-tags></div>
         <div class="map-board map-board--leaflet map-board--compact" data-investigation-map-canvas></div>
         <div class="button-row">
@@ -1110,13 +1108,7 @@ function renderInvestigationArchiveResults(entries, publicState, canEdit) {
 }
 
 function updateArchiveSummary(filteredEntries, entries) {
-  const count = document.querySelector("[data-archive-filter-count]");
   const clearButton = document.querySelector("[data-clear-investigation-filters]");
-  if (count instanceof HTMLElement) {
-    const total = Array.isArray(entries) ? entries.length : 0;
-    const visible = Array.isArray(filteredEntries) ? filteredEntries.length : 0;
-    count.textContent = `${visible} of ${total} investigation${total === 1 ? "" : "s"} visible`;
-  }
   if (clearButton instanceof HTMLElement) {
     clearButton.hidden = !archiveHasActiveFilters();
   }
@@ -1179,17 +1171,13 @@ function syncArchiveFiltersToUrl(canEdit) {
 }
 
 function updateArchiveMapPreview(filteredEntries, entries, publicState) {
-  const summary = document.querySelector("[data-investigation-map-summary]");
   const tagsHost = document.querySelector("[data-investigation-map-tags]");
   const canvas = document.querySelector("[data-investigation-map-canvas]");
-  if (!(summary instanceof HTMLElement) || !(tagsHost instanceof HTMLElement) || !(canvas instanceof HTMLElement)) return;
+  if (!(tagsHost instanceof HTMLElement) || !(canvas instanceof HTMLElement)) return;
   const activeEntities = archiveEntitiesForEntries(filteredEntries, publicState);
   const defaultEntities = archiveHasActiveFilters() ? [] : archiveEntitiesForEntries(entries, publicState);
   const entities = activeEntities.length ? activeEntities : defaultEntities;
   if (!entities.length) {
-    summary.textContent = archiveHasActiveFilters()
-      ? "No mapped entities appear in the current results yet."
-      : "Entity locations will appear here once approved entries are attached to investigations.";
     tagsHost.innerHTML = "";
     destroyLeafletPreview(canvas);
     canvas.innerHTML = `<div class="map-empty">Map preview unavailable.</div>`;
@@ -1197,7 +1185,6 @@ function updateArchiveMapPreview(filteredEntries, entries, publicState) {
   }
 
   const mappedEntities = entities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng));
-  summary.textContent = `${entities.length} linked entit${entities.length === 1 ? "y" : "ies"} in the current archive view${mappedEntities.length ? "." : ", but none with map coordinates yet."}`;
   tagsHost.innerHTML = entities
     .slice(0, 4)
     .map((entity) => `<a class="tag tag--link" href="./map.html?entity=${encodeURIComponent(entity.slug)}">${escapeHtml(entity.name)}</a>`)
@@ -1796,7 +1783,7 @@ function shortReviewKey(value) {
 
 function renderEntityCard(entity, posts) {
   return `
-    <article class="entity-card" id="entity-card-${escapeAttribute(entity.slug)}" data-entity-card="${escapeAttribute(entity.slug)}">
+    <article class="entity-card entity-card--interactive" id="entity-card-${escapeAttribute(entity.slug)}" data-entity-card="${escapeAttribute(entity.slug)}" tabindex="0">
       <div class="eyebrow">${escapeHtml(entity.type || "entity")}</div>
       <h3>${escapeHtml(entity.name)}</h3>
       <p>${escapeHtml(entity.location)}</p>
@@ -1838,6 +1825,7 @@ function renderLeafletMap(canvas, entities) {
     }).addTo(state.map);
   }
   if (state.markers) state.markers.remove();
+  state.markerIndex = new Map();
   state.markers = window.L.layerGroup().addTo(state.map);
 
   const points = [];
@@ -1851,6 +1839,7 @@ function renderLeafletMap(canvas, entities) {
       fillColor: "#b3201a",
       fillOpacity: 0.88
     }).addTo(state.markers);
+    state.markerIndex.set(entity.slug, marker);
     marker.bindPopup(`
       <div class="map-popup">
         <strong>${escapeHtml(entity.name)}</strong>
@@ -1873,14 +1862,47 @@ function renderLeafletMap(canvas, entities) {
   window.setTimeout(() => state.map?.invalidateSize(), 50);
 }
 
+function bindMapEntityCards() {
+  for (const card of document.querySelectorAll("[data-entity-card]")) {
+    if (!(card instanceof HTMLElement) || card.dataset.bound === "yes") continue;
+    card.dataset.bound = "yes";
+    card.addEventListener("click", (event) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".entity-card__links a")) return;
+      focusEntityOnMap(card.getAttribute("data-entity-card") || "");
+    });
+    card.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const target = event.target;
+      if (target instanceof Element && target.closest(".entity-card__links a")) return;
+      event.preventDefault();
+      focusEntityOnMap(card.getAttribute("data-entity-card") || "");
+    });
+  }
+}
+
+function focusEntityOnMap(slug) {
+  const clean = cleanSlug(slug || "");
+  if (!clean) return;
+  const marker = state.markerIndex?.get(clean);
+  const card = document.querySelector(`[data-entity-card="${clean}"]`);
+  if (card instanceof HTMLElement) {
+    for (const item of document.querySelectorAll(".entity-card--focus")) item.classList.remove("entity-card--focus");
+    card.classList.add("entity-card--focus");
+  }
+  if (marker && state.map) {
+    const latLng = marker.getLatLng();
+    state.map.flyTo(latLng, Math.max(state.map.getZoom(), 8), { duration: 0.45 });
+    marker.openPopup();
+  }
+}
+
 function focusRequestedEntity() {
   const requested = cleanSlug(new URLSearchParams(window.location.search).get("entity") || "");
   if (!requested) return;
+  focusEntityOnMap(requested);
   const card = document.querySelector(`[data-entity-card="${requested}"]`);
-  if (card) {
-    card.classList.add("entity-card--focus");
-    card.scrollIntoView({ behavior: "smooth", block: "center" });
-  }
+  if (card instanceof HTMLElement) card.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 async function getPublicState() {
