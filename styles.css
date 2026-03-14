@@ -851,6 +851,7 @@ h3 {
   display: grid;
   gap: 0.35rem;
   min-width: 0;
+  position: relative;
 }
 
 .archive-filters__clear {
@@ -884,6 +885,11 @@ h3 {
 
 .archive-filters__results {
   margin-top: 0;
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  right: 0;
+  z-index: 30;
 }
 
 .archive-filters__field select {
@@ -998,6 +1004,15 @@ h3 {
 .investigation-card h3 a,
 .article-card h3 a {
   text-decoration: none;
+}
+
+.investigation-card h3,
+.article-card h3 {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-size: 1.28rem;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .card-summary {
