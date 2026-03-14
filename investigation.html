@@ -38,13 +38,26 @@
       </section>
 
       <section class="section">
-        <div class="wrap article-stack">
-          <p class="article-inline-meta" data-investigation-meta></p>
-          <article class="article-shell surface-panel article-shell--light" data-investigation-article></article>
-          <section class="surface-panel article-notes-panel" data-investigation-records-shell hidden>
-            <div class="eyebrow">Structured notes</div>
-            <div class="record-list" data-investigation-records></div>
-          </section>
+        <div class="wrap page-layout page-layout--article">
+          <div class="article-stack">
+            <p class="article-inline-meta" data-investigation-meta></p>
+            <article class="article-shell surface-panel article-shell--light" data-investigation-article></article>
+            <section class="surface-panel article-review-panel" data-investigation-review-shell hidden></section>
+          </div>
+          <aside class="article-aside">
+            <section class="surface-panel article-aside-panel" data-investigation-tags-shell hidden>
+              <div class="eyebrow">Tags</div>
+              <div class="tag-row tag-row--compact" data-investigation-tags></div>
+            </section>
+            <section class="surface-panel article-aside-panel" data-investigation-records-shell hidden>
+              <div class="eyebrow">Structured notes</div>
+              <div class="record-list" data-investigation-records></div>
+            </section>
+            <section class="surface-panel article-aside-panel" data-investigation-map-shell hidden>
+              <div class="eyebrow">Entity view</div>
+              <div class="map-board map-board--leaflet map-board--compact" data-investigation-map-canvas></div>
+            </section>
+          </aside>
         </div>
       </section>
 

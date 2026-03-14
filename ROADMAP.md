@@ -19,7 +19,8 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 
 - Add transparent page editing for static pages such as Home and About. The intended workflow is a keyboard shortcut (`Ctrl+Shift+E`) that reveals a fixed bottom control bar with revert, undo, redo, and save actions while the page itself is edited in place. This editing mode is meant for queued snapshot-to-GitHub bakedown, not synchronized live co-editing.
 - Add image handling inside the document editor, including attachment, placement controls (left, right, full width), and markdown-safe storage through the existing blob workflow.
-- Add a navigable entity wiki that can enrich facilities, companies, agencies, and related records with expandable fields, history, and clearer cross-links into investigations and the map.
+- Add a navigable entity wiki that can enrich facilities, companies, agencies, and related records with expandable fields, history, clearer cross-links into investigations and the map, and a richer type / class / taxonomy model.
+- Add collaborative editing for drafts so more than one approved user can work on a document without relying only on queued revisions and review handoffs.
 - Add stronger map and archive views as the entity and location dataset grows.
 - Improve collaboration tools for volunteers, including clearer review states and richer discussion around submissions.
 - Package the reusable parts of the system so future campaign sites can launch with less custom setup.

@@ -423,6 +423,9 @@ function hydrateArchiveSummaryLinks(posts, publicState) {
   const entities = Array.isArray(publicState?.approvedEntities) ? publicState.approvedEntities : [];
   const mappedCount = entities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng)).length;
   const locationCount = dedupe(entities.map((entity) => String(entity.location || "").trim()).filter(Boolean)).length;
+  const tagCount = dedupe(
+    (Array.isArray(posts) ? posts : []).flatMap((post) => (Array.isArray(post?.tags) ? post.tags : []))
+  ).length;
   const markup = `
     <a class="hero-summary__item" href="./investigations.html">
       <strong>${publishedCount}</strong>
@@ -436,6 +439,10 @@ function hydrateArchiveSummaryLinks(posts, publicState) {
       <strong>${Math.max(mappedCount, locationCount)}</strong>
       <span>Locations</span>
     </a>
+    <a class="hero-summary__item" href="./investigations.html">
+      <strong>${tagCount}</strong>
+      <span>Archive tags</span>
+    </a>
   `;
   for (const host of hosts) {
     if (host instanceof HTMLElement) host.innerHTML = markup;
@@ -447,7 +454,12 @@ async function initInvestigationDetail() {
   if (!article) return;
   article.innerHTML = renderLoadingState("Looking up article...");
   const commentPanel = document.querySelector("[data-comment-panel]");
+  const reviewShell = document.querySelector("[data-investigation-review-shell]");
+  const tagsShell = document.querySelector("[data-investigation-tags-shell]");
+  const tagsHost = document.querySelector("[data-investigation-tags]");
   const recordsShell = document.querySelector("[data-investigation-records-shell]");
+  const mapShell = document.querySelector("[data-investigation-map-shell]");
+  const mapCanvas = document.querySelector("[data-investigation-map-canvas]");
   if (commentPanel) commentPanel.innerHTML = renderLoadingState("Looking up discussion...");
 
   try {
@@ -475,6 +487,11 @@ async function initInvestigationDetail() {
     setText("[data-investigation-meta]", buildArticleMetaLine(post));
     const tags = document.querySelector("[data-investigation-kicker]");
     if (tags) tags.innerHTML = renderTagList(post.tags);
+    if (tagsHost instanceof HTMLElement && tagsShell instanceof HTMLElement) {
+      const hasTags = Array.isArray(post.tags) && post.tags.length;
+      tagsHost.innerHTML = hasTags ? renderTagList(post.tags) : "";
+      tagsShell.hidden = !hasTags;
+    }
     const records = document.querySelector("[data-investigation-records]");
     if (records) {
       const hasRecords = Array.isArray(post.records) && post.records.length;
@@ -493,20 +510,26 @@ async function initInvestigationDetail() {
     }
 
     enrichArticleEntities(article, publicState);
-    let reviewShell = document.querySelector("[data-investigation-review-shell]");
-    if (isDraftPreview && !(reviewShell instanceof HTMLElement)) {
-      reviewShell = document.createElement("section");
-      reviewShell.className = "surface-panel article-review-panel";
-      reviewShell.setAttribute("data-investigation-review-shell", "");
-      article.insertAdjacentElement("afterend", reviewShell);
-    }
     if (reviewShell instanceof HTMLElement) {
       if (isDraftPreview) {
         reviewShell.hidden = false;
         reviewShell.innerHTML = renderReviewPreviewPanel(draft);
         bindReviewPreviewPanel(reviewShell, draft);
       } else {
-        reviewShell.remove();
+        reviewShell.hidden = true;
+        reviewShell.innerHTML = "";
+      }
+    }
+    if (mapShell instanceof HTMLElement && mapCanvas instanceof HTMLElement) {
+      const detailEntities = archiveEntitiesForEntries([post], publicState);
+      const mappedEntities = detailEntities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng));
+      if (mappedEntities.length) {
+        mapShell.hidden = false;
+        renderLeafletPreviewMap(mapCanvas, mappedEntities);
+      } else {
+        mapShell.hidden = true;
+        destroyLeafletPreview(mapCanvas);
+        mapCanvas.innerHTML = "";
       }
     }
     if (commentPanel instanceof HTMLElement) {
@@ -520,11 +543,17 @@ async function initInvestigationDetail() {
     document.title = `${post.title} | ${SITE.shortName}`;
   } catch {
     renderError(article, "This case file could not be loaded.");
-    const reviewShell = document.querySelector("[data-investigation-review-shell]");
     if (reviewShell instanceof HTMLElement) {
-      reviewShell.remove();
+      reviewShell.hidden = true;
+      reviewShell.innerHTML = "";
     }
+    if (tagsShell instanceof HTMLElement) tagsShell.hidden = true;
     if (recordsShell instanceof HTMLElement) recordsShell.hidden = true;
+    if (mapShell instanceof HTMLElement) mapShell.hidden = true;
+    if (mapCanvas instanceof HTMLElement) {
+      destroyLeafletPreview(mapCanvas);
+      mapCanvas.innerHTML = "";
+    }
   }
 }
 

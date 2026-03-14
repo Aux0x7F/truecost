@@ -105,9 +105,9 @@ function renderEditorShell() {
             <p>${editorState.currentSlug ? "Keep shaping the draft, then send the next version into review when it is ready." : "Write the title, summary, and full body here. Drafts save as you work and can be sent into review when they are ready."}</p>
           </div>
           <div class="editor-actions__controls">
-            <div class="editor-save-state" data-editor-status aria-live="polite">Draft saves automatically as you work.</div>
+            <div class="editor-save-state" data-editor-status aria-live="polite">Autosave is on. Save draft now pushes the latest version immediately.</div>
             <div class="button-row">
-              <button class="button-ghost" type="button" data-editor-save>Save now</button>
+              <button class="button-ghost" type="button" data-editor-save>Save draft now</button>
               <button class="button" type="button" data-editor-submit>Send to review</button>
             </div>
           </div>
@@ -457,7 +457,7 @@ function updateMetaPanel(message = "") {
     delete host.dataset.state;
     return;
   }
-  host.textContent = "Draft saves automatically as you work.";
+  host.textContent = "Autosave is on. Save draft now pushes the latest version immediately.";
   delete host.dataset.state;
 }
 
@@ -841,11 +841,13 @@ function decorateToolbar(surface) {
     const label = labels.get(String(button.getAttribute("aria-label") || "").trim());
     if (!label) return;
     button.classList.add("editor-toolbar-button");
+    button.setAttribute("aria-label", label);
+    button.removeAttribute("title");
     const icon = button.querySelector(".toastui-editor-toolbar-icons, .toastui-editor-toolbar-icons.last");
     if (icon instanceof HTMLElement) {
       icon.textContent = label;
       icon.setAttribute("aria-hidden", "true");
-      icon.setAttribute("title", "");
+      icon.removeAttribute("title");
       icon.classList.add("editor-toolbar-chip");
     } else {
       button.textContent = label;
