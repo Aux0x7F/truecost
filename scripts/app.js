@@ -1409,7 +1409,7 @@ function updateArchiveMapPreview(filteredEntries, entries, publicState) {
   if (!entities.length) {
     tagsHost.innerHTML = "";
     destroyLeafletPreview(canvas);
-    canvas.innerHTML = `<div class="map-empty">Map preview unavailable.</div>`;
+    canvas.innerHTML = `<div class="map-empty">${archiveHasActiveFilters() ? "No locations tagged in filtered results." : "No locations tagged in the archive yet."}</div>`;
     return;
   }
 
