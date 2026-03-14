@@ -786,15 +786,14 @@ h3 {
 .archive-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 0.78fr);
-  grid-template-areas:
-    "results filters"
-    "results map";
   gap: 1.2rem;
   align-items: start;
 }
 
 .archive-results-shell {
-  grid-area: results;
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
 }
 
 .story-list__results {
@@ -802,17 +801,20 @@ h3 {
   gap: 1rem;
 }
 
+.archive-rail-shell,
 .archive-filters-shell,
 .archive-map-shell {
   min-width: 0;
 }
 
-.archive-filters-shell {
-  grid-area: filters;
-}
-
-.archive-map-shell {
-  grid-area: map;
+.archive-rail-shell {
+  grid-column: 2;
+  grid-row: 1;
+  position: sticky;
+  top: 6rem;
+  display: grid;
+  gap: 1.2rem;
+  align-self: start;
 }
 
 .archive-rail {
@@ -893,16 +895,7 @@ h3 {
 }
 
 .archive-filters__field select {
-  appearance: none;
-  background-image:
-    linear-gradient(45deg, transparent 50%, rgba(18, 18, 18, 0.62) 50%),
-    linear-gradient(135deg, rgba(18, 18, 18, 0.62) 50%, transparent 50%);
-  background-position:
-    calc(100% - 1.2rem) calc(50% - 0.16rem),
-    calc(100% - 0.85rem) calc(50% - 0.16rem);
-  background-size: 0.38rem 0.38rem, 0.38rem 0.38rem;
-  background-repeat: no-repeat;
-  padding-right: 2.2rem;
+  cursor: pointer;
 }
 
 .archive-map-card {
@@ -2534,7 +2527,6 @@ h3 {
 @media (max-width: 980px) {
   .hero__grid,
   .page-layout,
-  .archive-layout,
   .form-layout,
   .map-shell,
   .admin-grid,
@@ -2563,10 +2555,25 @@ h3 {
   }
 
   .archive-layout {
-    grid-template-areas:
-      "filters"
-      "results"
-      "map";
+    display: flex;
+    flex-direction: column;
+  }
+
+  .archive-rail-shell {
+    display: contents;
+    position: static;
+  }
+
+  .archive-filters-shell {
+    order: 1;
+  }
+
+  .archive-results-shell {
+    order: 2;
+  }
+
+  .archive-map-shell {
+    order: 3;
   }
 
   .nav-toggle {
