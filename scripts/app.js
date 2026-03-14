@@ -610,10 +610,10 @@ async function renderComments(postSlug, publicState) {
   const currentUser = isLoggedIn && state.viewer
     ? publicState.users.find((user) => user.pubkey === state.viewer.pubkey) || null
     : null;
-  const replyTarget = state.commentReply?.postSlug === postSlug
-    ? comments.find((comment) => comment.id === state.commentReply.commentId) || null
-    : null;
-  if (state.commentReply?.postSlug === postSlug && !replyTarget) {
+  const replyTargetId = state.commentReply?.postSlug === postSlug
+    ? state.commentReply.commentId
+    : "";
+  if (replyTargetId && !comments.find((comment) => comment.id === replyTargetId)) {
     state.commentReply = null;
   }
 
@@ -630,26 +630,16 @@ async function renderComments(postSlug, publicState) {
         ? `
           <section class="comment-composer">
             ${renderAvatarBadge(currentUser, state.session?.username || "You", "comment-composer__avatar")}
-            <form class="comment-composer__form" data-comment-form>
+            <form class="comment-composer__form" data-comment-form="root">
               <div class="comment-composer__head">
-                <strong>${replyTarget ? "Write a reply" : "Add a comment"}</strong>
-                <span>${replyTarget ? "Your reply will appear under the selected comment." : "Keep it specific and tied to the post."}</span>
+                <strong>Add a comment</strong>
+                <span>Keep it specific and tied to the post.</span>
               </div>
-              ${
-                replyTarget
-                  ? `
-                    <div class="comment-composer__reply">
-                      <span>Replying to ${escapeHtml(commentAuthorLabel(replyTarget, publicState))}</span>
-                      <button class="button-ghost" type="button" data-cancel-reply>Cancel</button>
-                    </div>
-                  `
-                  : ""
-              }
               <label class="sr-only" for="commentComposerInput">Comment</label>
-              <textarea id="commentComposerInput" class="comment-composer__input" name="markdown" placeholder="${replyTarget ? "Write a reply..." : "Write a comment..."}" required></textarea>
+              <textarea id="commentComposerInput" class="comment-composer__input" name="markdown" placeholder="Write a comment..." required></textarea>
               <div class="comment-composer__footer">
-                <span class="muted-text">${replyTarget ? "Replying keeps the thread together." : "Comments show up with your profile."}</span>
-                <button class="button" type="submit">${replyTarget ? "Reply" : "Post comment"}</button>
+                <span class="muted-text">Comments show up with your profile.</span>
+                <button class="button" type="submit">Post comment</button>
               </div>
               <div class="status-box" data-comment-status aria-live="polite"></div>
             </form>
@@ -659,55 +649,51 @@ async function renderComments(postSlug, publicState) {
     }
     ${
       threadedComments.length
-        ? `<div class="comment-list">${threadedComments.map((comment) => renderComment(comment, publicState, { isAdmin, canReply: isLoggedIn })).join("")}</div>`
+        ? `<div class="comment-list">${threadedComments.map((comment) => renderComment(comment, publicState, { isAdmin, canReply: isLoggedIn, replyTargetId })).join("")}</div>`
         : isLoggedIn
           ? `<div class="comment-list"><div class="empty-state">No comments yet. Start the discussion.</div></div>`
           : ""
     }
   `;
 
-  const form = panel.querySelector("[data-comment-form]");
-  if (form) {
-    form.addEventListener("submit", async (event) => {
+  const rootForm = panel.querySelector('[data-comment-form="root"]');
+  if (rootForm) {
+    rootForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const status = panel.querySelector("[data-comment-status]");
-      const textarea = form.elements.namedItem("markdown");
-      const submitButton = form.querySelector('button[type="submit"]');
+      const textarea = rootForm.elements.namedItem("markdown");
+      const submitButton = rootForm.querySelector('button[type="submit"]');
       const markdown = String(textarea?.value || "").trim();
       if (!markdown) return;
-      const activeReply = state.commentReply?.postSlug === postSlug
-        ? comments.find((comment) => comment.id === state.commentReply.commentId) || null
-        : null;
-      const parentId = activeReply?.id || "";
-      const rootId = activeReply ? String(activeReply.root_id || activeReply.parent_id || activeReply.id || "").trim() : "";
 
       try {
         const viewer = await getViewer();
         if (submitButton instanceof HTMLButtonElement) submitButton.disabled = true;
         if (status) {
-          status.textContent = activeReply ? "Posting reply..." : "Posting comment...";
+          status.textContent = "Posting comment...";
           status.dataset.state = "pending";
         }
-        await publishTaggedJson({
+        const result = await publishTaggedJson({
           kind: SITE.nostr.kinds.comment,
           secretKeyHex: state.session.secretKeyHex,
-          tags: [
-            ["d", `comment-${Date.now()}`],
-            ["a", postSlug],
-            ...(parentId ? [["e", parentId], ["parent", parentId]] : []),
-            ...(rootId ? [["root", rootId]] : [])
-          ],
+          tags: [["d", `comment-${Date.now()}`], ["a", postSlug]],
           content: {
             post_slug: postSlug,
             markdown,
-            parent_id: parentId,
-            root_id: rootId
+            parent_id: "",
+            root_id: ""
           }
         });
-        form.reset();
-        state.commentReply = null;
-        panel.innerHTML = renderLoadingState("Looking up discussion...");
-        state.publicState = await loadPublicState(true);
+        rootForm.reset();
+        appendLocalComment(postSlug, {
+          id: result.event.id,
+          post_slug: postSlug,
+          markdown,
+          author: viewer.pubkey,
+          parent_id: "",
+          root_id: "",
+          created_at: Number(result.event.created_at || Math.floor(Date.now() / 1000))
+        });
         state.viewer = viewer;
         await renderComments(postSlug, state.publicState);
       } catch (error) {
@@ -728,23 +714,81 @@ async function renderComments(postSlug, publicState) {
         commentId: replyButton.getAttribute("data-reply-comment") || ""
       };
       await renderComments(postSlug, publicState);
-      const input = panel.querySelector("#commentComposerInput");
+      const input = panel.querySelector('[data-comment-form="reply"] textarea');
       if (input instanceof HTMLTextAreaElement) input.focus();
     });
   }
 
-  const cancelReply = panel.querySelector("[data-cancel-reply]");
-  if (cancelReply) {
+  for (const cancelReply of panel.querySelectorAll("[data-cancel-reply]")) {
     cancelReply.addEventListener("click", async () => {
       state.commentReply = null;
       await renderComments(postSlug, publicState);
     });
   }
 
+  for (const replyForm of panel.querySelectorAll('[data-comment-form="reply"]')) {
+    replyForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      if (!(form instanceof HTMLFormElement)) return;
+      const parentId = form.getAttribute("data-parent-id") || "";
+      const replyTarget = comments.find((comment) => comment.id === parentId) || null;
+      const textarea = form.elements.namedItem("markdown");
+      const submitButton = form.querySelector('button[type="submit"]');
+      const status = form.querySelector("[data-comment-status]");
+      const markdown = String(textarea?.value || "").trim();
+      if (!markdown || !replyTarget) return;
+      const rootId = String(replyTarget.root_id || replyTarget.parent_id || replyTarget.id || "").trim();
+      try {
+        const viewer = await getViewer();
+        if (submitButton instanceof HTMLButtonElement) submitButton.disabled = true;
+        if (status instanceof HTMLElement) {
+          status.textContent = "Posting reply...";
+          status.dataset.state = "pending";
+        }
+        const result = await publishTaggedJson({
+          kind: SITE.nostr.kinds.comment,
+          secretKeyHex: state.session.secretKeyHex,
+          tags: [
+            ["d", `comment-${Date.now()}`],
+            ["a", postSlug],
+            ["e", parentId],
+            ["parent", parentId],
+            ...(rootId ? [["root", rootId]] : [])
+          ],
+          content: {
+            post_slug: postSlug,
+            markdown,
+            parent_id: parentId,
+            root_id: rootId
+          }
+        });
+        appendLocalComment(postSlug, {
+          id: result.event.id,
+          post_slug: postSlug,
+          markdown,
+          author: viewer.pubkey,
+          parent_id: parentId,
+          root_id: rootId,
+          created_at: Number(result.event.created_at || Math.floor(Date.now() / 1000))
+        });
+        state.viewer = viewer;
+        state.commentReply = null;
+        await renderComments(postSlug, state.publicState);
+      } catch (error) {
+        if (status instanceof HTMLElement) {
+          status.textContent = String(error?.message || error || "Reply failed.");
+          status.dataset.state = "error";
+        }
+      } finally {
+        if (submitButton instanceof HTMLButtonElement) submitButton.disabled = false;
+      }
+    });
+  }
+
   for (const button of panel.querySelectorAll("[data-hide-comment]")) {
     button.addEventListener("click", async () => {
       try {
-        panel.innerHTML = renderLoadingState("Looking up discussion...");
         await publishTaggedJson({
           kind: SITE.nostr.kinds.commentMod,
           secretKeyHex: state.session.secretKeyHex,
@@ -767,6 +811,9 @@ function renderComment(comment, publicState, options = {}, depth = 0) {
   const author = publicState.users.find((user) => user.pubkey === comment.author);
   const authorLabel = author?.displayName || author?.username || "User";
   const replies = Array.isArray(comment.replies) ? comment.replies : [];
+  const replyForm = options.canReply && options.replyTargetId === comment.id
+    ? renderInlineReplyForm(comment, publicState)
+    : "";
   return `
     <article class="comment-card ${depth ? "comment-card--reply" : ""}" id="comment-${escapeAttribute(comment.id)}" data-comment-id="${escapeAttribute(comment.id)}">
       <div class="comment-card__shell">
@@ -783,6 +830,7 @@ function renderComment(comment, publicState, options = {}, depth = 0) {
             ${options.canReply ? `<button type="button" class="button-ghost" data-reply-comment="${escapeAttribute(comment.id)}">Reply</button>` : ""}
             ${options.isAdmin ? `<button type="button" class="button-ghost" data-hide-comment="${escapeAttribute(comment.id)}">Hide</button>` : ""}
           </div>
+          ${replyForm}
           ${
             replies.length
               ? `<div class="comment-card__children">${replies.map((reply) => renderComment(reply, publicState, options, depth + 1)).join("")}</div>`
@@ -965,48 +1013,84 @@ function archiveHasActiveFilters(filters = activeArchiveFilters()) {
   return Boolean(filters.tag || filters.entity || filters.status);
 }
 
-function renderInvestigationRail(entries, publicState, filters, canEdit) {
+function renderArchiveFiltersPanel(entries, publicState, filters, canEdit) {
   return `
-    <div class="archive-rail">
-      <section class="surface-panel archive-filters">
-        <div class="workspace-list__row archive-filters__head archive-filters__head--bare">
-          <div></div>
-          <button class="text-link archive-filters__clear" type="button" data-clear-investigation-filters ${archiveHasActiveFilters(filters) ? "" : "hidden"}>Clear</button>
-        </div>
-        <div class="archive-filters__form" data-investigation-filters>
-          ${
-            canEdit
-              ? `
-                <label class="archive-filters__field">
-                  <select name="status" aria-label="Filter by status" title="Filter by status">
-                    ${renderArchiveStatusOption("", filters.status, "All statuses")}
-                    ${renderArchiveStatusOption("draft", filters.status, "Draft")}
-                    ${renderArchiveStatusOption("submitted", filters.status, "In review")}
-                    ${renderArchiveStatusOption("approved", filters.status, "Approved")}
-                    ${renderArchiveStatusOption("posted", filters.status, "Posted")}
-                  </select>
-                </label>
-              `
-              : ""
-          }
-          <label class="archive-filters__field" data-filter-field="tag">
-            <input name="tag" type="text" placeholder="Search tags" value="${escapeAttribute(filters.tag)}" autocomplete="off" data-filter-input="tag">
-            <div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="tag"></div>
-          </label>
-          <label class="archive-filters__field" data-filter-field="entity">
-            <input name="entity" type="text" placeholder="Search entities" value="${escapeAttribute(filters.entity)}" autocomplete="off" data-filter-input="entity">
-            <div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="entity"></div>
-          </label>
-        </div>
-      </section>
-      <section class="surface-panel archive-map-card">
-        <div class="tag-row archive-map-card__tags" data-investigation-map-tags></div>
-        <div class="map-board map-board--leaflet map-board--compact" data-investigation-map-canvas></div>
-        <div class="button-row">
-          <a class="button-ghost" href="./map.html">Open full map</a>
-        </div>
-      </section>
-    </div>
+    <section class="surface-panel archive-filters">
+      <div class="workspace-list__row archive-filters__head archive-filters__head--bare">
+        <div></div>
+        <button class="text-link archive-filters__clear" type="button" data-clear-investigation-filters ${archiveHasActiveFilters(filters) ? "" : "hidden"}>Clear</button>
+      </div>
+      <div class="archive-filters__form" data-investigation-filters>
+        ${
+          canEdit
+            ? `
+              <label class="archive-filters__field">
+                <select name="status" aria-label="Filter by status" title="Filter by status">
+                  ${renderArchiveStatusOption("", filters.status, "All statuses")}
+                  ${renderArchiveStatusOption("draft", filters.status, "Draft")}
+                  ${renderArchiveStatusOption("submitted", filters.status, "In review")}
+                  ${renderArchiveStatusOption("approved", filters.status, "Approved")}
+                  ${renderArchiveStatusOption("posted", filters.status, "Posted")}
+                </select>
+              </label>
+            `
+            : ""
+        }
+        <label class="archive-filters__field" data-filter-field="tag">
+          <input name="tag" type="text" placeholder="Search tags" value="${escapeAttribute(filters.tag)}" autocomplete="off" data-filter-input="tag">
+          <div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="tag"></div>
+        </label>
+        <label class="archive-filters__field" data-filter-field="entity">
+          <input name="entity" type="text" placeholder="Search entities" value="${escapeAttribute(filters.entity)}" autocomplete="off" data-filter-input="entity">
+          <div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="entity"></div>
+        </label>
+      </div>
+    </section>
+  `;
+}
+
+function renderInlineReplyForm(comment, publicState) {
+  return `
+    <form class="comment-reply-form" data-comment-form="reply" data-parent-id="${escapeAttribute(comment.id)}">
+      <div class="comment-reply-form__head">
+        <strong>Reply to ${escapeHtml(commentAuthorLabel(comment, publicState))}</strong>
+        <span>Your reply will appear directly in this thread.</span>
+      </div>
+      <textarea name="markdown" placeholder="Write a reply..." required></textarea>
+      <div class="comment-reply-form__actions">
+        <button class="button-ghost" type="button" data-cancel-reply>Cancel</button>
+        <button class="button" type="submit">Reply</button>
+      </div>
+      <div class="status-box" data-comment-status aria-live="polite"></div>
+    </form>
+  `;
+}
+
+function appendLocalComment(postSlug, comment) {
+  if (!state.publicState?.commentsByPost) return;
+  const current = state.publicState.commentsByPost.get(postSlug) || [];
+  state.publicState.commentsByPost.set(postSlug, dedupeCommentList([...current, comment]));
+}
+
+function dedupeCommentList(comments) {
+  const seen = new Set();
+  return (Array.isArray(comments) ? comments : []).filter((comment) => {
+    const id = String(comment?.id || "").trim();
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+function renderArchiveMapPanel() {
+  return `
+    <section class="surface-panel archive-map-card">
+      <div class="tag-row archive-map-card__tags" data-investigation-map-tags></div>
+      <div class="map-board map-board--leaflet map-board--compact" data-investigation-map-canvas></div>
+      <div class="button-row">
+        <a class="button-ghost" href="./map.html">Open full map</a>
+      </div>
+    </section>
   `;
 }
 
@@ -1016,8 +1100,9 @@ function renderArchiveStatusOption(value, selectedValue, label) {
 
 function initializeArchiveView(entries, publicState, canEdit) {
   const listGrid = document.querySelector("[data-investigation-list]");
+  const filtersShell = document.querySelector("[data-investigation-filters-shell]");
+  const mapShell = document.querySelector("[data-investigation-map-shell]");
   if (!(listGrid instanceof HTMLElement)) return;
-  const rail = document.querySelector("[data-investigation-rail]");
   state.archiveFilters = currentArchiveFilters(canEdit);
   state.archiveFilterOpenField = "";
 
@@ -1025,9 +1110,12 @@ function initializeArchiveView(entries, publicState, canEdit) {
     ${canEdit ? renderAuthoringLeadCard() : ""}
     <div class="story-list__results" data-investigation-results></div>
   `;
-  if (rail instanceof HTMLElement) {
-    rail.innerHTML = renderInvestigationRail(entries, publicState, activeArchiveFilters(), canEdit);
+  if (filtersShell instanceof HTMLElement) {
+    filtersShell.innerHTML = renderArchiveFiltersPanel(entries, publicState, activeArchiveFilters(), canEdit);
     bindInvestigationFilters(entries, publicState, canEdit);
+  }
+  if (mapShell instanceof HTMLElement) {
+    mapShell.innerHTML = renderArchiveMapPanel();
   }
   renderInvestigationArchiveResults(entries, publicState, canEdit);
 }
@@ -1055,6 +1143,29 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
     state.archiveFilterOpenField = name;
     syncArchiveFiltersToUrl(canEdit);
     scheduleArchiveResults(entries, publicState, canEdit);
+  });
+
+  shell.addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || !target.matches("[data-filter-input]")) return;
+    const field = target.getAttribute("data-filter-input") || "";
+    if (event.key === "Escape") {
+      state.archiveFilterOpenField = "";
+      updateArchiveFilterPanels(entries, publicState);
+      return;
+    }
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const descriptor = archiveFilterSuggestions(field, entries, publicState);
+    const nextValue = descriptor.matching[0] || String(target.value || "").trim();
+    target.value = nextValue;
+    state.archiveFilters = {
+      ...activeArchiveFilters(),
+      [field]: nextValue
+    };
+    state.archiveFilterOpenField = "";
+    syncArchiveFiltersToUrl(canEdit);
+    renderInvestigationArchiveResults(entries, publicState, canEdit);
   });
 
   shell.addEventListener("change", (event) => {
@@ -1111,7 +1222,7 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
       if (shell.contains(target)) return;
       if (!state.archiveFilterOpenField) return;
       state.archiveFilterOpenField = "";
-      updateArchiveFilterPanels(entries, publicState);
+      renderInvestigationArchiveResults(entries, publicState, canEdit);
     });
   }
 }
@@ -1133,7 +1244,9 @@ function renderInvestigationArchiveResults(entries, publicState, canEdit) {
     : `<div class="empty-state">No investigations match these filters yet.</div>`;
   updateArchiveFilterPanels(entries, publicState);
   updateArchiveSummary(filteredEntries, entries);
-  updateArchiveMapPreview(filteredEntries, entries, publicState);
+  if (!state.archiveFilterOpenField) {
+    updateArchiveMapPreview(filteredEntries, entries, publicState);
+  }
 }
 
 function updateArchiveSummary(filteredEntries, entries) {
