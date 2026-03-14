@@ -785,7 +785,7 @@ h3 {
 
 .archive-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(248px, 300px);
+  grid-template-columns: minmax(0, 2fr) minmax(290px, 1fr);
   gap: 1.2rem;
   align-items: start;
 }
