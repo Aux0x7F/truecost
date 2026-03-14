@@ -8,6 +8,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline' https://unpkg.com https://fonts.googleapis.com; script-src 'self' https://unpkg.com; connect-src 'self' https: wss:; font-src 'self' data: https:; object-src 'none'; media-src 'self' blob: https:; manifest-src 'self'; worker-src 'self' blob:;">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=()">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body data-page="investigations">
@@ -40,6 +41,7 @@
           <div class="story-list-shell">
             <div class="story-list" data-investigation-list></div>
           </div>
+          <aside class="archive-rail-shell" data-investigation-rail></aside>
         </div>
       </section>
     </main>
@@ -71,6 +73,7 @@
     </div>
   </footer>
 
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script type="module" src="./scripts/app.js"></script>
 </body>
 </html>
