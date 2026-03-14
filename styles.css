@@ -547,6 +547,10 @@ h3 {
   gap: 0.8rem;
 }
 
+.hero-summary--stack {
+  grid-template-columns: 1fr;
+}
+
 .hero-summary__item {
   display: grid;
   gap: 0.2rem;
@@ -554,16 +558,41 @@ h3 {
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.08);
+  text-decoration: none;
+  transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}
+
+.hero-summary__item:hover,
+.hero-summary__item:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.09);
 }
 
 .hero-summary__item strong {
   font-size: clamp(1.45rem, 3vw, 2rem);
   font-family: "Spectral", serif;
+  color: inherit;
 }
 
 .hero-summary__item span {
   color: rgba(248, 243, 238, 0.78);
   font-size: 0.88rem;
+}
+
+.hero-summary--light .hero-summary__item {
+  background: rgba(18, 18, 18, 0.04);
+  border-color: rgba(18, 18, 18, 0.08);
+}
+
+.hero-summary--light .hero-summary__item:hover,
+.hero-summary--light .hero-summary__item:focus-visible {
+  background: rgba(156, 29, 24, 0.05);
+  border-color: rgba(156, 29, 24, 0.18);
+}
+
+.hero-summary--light .hero-summary__item span {
+  color: var(--ink-soft);
 }
 
 .hero__actions,
@@ -731,6 +760,10 @@ h3 {
   align-items: stretch;
 }
 
+.card-grid--duo {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .card-grid--equal > * {
   height: 100%;
 }
@@ -777,6 +810,10 @@ h3 {
   align-items: start;
 }
 
+.archive-filters__head--bare {
+  min-height: 1rem;
+}
+
 .archive-filters__form {
   display: grid;
   grid-template-columns: 1fr;
@@ -789,25 +826,11 @@ h3 {
   min-width: 0;
 }
 
-.archive-filters__label {
-  font-size: 0.74rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-family: "IBM Plex Mono", monospace;
-  color: var(--ink-soft);
-}
-
 .archive-filters__clear {
   padding: 0;
   border: 0;
   background: transparent;
   cursor: pointer;
-}
-
-.archive-filter-count {
-  margin: 0;
-  color: var(--ink-soft);
-  font-size: 0.92rem;
 }
 
 .workspace-search {
@@ -839,11 +862,6 @@ h3 {
 .archive-map-card {
   display: grid;
   gap: 0.9rem;
-}
-
-.archive-map-card__summary {
-  margin: 0;
-  color: var(--ink-soft);
 }
 
 .archive-map-card__tags {
@@ -1465,16 +1483,18 @@ h3 {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.55rem;
+  gap: 1rem;
+  min-height: 3.35rem;
   border-bottom: 1px solid rgba(18, 18, 18, 0.08);
   background: #fff;
-  padding: 0.95rem 1rem;
+  padding: 0 1.1rem;
 }
 
 .editor-markdown-field .toastui-editor-toolbar-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  align-items: center;
+  gap: 1rem;
   margin: 0 !important;
   padding-right: 0 !important;
   border-right: 0 !important;
@@ -1496,9 +1516,9 @@ h3 {
 
 .editor-markdown-field .toastui-editor-toolbar-icons,
 .editor-markdown-field .toastui-editor-toolbar-icons.last {
-  border-radius: 999px;
-  border: 1px solid rgba(18, 18, 18, 0.08);
-  background-color: rgba(255, 255, 255, 0.98);
+  border-radius: 0;
+  border: 0;
+  background-color: transparent;
   background-image: none !important;
   color: var(--ink);
   display: inline-flex;
@@ -1506,14 +1526,14 @@ h3 {
   justify-content: center;
   width: auto !important;
   min-width: 0;
-  height: 2.6rem !important;
-  padding: 0 1rem;
+  height: auto !important;
+  padding: 0.95rem 0;
   text-indent: 0 !important;
   white-space: nowrap;
   overflow: visible;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  box-shadow: none;
   font-family: "IBM Plex Sans", sans-serif;
-  font-size: 0.82rem !important;
+  font-size: 0.98rem !important;
   font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1;
@@ -1531,8 +1551,11 @@ h3 {
 .editor-markdown-field .toastui-editor-toolbar-icons.active,
 .editor-markdown-field .toastui-editor-toolbar-icons.last:hover,
 .editor-markdown-field .toastui-editor-toolbar-icons.last.active {
-  background-color: rgba(156, 29, 24, 0.1);
-  border-color: rgba(156, 29, 24, 0.22);
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--accent-deep);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
 }
 
 .editor-markdown-field .toastui-editor-toolbar-divider {
@@ -1909,6 +1932,10 @@ h3 {
   border-radius: 18px;
   background: rgba(18, 18, 18, 0.05);
   border: 1px solid rgba(18, 18, 18, 0.08);
+}
+
+.entity-card--interactive {
+  cursor: pointer;
 }
 
 .entity-card--focus {
