@@ -37,6 +37,14 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", {
   year: "numeric"
 });
 
+const ARCHIVE_STATUS_OPTIONS = [
+  { value: "", label: "All statuses" },
+  { value: "draft", label: "Draft" },
+  { value: "submitted", label: "In review" },
+  { value: "approved", label: "Approved" },
+  { value: "posted", label: "Posted" }
+];
+
 const state = {
   session: getStoredSession(),
   guestSession: getStoredGuestSession(),
@@ -50,6 +58,7 @@ const state = {
   notificationsExpanded: false,
   archiveFilters: null,
   archiveFilterOpenField: "",
+  archiveStatusMenuOpen: false,
   archiveFilterTimer: null,
   map: null,
   markers: null,
@@ -1016,23 +1025,27 @@ function archiveHasActiveFilters(filters = activeArchiveFilters()) {
 function renderArchiveFiltersPanel(entries, publicState, filters, canEdit) {
   return `
     <section class="surface-panel archive-filters">
-      <div class="workspace-list__row archive-filters__head archive-filters__head--bare">
-        <div></div>
+      <div class="archive-filters__head">
         <button class="text-link archive-filters__clear" type="button" data-clear-investigation-filters ${archiveHasActiveFilters(filters) ? "" : "hidden"}>Clear</button>
       </div>
       <div class="archive-filters__form" data-investigation-filters>
         ${
           canEdit
             ? `
-              <label class="archive-filters__field">
-                <select name="status" aria-label="Filter by status" title="Filter by status">
-                  ${renderArchiveStatusOption("", filters.status, "All statuses")}
-                  ${renderArchiveStatusOption("draft", filters.status, "Draft")}
-                  ${renderArchiveStatusOption("submitted", filters.status, "In review")}
-                  ${renderArchiveStatusOption("approved", filters.status, "Approved")}
-                  ${renderArchiveStatusOption("posted", filters.status, "Posted")}
-                </select>
-              </label>
+              <div class="archive-status-menu${state.archiveStatusMenuOpen ? " is-open" : ""}" data-status-menu>
+                <button
+                  class="archive-status-menu__toggle"
+                  type="button"
+                  data-status-toggle
+                  aria-expanded="${state.archiveStatusMenuOpen ? "true" : "false"}"
+                  aria-haspopup="listbox"
+                >
+                  <span data-status-current>${escapeHtml(archiveStatusLabel(filters.status))}</span>
+                </button>
+                <div class="archive-status-menu__panel" data-status-panel role="listbox" ${state.archiveStatusMenuOpen ? "" : "hidden"}>
+                  ${ARCHIVE_STATUS_OPTIONS.map((option) => renderArchiveStatusOption(option, filters.status)).join("")}
+                </div>
+              </div>
             `
             : ""
         }
@@ -1094,8 +1107,47 @@ function renderArchiveMapPanel() {
   `;
 }
 
-function renderArchiveStatusOption(value, selectedValue, label) {
-  return `<option value="${escapeAttribute(value)}" ${String(selectedValue || "") === String(value || "") ? "selected" : ""}>${escapeHtml(label)}</option>`;
+function renderArchiveStatusOption(option, selectedValue) {
+  const value = String(option?.value || "");
+  const isActive = value === String(selectedValue || "");
+  return `
+    <button
+      class="archive-status-menu__option${isActive ? " is-active" : ""}"
+      type="button"
+      role="option"
+      aria-selected="${isActive ? "true" : "false"}"
+      data-status-option="${escapeAttribute(value)}"
+    >
+      ${escapeHtml(String(option?.label || ""))}
+    </button>
+  `;
+}
+
+function archiveStatusLabel(value) {
+  return ARCHIVE_STATUS_OPTIONS.find((option) => option.value === String(value || ""))?.label || "All statuses";
+}
+
+function updateArchiveStatusMenu(shell = document.querySelector("[data-investigation-filters]")) {
+  if (!(shell instanceof HTMLElement)) return;
+  const current = shell.querySelector("[data-status-current]");
+  const toggle = shell.querySelector("[data-status-toggle]");
+  const panel = shell.querySelector("[data-status-panel]");
+  const activeValue = String(activeArchiveFilters().status || "");
+  if (current instanceof HTMLElement) current.textContent = archiveStatusLabel(activeValue);
+  if (toggle instanceof HTMLElement) {
+    toggle.setAttribute("aria-expanded", state.archiveStatusMenuOpen ? "true" : "false");
+  }
+  const menu = shell.querySelector("[data-status-menu]");
+  if (menu instanceof HTMLElement) menu.classList.toggle("is-open", state.archiveStatusMenuOpen);
+  if (panel instanceof HTMLElement) {
+    panel.toggleAttribute("hidden", !state.archiveStatusMenuOpen);
+  }
+  for (const option of shell.querySelectorAll("[data-status-option]")) {
+    if (!(option instanceof HTMLElement)) continue;
+    const isActive = (option.getAttribute("data-status-option") || "") === activeValue;
+    option.classList.toggle("is-active", isActive);
+    option.setAttribute("aria-selected", isActive ? "true" : "false");
+  }
 }
 
 function initializeArchiveView(entries, publicState, canEdit) {
@@ -1105,6 +1157,7 @@ function initializeArchiveView(entries, publicState, canEdit) {
   if (!(listGrid instanceof HTMLElement)) return;
   state.archiveFilters = currentArchiveFilters(canEdit);
   state.archiveFilterOpenField = "";
+  state.archiveStatusMenuOpen = false;
 
   listGrid.innerHTML = `
     ${canEdit ? renderAuthoringLeadCard() : ""}
@@ -1129,6 +1182,8 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
     const target = event.target;
     if (!(target instanceof HTMLInputElement) || !target.matches("[data-filter-input]")) return;
     state.archiveFilterOpenField = target.getAttribute("data-filter-input") || "";
+    state.archiveStatusMenuOpen = false;
+    updateArchiveStatusMenu(shell);
     updateArchiveFilterPanels(entries, publicState);
   });
 
@@ -1147,13 +1202,26 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
 
   shell.addEventListener("keydown", (event) => {
     const target = event.target;
-    if (!(target instanceof HTMLInputElement) || !target.matches("[data-filter-input]")) return;
-    const field = target.getAttribute("data-filter-input") || "";
     if (event.key === "Escape") {
-      state.archiveFilterOpenField = "";
-      updateArchiveFilterPanels(entries, publicState);
+      let handled = false;
+      if (state.archiveStatusMenuOpen) {
+        state.archiveStatusMenuOpen = false;
+        updateArchiveStatusMenu(shell);
+        handled = true;
+      }
+      if (state.archiveFilterOpenField) {
+        state.archiveFilterOpenField = "";
+        updateArchiveFilterPanels(entries, publicState);
+        handled = true;
+      }
+      if (handled) {
+        event.preventDefault();
+      }
+      if (!(target instanceof HTMLInputElement) || !target.matches("[data-filter-input]")) return;
       return;
     }
+    if (!(target instanceof HTMLInputElement) || !target.matches("[data-filter-input]")) return;
+    const field = target.getAttribute("data-filter-input") || "";
     if (event.key !== "Enter") return;
     event.preventDefault();
     const descriptor = archiveFilterSuggestions(field, entries, publicState);
@@ -1168,31 +1236,42 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
     renderInvestigationArchiveResults(entries, publicState, canEdit);
   });
 
-  shell.addEventListener("change", (event) => {
-    const target = event.target;
-    if (!(target instanceof HTMLSelectElement) || target.name !== "status") return;
-    state.archiveFilters = {
-      ...activeArchiveFilters(),
-      status: String(target.value || "").trim().toLowerCase()
-    };
-    syncArchiveFiltersToUrl(canEdit);
-    renderInvestigationArchiveResults(entries, publicState, canEdit);
-  });
-
   shell.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
+
+    const statusToggle = target.closest("[data-status-toggle]");
+    if (statusToggle) {
+      state.archiveStatusMenuOpen = !state.archiveStatusMenuOpen;
+      state.archiveFilterOpenField = "";
+      updateArchiveStatusMenu(shell);
+      updateArchiveFilterPanels(entries, publicState);
+      return;
+    }
+
+    const statusOption = target.closest("[data-status-option]");
+    if (statusOption instanceof HTMLElement) {
+      state.archiveFilters = {
+        ...activeArchiveFilters(),
+        status: String(statusOption.getAttribute("data-status-option") || "").trim().toLowerCase()
+      };
+      state.archiveStatusMenuOpen = false;
+      updateArchiveStatusMenu(shell);
+      syncArchiveFiltersToUrl(canEdit);
+      renderInvestigationArchiveResults(entries, publicState, canEdit);
+      return;
+    }
 
     const clear = target.closest("[data-clear-investigation-filters]");
     if (clear) {
       state.archiveFilters = { tag: "", entity: "", status: "" };
       state.archiveFilterOpenField = "";
+      state.archiveStatusMenuOpen = false;
       const tagInput = shell.querySelector('[data-filter-input="tag"]');
       const entityInput = shell.querySelector('[data-filter-input="entity"]');
-      const statusInput = shell.querySelector('select[name="status"]');
       if (tagInput instanceof HTMLInputElement) tagInput.value = "";
       if (entityInput instanceof HTMLInputElement) entityInput.value = "";
-      if (statusInput instanceof HTMLSelectElement) statusInput.value = "";
+      updateArchiveStatusMenu(shell);
       syncArchiveFiltersToUrl(canEdit);
       renderInvestigationArchiveResults(entries, publicState, canEdit);
       return;
@@ -1220,9 +1299,17 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
       const target = event.target;
       if (!(target instanceof Element)) return;
       if (shell.contains(target)) return;
-      if (!state.archiveFilterOpenField) return;
-      state.archiveFilterOpenField = "";
-      renderInvestigationArchiveResults(entries, publicState, canEdit);
+      let changed = false;
+      if (state.archiveFilterOpenField) {
+        state.archiveFilterOpenField = "";
+        changed = true;
+      }
+      if (state.archiveStatusMenuOpen) {
+        state.archiveStatusMenuOpen = false;
+        updateArchiveStatusMenu(shell);
+        changed = true;
+      }
+      if (changed) renderInvestigationArchiveResults(entries, publicState, canEdit);
     });
   }
 }
