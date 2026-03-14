@@ -105,9 +105,9 @@ function renderEditorShell() {
             <p>${editorState.currentSlug ? "Keep shaping the draft, then send the next version into review when it is ready." : "Write the title, summary, and full body here. Drafts save as you work and can be sent into review when they are ready."}</p>
           </div>
           <div class="editor-actions__controls">
-            <div class="editor-save-state" data-editor-status aria-live="polite">Autosave is on. Save draft now pushes the latest version immediately.</div>
+            <div class="editor-save-state" data-editor-status aria-live="polite">Autosave is on. Snapshot saves the current draft immediately.</div>
             <div class="button-row">
-              <button class="button-ghost" type="button" data-editor-save>Save draft now</button>
+              <button class="button-ghost" type="button" data-editor-save>Snapshot</button>
               <button class="button" type="button" data-editor-submit>Send to review</button>
             </div>
           </div>
@@ -457,7 +457,7 @@ function updateMetaPanel(message = "") {
     delete host.dataset.state;
     return;
   }
-  host.textContent = "Autosave is on. Save draft now pushes the latest version immediately.";
+  host.textContent = "Autosave is on. Snapshot saves the current draft immediately.";
   delete host.dataset.state;
 }
 
