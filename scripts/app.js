@@ -48,6 +48,9 @@ const state = {
   notificationsLoading: false,
   profileMenuOpen: false,
   notificationsExpanded: false,
+  archiveFilters: null,
+  archiveFilterOpenField: "",
+  archiveFilterTimer: null,
   map: null,
   markers: null
 };
@@ -361,7 +364,11 @@ function initExternalLinks() {
 async function initInvestigationCards() {
   const homeGrid = document.querySelector("[data-home-investigations]");
   const listGrid = document.querySelector("[data-investigation-list]");
+  const rail = document.querySelector("[data-investigation-rail]");
   if (!homeGrid && !listGrid) return;
+  if (homeGrid) homeGrid.innerHTML = renderLoadingState("Looking up featured investigations...");
+  if (listGrid) listGrid.innerHTML = renderLoadingState("Looking up investigations...");
+  if (rail) rail.innerHTML = renderLoadingState("Looking up filters and map data...");
 
   try {
     const posts = await loadPosts();
@@ -374,6 +381,7 @@ async function initInvestigationCards() {
         .slice(0, count)
         .map((post) => renderInvestigationCard(post, true))
         .join("");
+      hydrateHomeHeroSnapshot(posts, publicState);
     }
     if (listGrid) {
       const entries = canEdit
@@ -385,26 +393,11 @@ async function initInvestigationCards() {
             href: `./investigation.html?slug=${encodeURIComponent(post.slug)}`,
             actionLabel: "Open investigation"
           }));
-      const renderArchive = () => {
-        const filters = currentArchiveFilters(canEdit);
-        const filteredEntries = filterArchiveEntries(entries, publicState, filters);
-        listGrid.innerHTML = `
-          ${canEdit ? renderAuthoringLeadCard() : ""}
-          ${renderInvestigationFilters(entries, publicState, filters, canEdit)}
-          <div class="story-list__results">
-            ${
-              filteredEntries.length
-                ? filteredEntries.map((post) => renderInvestigationCard(post, false)).join("")
-                : `<div class="empty-state">No investigations match these filters yet.</div>`
-            }
-          </div>
-        `;
-        bindInvestigationFilters(renderArchive);
-      };
-      renderArchive();
+      initializeArchiveView(entries, publicState, canEdit);
     }
   } catch {
     renderError(homeGrid || listGrid, "Investigation feed unavailable.");
+    if (rail) renderError(rail, "Archive tools unavailable.");
   }
 }
 
@@ -417,6 +410,29 @@ async function initAuthoringEntry() {
     return;
   }
   host.innerHTML = `<a class="button" href="./editor.html">Create investigation</a>`;
+}
+
+function hydrateHomeHeroSnapshot(posts, publicState) {
+  const host = document.querySelector("[data-home-summary]");
+  if (!(host instanceof HTMLElement)) return;
+  const publishedCount = Array.isArray(posts) ? posts.length : 0;
+  const entities = Array.isArray(publicState?.approvedEntities) ? publicState.approvedEntities : [];
+  const mappedCount = entities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng)).length;
+  const locationCount = dedupe(entities.map((entity) => String(entity.location || "").trim()).filter(Boolean)).length;
+  host.innerHTML = `
+    <div class="hero-summary__item">
+      <strong>${publishedCount}</strong>
+      <span>Published investigations</span>
+    </div>
+    <div class="hero-summary__item">
+      <strong>${entities.length}</strong>
+      <span>Tracked entities</span>
+    </div>
+    <div class="hero-summary__item">
+      <strong>${Math.max(mappedCount, locationCount)}</strong>
+      <span>Locations tied to the archive</span>
+    </div>
+  `;
 }
 
 async function initInvestigationDetail() {
@@ -904,55 +920,66 @@ function currentArchiveFilters(canEdit = false) {
   };
 }
 
-function renderInvestigationFilters(entries, publicState, filters, canEdit) {
-  const tags = dedupe(entries.flatMap((entry) => Array.isArray(entry.tags) ? entry.tags : []));
-  const entities = dedupe(entries.flatMap((entry) => archiveEntryEntityOptions(entry, publicState)));
+function activeArchiveFilters() {
+  return state.archiveFilters || { tag: "", entity: "", status: "" };
+}
+
+function archiveHasActiveFilters(filters = activeArchiveFilters()) {
+  return Boolean(filters.tag || filters.entity || filters.status);
+}
+
+function renderInvestigationRail(entries, publicState, filters, canEdit) {
   return `
-    <section class="surface-panel archive-filters">
-      <div class="workspace-list__row">
-        <div>
-          <div class="eyebrow">Filter archive</div>
-          <h3>Refine the list</h3>
+    <div class="archive-rail">
+      <section class="surface-panel archive-filters">
+        <div class="workspace-list__row archive-filters__head">
+          <div>
+            <div class="eyebrow">Filter archive</div>
+            <h3>Refine what is visible</h3>
+          </div>
+          <button class="text-link archive-filters__clear" type="button" data-clear-investigation-filters ${archiveHasActiveFilters(filters) ? "" : "hidden"}>Clear</button>
         </div>
-        ${
-          filters.tag || filters.entity || filters.status
-            ? `<a class="text-link" href="./investigations.html">Clear filters</a>`
-            : ""
-        }
-      </div>
-      <form class="archive-filters__form" data-investigation-filters>
-        ${
-          canEdit
-            ? `
-              <label class="archive-filters__field">
-                <span class="sr-only">Status</span>
-                <select name="status" aria-label="Filter by status">
-                  ${renderArchiveStatusOption("", filters.status, "All statuses")}
-                  ${renderArchiveStatusOption("draft", filters.status, "Draft")}
-                  ${renderArchiveStatusOption("submitted", filters.status, "In review")}
-                  ${renderArchiveStatusOption("approved", filters.status, "Approved")}
-                  ${renderArchiveStatusOption("posted", filters.status, "Posted")}
-                </select>
-              </label>
-            `
-            : ""
-        }
-        <label class="archive-filters__field">
-          <span class="sr-only">Filter by tag</span>
-          <input name="tag" type="text" list="investigation-tag-options" placeholder="Filter by tag" value="${escapeAttribute(filters.tag)}" autocomplete="off">
-        </label>
-        <label class="archive-filters__field">
-          <span class="sr-only">Filter by entity</span>
-          <input name="entity" type="text" list="investigation-entity-options" placeholder="Filter by entity" value="${escapeAttribute(filters.entity)}" autocomplete="off">
-        </label>
-      </form>
-      <datalist id="investigation-tag-options">
-        ${tags.map((tag) => `<option value="${escapeAttribute(tag)}"></option>`).join("")}
-      </datalist>
-      <datalist id="investigation-entity-options">
-        ${entities.map((entity) => `<option value="${escapeAttribute(entity)}"></option>`).join("")}
-      </datalist>
-    </section>
+        <p class="archive-filter-count" data-archive-filter-count></p>
+        <div class="archive-filters__form" data-investigation-filters>
+          ${
+            canEdit
+              ? `
+                <label class="archive-filters__field">
+                  <span class="archive-filters__label">Status</span>
+                  <select name="status" aria-label="Filter by status">
+                    ${renderArchiveStatusOption("", filters.status, "All statuses")}
+                    ${renderArchiveStatusOption("draft", filters.status, "Draft")}
+                    ${renderArchiveStatusOption("submitted", filters.status, "In review")}
+                    ${renderArchiveStatusOption("approved", filters.status, "Approved")}
+                    ${renderArchiveStatusOption("posted", filters.status, "Posted")}
+                  </select>
+                </label>
+              `
+              : ""
+          }
+          <label class="archive-filters__field" data-filter-field="tag">
+            <span class="archive-filters__label">Tag</span>
+            <input name="tag" type="text" placeholder="Search tags" value="${escapeAttribute(filters.tag)}" autocomplete="off" data-filter-input="tag">
+            <div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="tag"></div>
+          </label>
+          <label class="archive-filters__field" data-filter-field="entity">
+            <span class="archive-filters__label">Entity</span>
+            <input name="entity" type="text" placeholder="Search entities" value="${escapeAttribute(filters.entity)}" autocomplete="off" data-filter-input="entity">
+            <div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="entity"></div>
+          </label>
+        </div>
+      </section>
+      <section class="surface-panel archive-map-card">
+        <div class="eyebrow">Map view</div>
+        <h3>Entity view of the current results</h3>
+        <p class="archive-map-card__summary" data-investigation-map-summary></p>
+        <div class="tag-row archive-map-card__tags" data-investigation-map-tags></div>
+        <div class="map-board map-board--leaflet map-board--compact" data-investigation-map-canvas></div>
+        <div class="button-row">
+          <a class="button-ghost" href="./map.html">Open full map</a>
+        </div>
+      </section>
+    </div>
   `;
 }
 
@@ -960,26 +987,287 @@ function renderArchiveStatusOption(value, selectedValue, label) {
   return `<option value="${escapeAttribute(value)}" ${String(selectedValue || "") === String(value || "") ? "selected" : ""}>${escapeHtml(label)}</option>`;
 }
 
-function bindInvestigationFilters(rerender) {
-  const form = document.querySelector("[data-investigation-filters]");
-  if (!(form instanceof HTMLFormElement)) return;
-  const apply = () => {
-    const url = new URL(window.location.href);
-    const params = url.searchParams;
-    const tag = String(form.elements.namedItem("tag")?.value || "").trim();
-    const entity = String(form.elements.namedItem("entity")?.value || "").trim();
-    const status = String(form.elements.namedItem("status")?.value || "").trim().toLowerCase();
-    if (tag) params.set("tag", tag);
-    else params.delete("tag");
-    if (entity) params.set("entity", entity);
-    else params.delete("entity");
-    if (status) params.set("status", status);
-    else params.delete("status");
-    history.replaceState({}, "", url);
-    rerender();
-  };
-  form.addEventListener("input", apply);
-  form.addEventListener("change", apply);
+function initializeArchiveView(entries, publicState, canEdit) {
+  const listGrid = document.querySelector("[data-investigation-list]");
+  if (!(listGrid instanceof HTMLElement)) return;
+  const rail = document.querySelector("[data-investigation-rail]");
+  state.archiveFilters = currentArchiveFilters(canEdit);
+  state.archiveFilterOpenField = "";
+
+  listGrid.innerHTML = `
+    ${canEdit ? renderAuthoringLeadCard() : ""}
+    <div class="story-list__results" data-investigation-results></div>
+  `;
+  if (rail instanceof HTMLElement) {
+    rail.innerHTML = renderInvestigationRail(entries, publicState, activeArchiveFilters(), canEdit);
+    bindInvestigationFilters(entries, publicState, canEdit);
+  }
+  renderInvestigationArchiveResults(entries, publicState, canEdit);
+}
+
+function bindInvestigationFilters(entries, publicState, canEdit) {
+  const shell = document.querySelector("[data-investigation-filters]");
+  if (!(shell instanceof HTMLElement) || shell.dataset.bound === "yes") return;
+  shell.dataset.bound = "yes";
+
+  shell.addEventListener("focusin", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || !target.matches("[data-filter-input]")) return;
+    state.archiveFilterOpenField = target.getAttribute("data-filter-input") || "";
+    updateArchiveFilterPanels(entries, publicState);
+  });
+
+  shell.addEventListener("input", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || !target.matches("[data-filter-input]")) return;
+    const name = target.getAttribute("data-filter-input") || "";
+    state.archiveFilters = {
+      ...activeArchiveFilters(),
+      [name]: String(target.value || "").trim()
+    };
+    state.archiveFilterOpenField = name;
+    syncArchiveFiltersToUrl(canEdit);
+    scheduleArchiveResults(entries, publicState, canEdit);
+  });
+
+  shell.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLSelectElement) || target.name !== "status") return;
+    state.archiveFilters = {
+      ...activeArchiveFilters(),
+      status: String(target.value || "").trim().toLowerCase()
+    };
+    syncArchiveFiltersToUrl(canEdit);
+    renderInvestigationArchiveResults(entries, publicState, canEdit);
+  });
+
+  shell.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+
+    const clear = target.closest("[data-clear-investigation-filters]");
+    if (clear) {
+      state.archiveFilters = { tag: "", entity: "", status: "" };
+      state.archiveFilterOpenField = "";
+      const tagInput = shell.querySelector('[data-filter-input="tag"]');
+      const entityInput = shell.querySelector('[data-filter-input="entity"]');
+      const statusInput = shell.querySelector('select[name="status"]');
+      if (tagInput instanceof HTMLInputElement) tagInput.value = "";
+      if (entityInput instanceof HTMLInputElement) entityInput.value = "";
+      if (statusInput instanceof HTMLSelectElement) statusInput.value = "";
+      syncArchiveFiltersToUrl(canEdit);
+      renderInvestigationArchiveResults(entries, publicState, canEdit);
+      return;
+    }
+
+    const suggestion = target.closest("[data-filter-suggestion]");
+    if (suggestion instanceof HTMLElement) {
+      const field = suggestion.getAttribute("data-filter-suggestion") || "";
+      const value = suggestion.getAttribute("data-filter-value") || "";
+      const input = shell.querySelector(`[data-filter-input="${field}"]`);
+      if (input instanceof HTMLInputElement) input.value = value;
+      state.archiveFilters = {
+        ...activeArchiveFilters(),
+        [field]: value
+      };
+      state.archiveFilterOpenField = "";
+      syncArchiveFiltersToUrl(canEdit);
+      renderInvestigationArchiveResults(entries, publicState, canEdit);
+    }
+  });
+
+  if (!shell.dataset.outsideBound) {
+    shell.dataset.outsideBound = "yes";
+    document.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (shell.contains(target)) return;
+      if (!state.archiveFilterOpenField) return;
+      state.archiveFilterOpenField = "";
+      updateArchiveFilterPanels(entries, publicState);
+    });
+  }
+}
+
+function scheduleArchiveResults(entries, publicState, canEdit) {
+  if (state.archiveFilterTimer) window.clearTimeout(state.archiveFilterTimer);
+  state.archiveFilterTimer = window.setTimeout(() => {
+    renderInvestigationArchiveResults(entries, publicState, canEdit);
+  }, 120);
+}
+
+function renderInvestigationArchiveResults(entries, publicState, canEdit) {
+  const host = document.querySelector("[data-investigation-results]");
+  if (!(host instanceof HTMLElement)) return;
+  const filters = activeArchiveFilters();
+  const filteredEntries = filterArchiveEntries(entries, publicState, filters);
+  host.innerHTML = filteredEntries.length
+    ? filteredEntries.map((post) => renderInvestigationCard(post, false)).join("")
+    : `<div class="empty-state">No investigations match these filters yet.</div>`;
+  updateArchiveFilterPanels(entries, publicState);
+  updateArchiveSummary(filteredEntries, entries);
+  updateArchiveMapPreview(filteredEntries, entries, publicState);
+}
+
+function updateArchiveSummary(filteredEntries, entries) {
+  const count = document.querySelector("[data-archive-filter-count]");
+  const clearButton = document.querySelector("[data-clear-investigation-filters]");
+  if (count instanceof HTMLElement) {
+    const total = Array.isArray(entries) ? entries.length : 0;
+    const visible = Array.isArray(filteredEntries) ? filteredEntries.length : 0;
+    count.textContent = `${visible} of ${total} investigation${total === 1 ? "" : "s"} visible`;
+  }
+  if (clearButton instanceof HTMLElement) {
+    clearButton.hidden = !archiveHasActiveFilters();
+  }
+}
+
+function updateArchiveFilterPanels(entries, publicState) {
+  renderArchiveSuggestionPanel("tag", archiveFilterSuggestions("tag", entries, publicState));
+  renderArchiveSuggestionPanel("entity", archiveFilterSuggestions("entity", entries, publicState));
+}
+
+function archiveFilterSuggestions(field, entries, publicState) {
+  const filters = activeArchiveFilters();
+  const query = String(filters?.[field] || "").trim().toLowerCase();
+  const values = field === "tag"
+    ? dedupe(entries.flatMap((entry) => Array.isArray(entry.tags) ? entry.tags : []))
+    : dedupe(entries.flatMap((entry) => archiveEntryEntityOptions(entry, publicState)));
+  const matching = values
+    .filter((value) => String(value || "").trim())
+    .filter((value) => !query || value.toLowerCase().includes(query))
+    .slice(0, 8);
+  return { field, query, matching };
+}
+
+function renderArchiveSuggestionPanel(field, descriptor) {
+  const host = document.querySelector(`[data-filter-results="${field}"]`);
+  if (!(host instanceof HTMLElement)) return;
+  const isOpen = state.archiveFilterOpenField === field;
+  const query = String(descriptor?.query || "").trim();
+  const matching = Array.isArray(descriptor?.matching) ? descriptor.matching : [];
+  if (!isOpen) {
+    host.removeAttribute("data-open");
+    host.innerHTML = "";
+    return;
+  }
+  host.setAttribute("data-open", "yes");
+  host.innerHTML = matching.length
+    ? matching
+        .map(
+          (value) => `
+            <button class="picker-chip" type="button" data-filter-suggestion="${escapeAttribute(field)}" data-filter-value="${escapeAttribute(value)}">
+              <strong>${escapeHtml(value)}</strong>
+              <span>Use ${field}</span>
+            </button>
+          `
+        )
+        .join("")
+    : `<div class="picker-hint">${query ? `No ${field} matches yet.` : `Start typing to filter by ${field}.`}</div>`;
+}
+
+function syncArchiveFiltersToUrl(canEdit) {
+  const url = new URL(window.location.href);
+  const filters = activeArchiveFilters();
+  if (filters.tag) url.searchParams.set("tag", filters.tag);
+  else url.searchParams.delete("tag");
+  if (filters.entity) url.searchParams.set("entity", filters.entity);
+  else url.searchParams.delete("entity");
+  if (canEdit && filters.status) url.searchParams.set("status", filters.status);
+  else url.searchParams.delete("status");
+  history.replaceState({}, "", url);
+}
+
+function updateArchiveMapPreview(filteredEntries, entries, publicState) {
+  const summary = document.querySelector("[data-investigation-map-summary]");
+  const tagsHost = document.querySelector("[data-investigation-map-tags]");
+  const canvas = document.querySelector("[data-investigation-map-canvas]");
+  if (!(summary instanceof HTMLElement) || !(tagsHost instanceof HTMLElement) || !(canvas instanceof HTMLElement)) return;
+  const activeEntities = archiveEntitiesForEntries(filteredEntries, publicState);
+  const defaultEntities = archiveHasActiveFilters() ? [] : archiveEntitiesForEntries(entries, publicState);
+  const entities = activeEntities.length ? activeEntities : defaultEntities;
+  if (!entities.length) {
+    summary.textContent = archiveHasActiveFilters()
+      ? "No mapped entities appear in the current results yet."
+      : "Entity locations will appear here once approved entries are attached to investigations.";
+    tagsHost.innerHTML = "";
+    destroyLeafletPreview(canvas);
+    canvas.innerHTML = `<div class="map-empty">Map preview unavailable.</div>`;
+    return;
+  }
+
+  const mappedEntities = entities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng));
+  summary.textContent = `${entities.length} linked entit${entities.length === 1 ? "y" : "ies"} in the current archive view${mappedEntities.length ? "." : ", but none with map coordinates yet."}`;
+  tagsHost.innerHTML = entities
+    .slice(0, 4)
+    .map((entity) => `<a class="tag tag--link" href="./map.html?entity=${encodeURIComponent(entity.slug)}">${escapeHtml(entity.name)}</a>`)
+    .join("");
+  if (!mappedEntities.length) {
+    destroyLeafletPreview(canvas);
+    canvas.innerHTML = `<div class="map-empty">No mapped locations in the current results.</div>`;
+    return;
+  }
+  renderLeafletPreviewMap(canvas, mappedEntities);
+}
+
+function archiveEntitiesForEntries(entries, publicState) {
+  const entityMap = new Map((publicState?.approvedEntities || []).map((entity) => [entity.slug, entity]));
+  const refs = dedupe(
+    (Array.isArray(entries) ? entries : []).flatMap((entry) => [
+      ...(Array.isArray(entry?.entity_refs) ? entry.entity_refs : []),
+      ...(entry?.body ? collectEntityRefsFromText(entry.body, publicState?.approvedEntities || []) : [])
+    ])
+  );
+  return refs.map((slug) => entityMap.get(slug)).filter(Boolean);
+}
+
+function destroyLeafletPreview(canvas) {
+  if (canvas?.__leafletPreviewMap) {
+    canvas.__leafletPreviewMap.remove();
+    canvas.__leafletPreviewMap = null;
+  }
+}
+
+function renderLeafletPreviewMap(canvas, entities) {
+  if (!window.L) {
+    canvas.innerHTML = `<div class="map-empty">Map library unavailable.</div>`;
+    return;
+  }
+  destroyLeafletPreview(canvas);
+  canvas.innerHTML = "";
+  const previewMap = window.L.map(canvas, {
+    zoomControl: false,
+    attributionControl: false,
+    dragging: false,
+    scrollWheelZoom: false,
+    doubleClickZoom: false,
+    boxZoom: false,
+    keyboard: false,
+    tap: false,
+    touchZoom: false
+  }).setView(SITE.map.defaultCenter, SITE.map.defaultZoom);
+  canvas.__leafletPreviewMap = previewMap;
+  window.L.tileLayer(SITE.map.tileUrl, {
+    attribution: SITE.map.tileAttribution,
+    minZoom: SITE.map.minZoom
+  }).addTo(previewMap);
+  const markers = window.L.layerGroup().addTo(previewMap);
+  const points = [];
+  for (const entity of entities) {
+    if (!Number.isFinite(entity.lat) || !Number.isFinite(entity.lng)) continue;
+    points.push([entity.lat, entity.lng]);
+    const marker = window.L.circleMarker([entity.lat, entity.lng], {
+      radius: 6,
+      color: "#6f0d09",
+      weight: 2,
+      fillColor: "#b3201a",
+      fillOpacity: 0.88
+    }).addTo(markers);
+    marker.bindTooltip(escapeHtml(entity.name), { direction: "top", opacity: 0.92 });
+  }
+  if (points.length) previewMap.fitBounds(points, { padding: [28, 28] });
+  else previewMap.setView(SITE.map.defaultCenter, SITE.map.defaultZoom);
+  window.setTimeout(() => previewMap.invalidateSize(), 60);
 }
 
 function filterArchiveEntries(entries, publicState, filters) {
@@ -1199,7 +1487,6 @@ function renderReviewPreviewPanel(draft) {
               : "This investigation is not waiting for review right now."
           }</p>`
     }
-    <div class="status-box" data-review-status aria-live="polite" hidden></div>
   `;
 }
 
@@ -1208,11 +1495,17 @@ function bindReviewPreviewPanel(panel, draft) {
   for (const button of buttons) {
     button.addEventListener("click", async () => {
       const action = button.getAttribute("data-review-action") || "";
-      const statusBox = panel.querySelector("[data-review-status]");
+      let statusBox = panel.querySelector("[data-review-status]");
       if (!state.session || !editorEntryAllowed(state.publicState)) return;
+      if (!(statusBox instanceof HTMLElement)) {
+        statusBox = document.createElement("div");
+        statusBox.className = "status-box";
+        statusBox.setAttribute("data-review-status", "");
+        statusBox.setAttribute("aria-live", "polite");
+        panel.append(statusBox);
+      }
       button.setAttribute("disabled", "disabled");
       if (statusBox instanceof HTMLElement) {
-        statusBox.hidden = false;
         statusBox.textContent = "Saving review decision...";
         statusBox.dataset.state = "pending";
       }

@@ -839,7 +839,17 @@ function decorateToolbar(surface) {
   ]);
   surface.querySelectorAll(".toastui-editor-defaultUI-toolbar button").forEach((button) => {
     const label = labels.get(String(button.getAttribute("aria-label") || "").trim());
-    if (label) button.setAttribute("data-button-label", label);
+    if (!label) return;
+    button.classList.add("editor-toolbar-button");
+    const icon = button.querySelector(".toastui-editor-toolbar-icons, .toastui-editor-toolbar-icons.last");
+    if (icon instanceof HTMLElement) {
+      icon.textContent = label;
+      icon.setAttribute("aria-hidden", "true");
+      icon.setAttribute("title", "");
+      icon.classList.add("editor-toolbar-chip");
+    } else {
+      button.textContent = label;
+    }
   });
 }
 
