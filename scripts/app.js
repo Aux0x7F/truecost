@@ -102,6 +102,15 @@ function initNavigation() {
   const nav = document.querySelector("[data-site-nav]");
   if (!nav) return;
 
+  const setNavigationOpen = (open) => {
+    nav.classList.toggle("is-open", open);
+    document.body.classList.toggle("is-nav-open", open);
+    if (toggle) {
+      toggle.classList.toggle("is-open", open);
+      toggle.setAttribute("aria-expanded", String(open));
+    }
+  };
+
   renderNavigation();
 
   if (toggle) {
@@ -114,11 +123,13 @@ function initNavigation() {
       <span class="sr-only">Open navigation</span>
     `;
     toggle.addEventListener("click", () => {
-      const isOpen = nav.classList.toggle("is-open");
-      toggle.classList.toggle("is-open", isOpen);
-      toggle.setAttribute("aria-expanded", String(isOpen));
+      setNavigationOpen(!nav.classList.contains("is-open"));
     });
   }
+
+  window.addEventListener("resize", () => {
+    if (window.innerWidth > 980) setNavigationOpen(false);
+  });
 
   document.addEventListener("click", (event) => {
     const target = event.target;
@@ -178,6 +189,7 @@ function initNavigation() {
       clearSession();
       state.session = null;
       state.viewer = null;
+      setNavigationOpen(false);
       renderNavigation();
       window.location.reload();
       return;
@@ -268,6 +280,55 @@ function renderNavigation() {
     : false;
   const mapEnabled = Boolean(state.publicState?.connected);
   const mapCurrent = NAV_KEYS.map.includes(page);
+  const profileMarkup = isLoggedIn
+    ? `
+      <div class="profile-menu ${NAV_KEYS.workspace.includes(page) ? "is-current" : ""} ${state.profileMenuOpen ? "is-open" : ""}" data-profile-menu>
+        <button class="profile-menu__toggle ${currentUser?.avatarUrl ? "has-avatar" : ""}" type="button" data-profile-toggle aria-label="${isAdmin ? "Admin" : "Profile"}">
+          <span class="profile-menu__badge ${currentUser?.avatarUrl ? "has-avatar" : ""}">${profileBadgeMarkup(currentUser)}</span>
+          ${unreadCount ? `<span class="profile-menu__notice">${Math.min(unreadCount, 9)}${unreadCount > 9 ? "+" : ""}</span>` : ""}
+        </button>
+        <div class="profile-menu__panel">
+          <div class="profile-menu__section">
+            <button class="profile-menu__notification-toggle ${notificationsExpanded ? "is-open" : ""}" type="button" data-notification-toggle>
+              <span class="profile-menu__notification-toggle-copy">
+                <strong>Notifications</strong>
+                <span>${
+                  state.notificationsLoading
+                    ? "Looking up updates"
+                    : unreadCount
+                      ? `${unreadCount} item${unreadCount === 1 ? "" : "s"} waiting`
+                      : "No new updates"
+                }</span>
+              </span>
+              ${unreadCount ? `<span class="profile-menu__inline-badge">${Math.min(unreadCount, 9)}${unreadCount > 9 ? "+" : ""}</span>` : `<span class="profile-menu__inline-badge is-muted">0</span>`}
+            </button>
+            ${
+              notificationsExpanded
+                ? `
+                  <div class="profile-menu__notification-shell">
+                    ${
+                      state.notificationsLoading
+                        ? `<div class="loading-state" role="status" aria-live="polite"><span class="loading-spinner" aria-hidden="true"></span><span>Looking up notifications...</span></div>`
+                        : notifications.length
+                          ? `
+                            <div class="profile-menu__notifications">
+                              ${notifications.map((item) => renderNotificationItem(item)).join("")}
+                            </div>
+                            <button class="profile-menu__clear" type="button" data-clear-notifications>Clear notifications</button>
+                          `
+                          : `<div class="profile-menu__notification-empty">No notifications right now.</div>`
+                    }
+                  </div>
+                `
+                : ""
+            }
+          </div>
+          <a href="./admin.html?tab=${isAdmin ? "dashboard" : "profile"}">${isAdmin ? "Admin" : "Profile"}</a>
+          <button type="button" data-signout>Sign out</button>
+        </div>
+      </div>
+    `
+    : `<a class="profile-cta" href="./admin.html?tab=login" aria-label="Create or log in">Create/Login</a>`;
 
   nav.innerHTML = `
     <a class="${navLinkClass(page, "home")}" href="./index.html">Home</a>
@@ -299,57 +360,7 @@ function renderNavigation() {
     </div>
     <a class="${navLinkClass(page, "about")}" href="./about.html">About</a>
     <a class="${navLinkClass(page, "merch")}" href="./merch.html">Merch</a>
-    <div class="profile-menu ${NAV_KEYS.workspace.includes(page) ? "is-current" : ""} ${state.profileMenuOpen ? "is-open" : ""}" data-profile-menu>
-      <button class="profile-menu__toggle ${currentUser?.avatarUrl ? "has-avatar" : !isLoggedIn ? "is-wordmark" : ""}" type="button" data-profile-toggle aria-label="${isLoggedIn ? (isAdmin ? "Admin" : "Profile") : "Log in"}">
-        <span class="profile-menu__badge ${currentUser?.avatarUrl ? "has-avatar" : !isLoggedIn ? "is-wordmark" : ""}">${profileBadgeMarkup(currentUser)}</span>
-        ${unreadCount ? `<span class="profile-menu__notice">${Math.min(unreadCount, 9)}${unreadCount > 9 ? "+" : ""}</span>` : ""}
-      </button>
-      <div class="profile-menu__panel">
-        ${
-          isLoggedIn
-            ? `
-              <div class="profile-menu__section">
-                <button class="profile-menu__notification-toggle ${notificationsExpanded ? "is-open" : ""}" type="button" data-notification-toggle>
-                  <span class="profile-menu__notification-toggle-copy">
-                    <strong>Notifications</strong>
-                    <span>${
-                      state.notificationsLoading
-                        ? "Looking up updates"
-                        : unreadCount
-                          ? `${unreadCount} item${unreadCount === 1 ? "" : "s"} waiting`
-                          : "No new updates"
-                    }</span>
-                  </span>
-                  ${unreadCount ? `<span class="profile-menu__inline-badge">${Math.min(unreadCount, 9)}${unreadCount > 9 ? "+" : ""}</span>` : `<span class="profile-menu__inline-badge is-muted">0</span>`}
-                </button>
-                ${
-                  notificationsExpanded
-                    ? `
-                      <div class="profile-menu__notification-shell">
-                        ${
-                          state.notificationsLoading
-                            ? `<div class="loading-state" role="status" aria-live="polite"><span class="loading-spinner" aria-hidden="true"></span><span>Looking up notifications...</span></div>`
-                            : notifications.length
-                              ? `
-                                <div class="profile-menu__notifications">
-                                  ${notifications.map((item) => renderNotificationItem(item)).join("")}
-                                </div>
-                                <button class="profile-menu__clear" type="button" data-clear-notifications>Clear notifications</button>
-                              `
-                              : `<div class="profile-menu__notification-empty">No notifications right now.</div>`
-                        }
-                      </div>
-                    `
-                    : ""
-                }
-              </div>
-              <a href="./admin.html?tab=${isAdmin ? "dashboard" : "profile"}">${isAdmin ? "Admin" : "Profile"}</a>
-              <button type="button" data-signout>Sign out</button>
-            `
-            : `<a href="./admin.html?tab=login">Log in</a>`
-        }
-      </div>
-    </div>
+    ${profileMarkup}
   `;
 
   for (const disabled of nav.querySelectorAll('[aria-disabled="true"]')) {
@@ -366,7 +377,7 @@ function profileBadgeMarkup(user) {
       : "";
     return `<img src="${escapeAttribute(user.avatarUrl)}" alt="${escapeAttribute(label)}"${blobAttrs}>`;
   }
-  if (!state.session?.username) return "Log in";
+  if (!state.session?.username) return "Create/Login";
   return escapeHtml(profileInitials(user?.displayName || state.session.username));
 }
 
