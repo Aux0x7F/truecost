@@ -708,6 +708,17 @@ h3 {
   background: #7c120e;
 }
 
+.button[data-busy="yes"] {
+  pointer-events: none;
+}
+
+.button .loading-spinner {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-color: rgba(255, 248, 245, 0.34);
+  border-top-color: #fff8f5;
+}
+
 .button-dark {
   background: var(--bg-strong);
   color: #fff8f5;
