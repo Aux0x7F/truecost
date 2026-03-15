@@ -10,6 +10,8 @@ import {
   deriveIdentity,
   ensureEventToolsLoaded,
   ensureBlobAvailable,
+  hasNostrTools,
+  connectStaticPageOverlay,
   loadAdminKeyShare,
   loadInboxSubmissions,
   loadPublicState,
@@ -72,7 +74,9 @@ const state = {
   archiveFilterOpenField: "",
   archiveStatusMenuOpen: false,
   archiveFilterTimer: null,
+  pageOverlay: null,
   staticEdit: null,
+  staticEditListenersBound: false,
   map: null,
   markers: null,
   markerIndex: null
@@ -232,12 +236,12 @@ function handleSessionChanged() {
     }
   }
   renderNavigation();
+  destroyStaticPageOverlay();
+  state.staticEdit = null;
   if (state.session) {
     void hydrateNotifications(true);
-    if (!state.staticEdit) {
-      void initStaticPageEditing();
-    }
   }
+  void initStaticPageEditing();
 }
 
 function renderNavigation() {
@@ -252,7 +256,7 @@ function renderNavigation() {
   const isAdmin = Boolean(
     isLoggedIn &&
       state.viewer &&
-      state.publicState?.admins?.includes(state.viewer.pubkey)
+      trustedAdminPubkeys(state.publicState).includes(state.viewer.pubkey)
   );
   const notifications = isLoggedIn ? state.notifications.slice(0, 8) : [];
   const unreadCount = isLoggedIn ? notifications.length : 0;
@@ -443,7 +447,7 @@ async function initAuthoringEntry() {
 
 async function initStaticPageEditing() {
   const pageId = document.body.dataset.page || "";
-  if (!STATIC_EDITABLE_PAGES.has(pageId) || state.staticEdit) return;
+  if (!STATIC_EDITABLE_PAGES.has(pageId) || state.pageOverlay) return;
   const editableElements = [...document.querySelectorAll("[data-static-edit]")].filter(
     (node) => node instanceof HTMLElement
   );
@@ -478,34 +482,48 @@ async function initStaticPageEditing() {
     }
   }
 
+  state.pageOverlay = {
+    pageId,
+    elements: editableElements,
+    committedContent: cloneStaticEditContent(committedContent),
+    publishedContent: cloneStaticEditContent(publishedContent),
+    currentContent: cloneStaticEditContent(publishedContent),
+    liveContent: null,
+    controller: null,
+    status: "idle",
+  };
+
+  void connectLiveStaticPageOverlay();
+
   if (!editorEntryAllowed(publicState)) return;
 
   const storedSnapshot = loadStaticEditSnapshot(pageId);
-  const savedContent = cloneStaticEditContent(storedSnapshot?.content || publishedContent);
+  const savedContent = cloneStaticEditContent(storedSnapshot?.content || state.pageOverlay.currentContent);
   state.staticEdit = {
     pageId,
     elements: editableElements,
-    originalContent: publishedContent,
+    originalContent: cloneStaticEditContent(state.pageOverlay.currentContent),
     savedContent,
     history: [cloneStaticEditContent(savedContent)],
     historyIndex: 0,
     enabled: false,
     status: storedSnapshot?.savedAt
-      ? `Local snapshot loaded from ${formatLocalTimestamp(storedSnapshot.savedAt)}.`
+      ? `Local snapshot ready from ${formatLocalTimestamp(storedSnapshot.savedAt)}. Press Ctrl+Shift+E to resume it.`
       : "Press Ctrl+Shift+E to edit this page.",
     savedAt: Number(storedSnapshot?.savedAt || 0),
-    saveState: storedSnapshot?.savedAt ? "saved" : "idle"
+    saveState: storedSnapshot?.savedAt ? "saved" : "idle",
+    pendingLiveContent: null,
+    livePublishTimer: 0,
   };
 
-  if (storedSnapshot?.content) {
-    applyStaticEditContent(editableElements, storedSnapshot.content, publishedContent);
-  }
-
   renderStaticEditBar();
-  document.addEventListener("keydown", handleStaticEditShortcut);
-  document.addEventListener("input", handleStaticEditInput, true);
-  document.addEventListener("paste", handleStaticEditPaste, true);
-  document.addEventListener("click", handleStaticEditInteraction, true);
+  if (!state.staticEditListenersBound) {
+    document.addEventListener("keydown", handleStaticEditShortcut);
+    document.addEventListener("input", handleStaticEditInput, true);
+    document.addEventListener("paste", handleStaticEditPaste, true);
+    document.addEventListener("click", handleStaticEditInteraction, true);
+    state.staticEditListenersBound = true;
+  }
 }
 
 function hydrateArchiveSummaryLinks(posts, publicState) {
@@ -702,7 +720,7 @@ async function renderComments(postSlug, publicState) {
   const comments = publicState.commentsByPost.get(postSlug) || [];
   const threadedComments = buildCommentTree(comments);
   const isLoggedIn = Boolean(state.session);
-  const isAdmin = Boolean(state.viewer && publicState.admins.includes(state.viewer.pubkey));
+  const isAdmin = Boolean(state.viewer && trustedAdminPubkeys(publicState).includes(state.viewer.pubkey));
   const currentUser = isLoggedIn && state.viewer
     ? publicState.users.find((user) => user.pubkey === state.viewer.pubkey) || null
     : null;
@@ -2491,11 +2509,18 @@ async function getViewer() {
 }
 
 function editorEntryAllowed(publicState) {
-  if (!state.session || !publicState?.admins?.length) return false;
+  if (!state.session || !trustedAdminPubkeys(publicState).length) return false;
   if (!state.viewer) {
     state.viewer = deriveIdentity(state.session.secretKeyHex);
   }
-  return publicState.admins.includes(state.viewer.pubkey);
+  return trustedAdminPubkeys(publicState).includes(state.viewer.pubkey);
+}
+
+function trustedAdminPubkeys(publicState) {
+  const admins = new Set(Array.isArray(publicState?.admins) ? publicState.admins : []);
+  const rootAdminPubkey = String(publicState?.rootAdminPubkey || SITE.nostr.rootAdminPubkey || "").trim();
+  if (rootAdminPubkey) admins.add(rootAdminPubkey);
+  return [...admins];
 }
 
 async function getRequestSignerSecretKey() {
@@ -2563,6 +2588,101 @@ async function fetchText(path) {
   return response.text();
 }
 
+async function connectLiveStaticPageOverlay() {
+  const overlayState = state.pageOverlay;
+  if (!overlayState?.pageId || overlayState.controller) return;
+
+  try {
+    const secretKeyHex = await getRequestSignerSecretKey();
+    if (!secretKeyHex) return;
+    overlayState.controller = await connectStaticPageOverlay({
+      pageId: overlayState.pageId,
+      secretKeyHex,
+      kind: SITE.nostr.kinds.collabDocument,
+      getTrustedPubkeys: () => trustedAdminPubkeys(state.publicState),
+      canPublish: () => editorEntryAllowed(state.publicState),
+      onRemoteContent: (content, detail) => handleLiveStaticPageContent(content, detail),
+      onStatus: (detail) => handleLiveStaticPageStatus(detail),
+    });
+  } catch {
+    return;
+  }
+}
+
+function destroyStaticPageOverlay() {
+  try {
+    state.pageOverlay?.controller?.destroy?.();
+  } catch {
+    return;
+  } finally {
+    state.pageOverlay = null;
+  }
+}
+
+function handleLiveStaticPageStatus(detail) {
+  if (!state.pageOverlay || detail?.pageId !== state.pageOverlay.pageId) return;
+  state.pageOverlay.status = String(detail?.state || "idle");
+}
+
+function handleLiveStaticPageContent(content, detail) {
+  const overlayState = state.pageOverlay;
+  if (!overlayState || detail?.pageId !== overlayState.pageId) return;
+
+  const fallback = overlayState.publishedContent || overlayState.committedContent;
+  const nextContent = detail?.hasLiveContent
+    ? cloneStaticEditContent(content)
+    : cloneStaticEditContent(fallback);
+
+  overlayState.liveContent = detail?.hasLiveContent ? cloneStaticEditContent(content) : null;
+  overlayState.currentContent = cloneStaticEditContent(nextContent);
+
+  if (state.staticEdit?.enabled) {
+    if (!staticEditContentMatches(state.staticEdit.history[state.staticEdit.historyIndex], nextContent)) {
+      state.staticEdit.pendingLiveContent = cloneStaticEditContent(nextContent);
+      state.staticEdit.status = "New live page updates are available. Snapshot or leave edit mode to refresh.";
+      renderStaticEditBar();
+    }
+    return;
+  }
+
+  applyStaticEditContent(overlayState.elements, nextContent, fallback);
+
+  if (state.staticEdit) {
+    state.staticEdit.originalContent = cloneStaticEditContent(nextContent);
+    if (!state.staticEdit.savedAt) {
+      state.staticEdit.savedContent = cloneStaticEditContent(nextContent);
+      state.staticEdit.history = [cloneStaticEditContent(nextContent)];
+      state.staticEdit.historyIndex = 0;
+      state.staticEdit.saveState = "idle";
+    }
+    if (!state.staticEdit.enabled) {
+      state.staticEdit.status = state.staticEdit.savedAt
+        ? `Local snapshot ready from ${formatLocalTimestamp(state.staticEdit.savedAt)}. Press Ctrl+Shift+E to resume it.`
+        : "Press Ctrl+Shift+E to edit this page.";
+      renderStaticEditBar();
+    }
+  }
+}
+
+function queueStaticEditLivePublish() {
+  const editState = state.staticEdit;
+  const overlayState = state.pageOverlay;
+  if (!editState?.enabled || !overlayState?.controller) return;
+  if (editState.livePublishTimer) window.clearTimeout(editState.livePublishTimer);
+  editState.livePublishTimer = window.setTimeout(async () => {
+    editState.livePublishTimer = 0;
+    try {
+      const nextContent = collectStaticEditContent(editState.elements);
+      const changed = await overlayState.controller.setContent(nextContent);
+      if (changed) {
+        overlayState.currentContent = cloneStaticEditContent(nextContent);
+      }
+    } catch {
+      return;
+    }
+  }, 220);
+}
+
 function renderStaticEditBar() {
   const editState = state.staticEdit;
   if (!editState) return;
@@ -2604,12 +2724,20 @@ function toggleStaticEditMode(force) {
   const editState = state.staticEdit;
   if (!editState) return;
   const next = typeof force === "boolean" ? force : !editState.enabled;
+  if (next && editState.savedAt) {
+    applyStaticEditContent(editState.elements, editState.savedContent, editState.originalContent);
+  }
   editState.enabled = next;
   document.body.classList.toggle("is-static-editing", next);
   for (const element of editState.elements) {
     element.contentEditable = next ? "true" : "false";
     element.spellcheck = next;
     element.classList.toggle("static-edit-target", next);
+  }
+  if (!next && editState.pendingLiveContent) {
+    applyStaticEditContent(editState.elements, editState.pendingLiveContent, editState.originalContent);
+    editState.originalContent = cloneStaticEditContent(editState.pendingLiveContent);
+    editState.pendingLiveContent = null;
   }
   editState.status = next
     ? editState.savedAt
@@ -2663,6 +2791,7 @@ function handleStaticEditInput(event) {
   const target = event.target;
   if (!(target instanceof HTMLElement) || !target.matches("[data-static-edit]")) return;
   queueStaticEditHistory();
+  queueStaticEditLivePublish();
 }
 
 function handleStaticEditPaste(event) {
@@ -2727,12 +2856,17 @@ function cancelStaticEditChanges() {
     window.clearTimeout(editState.historyTimer);
     editState.historyTimer = 0;
   }
-  const baseline = cloneStaticEditContent(editState.savedContent || editState.originalContent);
+  if (editState.livePublishTimer) {
+    window.clearTimeout(editState.livePublishTimer);
+    editState.livePublishTimer = 0;
+  }
+  const baseline = cloneStaticEditContent(editState.pendingLiveContent || editState.originalContent);
   applyStaticEditContent(editState.elements, baseline, editState.originalContent);
-  editState.history = [cloneStaticEditContent(baseline)];
+  editState.history = [cloneStaticEditContent(editState.savedContent || baseline)];
   editState.historyIndex = 0;
-  editState.saveState = staticEditContentMatches(baseline, editState.originalContent) && !editState.savedAt ? "idle" : "saved";
+  editState.saveState = editState.savedAt ? "saved" : "idle";
   editState.enabled = false;
+  editState.pendingLiveContent = null;
   document.body.classList.remove("is-static-editing");
   for (const element of editState.elements) {
     element.contentEditable = "false";
@@ -2740,7 +2874,7 @@ function cancelStaticEditChanges() {
     element.classList.remove("static-edit-target");
   }
   editState.status = editState.savedAt
-    ? `Discarded unsaved changes and returned to the last snapshot from ${formatLocalTimestamp(editState.savedAt)}.`
+    ? `Discarded unsaved changes. Local snapshot is still ready from ${formatLocalTimestamp(editState.savedAt)}.`
     : "Discarded unsaved changes and returned to the published page.";
   renderStaticEditBar();
 }
@@ -2749,6 +2883,20 @@ async function saveStaticEditSnapshot() {
   const editState = state.staticEdit;
   if (!editState) return;
   const content = collectStaticEditContent(editState.elements);
+  try {
+    if (editState.livePublishTimer) {
+      window.clearTimeout(editState.livePublishTimer);
+      editState.livePublishTimer = 0;
+    }
+    if (state.pageOverlay?.controller) {
+      await state.pageOverlay.controller.setContent(content).catch(() => false);
+      await state.pageOverlay.controller.flush?.().catch(() => null);
+      state.pageOverlay.currentContent = cloneStaticEditContent(content);
+      editState.originalContent = cloneStaticEditContent(content);
+    }
+  } catch {
+    // Snapshot review should still work even if the live overlay publish path is unavailable.
+  }
   const savedAt = Date.now();
   persistStaticEditSnapshot(editState.pageId, savedAt, content);
   editState.savedContent = cloneStaticEditContent(content);

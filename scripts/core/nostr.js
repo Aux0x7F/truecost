@@ -1,8 +1,14 @@
 import SITE from "./site-config.js";
-import { createBlobStoreApi, createDeterministicSessionApi, createNostrCmsClient } from "../../vendor/nostr-site-support.esm.js";
+import {
+  createBlobStoreApi,
+  createDeterministicSessionApi,
+  createNostrCmsClient,
+  createStaticPageOverlayApi,
+} from "../../vendor/nostr-site-support.esm.js";
 
 const client = createNostrCmsClient(SITE);
 const blobs = createBlobStoreApi(SITE, client);
+const staticPages = createStaticPageOverlayApi(SITE);
 
 export const {
   getEventTools,
@@ -40,8 +46,14 @@ export const {
 } = blobs;
 
 export { createDeterministicSessionApi };
+export const {
+  connectPage: connectStaticPageOverlay,
+  createRoomId: createStaticPageRoomId,
+  ensureEventToolsLoaded: ensureStaticPageToolsLoaded,
+} = staticPages;
 
 export default {
   ...client,
-  ...blobs
+  ...blobs,
+  ...staticPages
 };

@@ -8,12 +8,13 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - Keep improving relay compatibility and degraded-mode behavior so the site remains usable even when some relays are noisy or incomplete.
 - Tighten the Linux pinner setup path into a repeatable install, update, and recovery workflow for non-developer operators.
 - Expand end-to-end browser validation around submissions, moderation, publishing, and comment handling before each release.
-- Add clearer history and conflict handling when multiple queued edits target the same static page before bakedown, so operators can see what will win and why.
+- Extend the live collaborative layer from static pages into investigations and entity records without regressing the static-first baseline.
+- Add clearer history and conflict handling for live collaborative units before each bakedown cycle, so operators can see what will ship and why.
 
 ## Publishing Workflow
 
 - Continue treating live relay state as the working layer and reviewed repository content as the stable snapshot layer.
-- Improve the bakedown path so approved cleartext content, including static page edits, can be reviewed and merged cleanly without turning day-to-day publishing into a developer task.
+- Improve the bakedown path so trusted live content, including collaborative page updates, can be reviewed and merged cleanly without turning day-to-day publishing into a developer task.
 - Refine the audit trail around admin actions, submission handling, and publishing events.
 
 ## Longer Term
@@ -21,7 +22,7 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - Expand transparent page editing beyond hero sections and add stronger review/history handling around queued page snapshots.
 - Add image handling inside the document editor, including attachment, placement controls (left, right, full width), and markdown-safe storage through the existing blob workflow.
 - Add a navigable entity wiki that can enrich facilities, companies, agencies, and related records with expandable fields, history, clearer cross-links into investigations and the map, and a richer type / class / taxonomy model.
-- Add collaborative editing for drafts so more than one approved user can work on a document without relying only on queued revisions and review handoffs.
+- Add collaborative editing for investigations and wiki-like records so more than one approved user can work in the same unit without relying only on queued revisions and review handoffs.
 - Add stronger map and archive views as the entity and location dataset grows.
 - Improve collaboration tools for volunteers, including clearer review states and richer discussion around submissions.
 - Package the reusable parts of the system so future campaign sites can launch with less custom setup.
