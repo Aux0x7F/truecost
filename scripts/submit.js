@@ -113,18 +113,14 @@ async function refreshSubmitPage(force = false) {
 
 function renderSubmitLoading(message) {
   const shell = document.querySelector("[data-submit-shell]");
-  const lede = document.querySelector("[data-submit-lede]");
-  if (lede) lede.textContent = message;
   if (shell) shell.innerHTML = renderLoadingState(message);
 }
 
 function renderSubmitPage() {
   const shell = document.querySelector("[data-submit-shell]");
-  const lede = document.querySelector("[data-submit-lede]");
-  if (!shell || !lede) return;
+  if (!shell) return;
 
   if (!submitState.session) {
-    lede.textContent = "Log in to submit material, track status changes, and keep a private thread attached to each submission.";
     shell.innerHTML = `
       <section class="surface-panel">
         <div class="eyebrow">Log in required</div>
@@ -138,7 +134,6 @@ function renderSubmitPage() {
     return;
   }
 
-  lede.textContent = "Each submission stays attached to your account, with status updates and a message thread once admins reply from the shared inbox.";
   shell.innerHTML = `
     <section class="surface-panel">
       <div class="workspace-list__row">

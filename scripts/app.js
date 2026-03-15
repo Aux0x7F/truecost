@@ -45,11 +45,17 @@ const ARCHIVE_STATUS_OPTIONS = [
   { value: "posted", label: "Posted" }
 ];
 
-const STATIC_EDITABLE_PAGES = new Set(["home", "about"]);
 const STATIC_PAGE_META = Object.freeze({
   home: { title: "Home page", path: "./index.html" },
-  about: { title: "About page", path: "./about.html" }
+  investigations: { title: "Investigations page", path: "./investigations.html" },
+  guide: { title: "Guide page", path: "./guide.html" },
+  submit: { title: "Submit page", path: "./submit.html" },
+  "get-involved": { title: "Get involved page", path: "./get-involved.html" },
+  about: { title: "About page", path: "./about.html" },
+  merch: { title: "Merch page", path: "./merch.html" },
+  map: { title: "Map page", path: "./map.html" }
 });
+const STATIC_EDITABLE_PAGES = new Set(Object.keys(STATIC_PAGE_META));
 
 const state = {
   session: getStoredSession(),
