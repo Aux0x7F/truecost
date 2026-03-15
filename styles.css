@@ -2031,7 +2031,7 @@ h3 {
 }
 
 .map-board::before {
-  content: "Live entity layer";
+  content: "Map";
   position: absolute;
   left: 1rem;
   top: 1rem;

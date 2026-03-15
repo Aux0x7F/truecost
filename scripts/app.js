@@ -60,6 +60,7 @@ const state = {
   archiveFilterOpenField: "",
   archiveStatusMenuOpen: false,
   archiveFilterTimer: null,
+  archiveVueApp: null,
   map: null,
   markers: null,
   markerIndex: null
@@ -373,13 +374,13 @@ function initExternalLinks() {
 
 async function initInvestigationCards() {
   const homeGrid = document.querySelector("[data-home-investigations]");
-  const listGrid = document.querySelector("[data-investigation-list]");
-  const rail = document.querySelector("[data-investigation-rail]");
+  const archiveRoot = document.querySelector("[data-investigation-archive-app]");
+  const listGrid = archiveRoot ? null : document.querySelector("[data-investigation-list]");
   const archiveSummaryHosts = document.querySelectorAll("[data-archive-summary]");
-  if (!homeGrid && !listGrid && !archiveSummaryHosts.length) return;
+  if (!homeGrid && !listGrid && !archiveRoot && !archiveSummaryHosts.length) return;
   if (homeGrid) homeGrid.innerHTML = renderLoadingState("Looking up featured investigations...");
-  if (listGrid) listGrid.innerHTML = renderLoadingState("Looking up investigations...");
-  if (rail) rail.innerHTML = renderLoadingState("Looking up filters and map data...");
+  if (archiveRoot) archiveRoot.innerHTML = renderLoadingState("Looking up investigations...");
+  else if (listGrid) listGrid.innerHTML = renderLoadingState("Looking up investigations...");
 
   try {
     const posts = await loadPosts();
@@ -396,7 +397,7 @@ async function initInvestigationCards() {
         .map((post) => renderInvestigationCard(post, true))
         .join("");
     }
-    if (listGrid) {
+    if (archiveRoot || listGrid) {
       const entries = canEdit
         ? buildInvestigationArchiveEntries(posts, publicState.drafts || [])
         : posts.map((post) => ({
@@ -406,11 +407,19 @@ async function initInvestigationCards() {
             href: `./investigation.html?slug=${encodeURIComponent(post.slug)}`,
             actionLabel: "Open investigation"
           }));
-      initializeArchiveView(entries, publicState, canEdit);
+      if (archiveRoot) {
+        if (window.Vue?.createApp) {
+          initializeArchiveViewVue(archiveRoot, entries, publicState, canEdit);
+        } else {
+          archiveRoot.innerHTML = renderArchiveShellScaffold();
+          initializeArchiveView(entries, publicState, canEdit);
+        }
+      } else {
+        initializeArchiveView(entries, publicState, canEdit);
+      }
     }
   } catch {
-    renderError(homeGrid || listGrid, "Investigation feed unavailable.");
-    if (rail) renderError(rail, "Archive tools unavailable.");
+    renderError(homeGrid || archiveRoot || listGrid, "Investigation feed unavailable.");
   }
 }
 
@@ -1107,6 +1116,18 @@ function renderArchiveMapPanel() {
   `;
 }
 
+function renderArchiveShellScaffold() {
+  return `
+    <aside class="archive-rail-shell">
+      <div class="archive-filters-shell" data-investigation-filters-shell></div>
+      <div class="archive-map-shell" data-investigation-map-shell></div>
+    </aside>
+    <div class="story-list-shell archive-results-shell">
+      <div class="story-list" data-investigation-list></div>
+    </div>
+  `;
+}
+
 function renderArchiveStatusOption(option, selectedValue) {
   const value = String(option?.value || "");
   const isActive = value === String(selectedValue || "");
@@ -1171,6 +1192,237 @@ function initializeArchiveView(entries, publicState, canEdit) {
     mapShell.innerHTML = renderArchiveMapPanel();
   }
   renderInvestigationArchiveResults(entries, publicState, canEdit);
+}
+
+function initializeArchiveViewVue(root, entries, publicState, canEdit) {
+  if (!(root instanceof HTMLElement) || !window.Vue?.createApp) return;
+  state.archiveVueApp?.unmount?.();
+  root.innerHTML = "";
+  state.archiveFilters = currentArchiveFilters(canEdit);
+
+  const app = window.Vue.createApp({
+    data() {
+      return {
+        canEdit,
+        statusOptions: ARCHIVE_STATUS_OPTIONS,
+        filters: { ...currentArchiveFilters(canEdit) },
+        openField: "",
+        statusMenuOpen: false
+      };
+    },
+    computed: {
+      clearVisible() {
+        return archiveHasActiveFilters(this.filters);
+      },
+      filteredEntries() {
+        return filterArchiveEntries(entries, publicState, this.filters);
+      },
+      tagSuggestions() {
+        return archiveFilterSuggestions("tag", entries, publicState, this.filters).matching;
+      },
+      entitySuggestions() {
+        return archiveFilterSuggestions("entity", entries, publicState, this.filters).matching;
+      },
+      mapDescriptor() {
+        return buildArchiveMapPreviewState(this.filteredEntries, entries, publicState, archiveHasActiveFilters(this.filters));
+      }
+    },
+    methods: {
+      renderAuthoringLeadCard,
+      renderCard(entry) {
+        return renderInvestigationCard(entry, false);
+      },
+      archiveStatusLabel,
+      syncUrl() {
+        state.archiveFilters = { ...this.filters };
+        syncArchiveFiltersToUrl(this.canEdit, this.filters);
+      },
+      updateField(field, value) {
+        this.filters = {
+          ...this.filters,
+          [field]: String(value || "").trim()
+        };
+        this.openField = field;
+        this.statusMenuOpen = false;
+        this.syncUrl();
+      },
+      commitField(field) {
+        const descriptor = archiveFilterSuggestions(field, entries, publicState, this.filters);
+        const current = String(this.filters?.[field] || "").trim();
+        this.filters = {
+          ...this.filters,
+          [field]: descriptor.matching[0] || current
+        };
+        this.openField = "";
+        this.syncUrl();
+      },
+      chooseSuggestion(field, value) {
+        this.filters = {
+          ...this.filters,
+          [field]: String(value || "").trim()
+        };
+        this.openField = "";
+        this.syncUrl();
+      },
+      clearFilters() {
+        this.filters = { tag: "", entity: "", status: "" };
+        this.openField = "";
+        this.statusMenuOpen = false;
+        this.syncUrl();
+      },
+      toggleStatusMenu() {
+        this.statusMenuOpen = !this.statusMenuOpen;
+        this.openField = "";
+      },
+      setStatus(value) {
+        this.filters = {
+          ...this.filters,
+          status: String(value || "").trim().toLowerCase()
+        };
+        this.statusMenuOpen = false;
+        this.syncUrl();
+      },
+      handleOutsideClick(event) {
+        const target = event.target;
+        if (!(target instanceof Element) || root.contains(target)) return;
+        if (!this.openField && !this.statusMenuOpen) return;
+        this.openField = "";
+        this.statusMenuOpen = false;
+      },
+      syncMap() {
+        const tagsHost = this.$refs.mapTags;
+        const canvas = this.$refs.mapCanvas;
+        if (!(tagsHost instanceof HTMLElement) || !(canvas instanceof HTMLElement) || this.openField) return;
+        const { entities, mappedEntities, emptyMessage } = this.mapDescriptor;
+        if (!entities.length) {
+          tagsHost.innerHTML = "";
+          destroyLeafletPreview(canvas);
+          canvas.innerHTML = `<div class="map-empty">${escapeHtml(emptyMessage)}</div>`;
+          return;
+        }
+        tagsHost.innerHTML = entities
+          .slice(0, 4)
+          .map((entity) => `<a class="tag tag--link" href="./map.html?entity=${encodeURIComponent(entity.slug)}">${escapeHtml(entity.name)}</a>`)
+          .join("");
+        if (!mappedEntities.length) {
+          destroyLeafletPreview(canvas);
+          canvas.innerHTML = `<div class="map-empty">${escapeHtml(emptyMessage)}</div>`;
+          return;
+        }
+        renderLeafletPreviewMap(canvas, mappedEntities);
+      }
+    },
+    mounted() {
+      document.addEventListener("click", this.handleOutsideClick);
+      this.$nextTick(() => this.syncMap());
+    },
+    updated() {
+      this.$nextTick(() => this.syncMap());
+    },
+    beforeUnmount() {
+      document.removeEventListener("click", this.handleOutsideClick);
+      const canvas = this.$refs.mapCanvas;
+      if (canvas instanceof HTMLElement) destroyLeafletPreview(canvas);
+    },
+    template: `
+      <div class="story-list-shell archive-results-shell">
+        <div class="story-list">
+          <div v-if="canEdit" v-html="renderAuthoringLeadCard()"></div>
+          <div class="story-list__results">
+            <template v-if="filteredEntries.length">
+              <div v-for="entry in filteredEntries" :key="\`\${entry.slug}:\${entry.archiveStatus || 'posted'}\`" v-html="renderCard(entry)"></div>
+            </template>
+            <div v-else class="empty-state">No investigations match these filters yet.</div>
+          </div>
+        </div>
+      </div>
+      <aside class="archive-rail-shell">
+        <div class="archive-filters-shell">
+          <section class="surface-panel archive-filters">
+            <div class="archive-filters__head">
+              <button class="text-link archive-filters__clear" type="button" @click="clearFilters" :hidden="!clearVisible">Clear</button>
+            </div>
+            <div class="archive-filters__form">
+              <div v-if="canEdit" class="archive-status-menu" :class="{ 'is-open': statusMenuOpen }">
+                <button class="archive-status-menu__toggle" type="button" aria-haspopup="listbox" :aria-expanded="statusMenuOpen ? 'true' : 'false'" @click="toggleStatusMenu">
+                  <span>{{ archiveStatusLabel(filters.status) }}</span>
+                </button>
+                <div class="archive-status-menu__panel" role="listbox" v-show="statusMenuOpen">
+                  <button
+                    v-for="option in statusOptions"
+                    :key="option.value || 'all'"
+                    class="archive-status-menu__option"
+                    :class="{ 'is-active': filters.status === option.value }"
+                    type="button"
+                    role="option"
+                    :aria-selected="filters.status === option.value ? 'true' : 'false'"
+                    @click="setStatus(option.value)"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
+              </div>
+              <label class="archive-filters__field" data-filter-field="tag">
+                <input
+                  name="tag"
+                  type="text"
+                  placeholder="Search tags"
+                  autocomplete="off"
+                  :value="filters.tag"
+                  @focus="openField = 'tag'; statusMenuOpen = false"
+                  @input="updateField('tag', $event.target.value)"
+                  @keydown.enter.prevent="commitField('tag')"
+                  @keydown.esc.prevent="openField = ''"
+                >
+                <div class="picker-results picker-results--dropdown archive-filters__results" v-show="openField === 'tag'">
+                  <template v-if="tagSuggestions.length">
+                    <button v-for="value in tagSuggestions" :key="value" class="picker-chip" type="button" @click="chooseSuggestion('tag', value)">
+                      <strong>{{ value }}</strong>
+                      <span>Use tag</span>
+                    </button>
+                  </template>
+                  <div v-else class="picker-hint">{{ filters.tag ? 'No tag matches yet.' : 'Start typing to filter by tag.' }}</div>
+                </div>
+              </label>
+              <label class="archive-filters__field" data-filter-field="entity">
+                <input
+                  name="entity"
+                  type="text"
+                  placeholder="Search entities"
+                  autocomplete="off"
+                  :value="filters.entity"
+                  @focus="openField = 'entity'; statusMenuOpen = false"
+                  @input="updateField('entity', $event.target.value)"
+                  @keydown.enter.prevent="commitField('entity')"
+                  @keydown.esc.prevent="openField = ''"
+                >
+                <div class="picker-results picker-results--dropdown archive-filters__results" v-show="openField === 'entity'">
+                  <template v-if="entitySuggestions.length">
+                    <button v-for="value in entitySuggestions" :key="value" class="picker-chip" type="button" @click="chooseSuggestion('entity', value)">
+                      <strong>{{ value }}</strong>
+                      <span>Use entity</span>
+                    </button>
+                  </template>
+                  <div v-else class="picker-hint">{{ filters.entity ? 'No entity matches yet.' : 'Start typing to filter by entity.' }}</div>
+                </div>
+              </label>
+            </div>
+          </section>
+        </div>
+        <div class="archive-map-shell">
+          <section class="surface-panel archive-map-card">
+            <div class="tag-row archive-map-card__tags" ref="mapTags"></div>
+            <div class="map-board map-board--leaflet map-board--compact" ref="mapCanvas"></div>
+            <div class="button-row">
+              <a class="button-ghost" href="./map.html">Open full map</a>
+            </div>
+          </section>
+        </div>
+      </aside>
+    `
+  });
+
+  state.archiveVueApp = app.mount(root);
 }
 
 function bindInvestigationFilters(entries, publicState, canEdit) {
@@ -1348,8 +1600,7 @@ function updateArchiveFilterPanels(entries, publicState) {
   renderArchiveSuggestionPanel("entity", archiveFilterSuggestions("entity", entries, publicState));
 }
 
-function archiveFilterSuggestions(field, entries, publicState) {
-  const filters = activeArchiveFilters();
+function archiveFilterSuggestions(field, entries, publicState, filters = activeArchiveFilters()) {
   const query = String(filters?.[field] || "").trim().toLowerCase();
   const values = field === "tag"
     ? dedupe(entries.flatMap((entry) => Array.isArray(entry.tags) ? entry.tags : []))
@@ -1387,9 +1638,8 @@ function renderArchiveSuggestionPanel(field, descriptor) {
     : `<div class="picker-hint">${query ? `No ${field} matches yet.` : `Start typing to filter by ${field}.`}</div>`;
 }
 
-function syncArchiveFiltersToUrl(canEdit) {
+function syncArchiveFiltersToUrl(canEdit, filters = activeArchiveFilters()) {
   const url = new URL(window.location.href);
-  const filters = activeArchiveFilters();
   if (filters.tag) url.searchParams.set("tag", filters.tag);
   else url.searchParams.delete("tag");
   if (filters.entity) url.searchParams.set("entity", filters.entity);
@@ -1399,28 +1649,43 @@ function syncArchiveFiltersToUrl(canEdit) {
   history.replaceState({}, "", url);
 }
 
+function buildArchiveMapPreviewState(filteredEntries, entries, publicState, hasActiveFilters = archiveHasActiveFilters()) {
+  const activeEntities = archiveEntitiesForEntries(filteredEntries, publicState);
+  const defaultEntities = hasActiveFilters ? [] : archiveEntitiesForEntries(entries, publicState);
+  const entities = activeEntities.length ? activeEntities : defaultEntities;
+  const mappedEntities = entities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng));
+  const emptyMessage = !entities.length
+    ? hasActiveFilters
+      ? "No locations tagged in filtered results."
+      : "No locations tagged in the archive yet."
+    : "No mapped locations in the current results.";
+  return { entities, mappedEntities, emptyMessage };
+}
+
 function updateArchiveMapPreview(filteredEntries, entries, publicState) {
   const tagsHost = document.querySelector("[data-investigation-map-tags]");
   const canvas = document.querySelector("[data-investigation-map-canvas]");
   if (!(tagsHost instanceof HTMLElement) || !(canvas instanceof HTMLElement)) return;
-  const activeEntities = archiveEntitiesForEntries(filteredEntries, publicState);
-  const defaultEntities = archiveHasActiveFilters() ? [] : archiveEntitiesForEntries(entries, publicState);
-  const entities = activeEntities.length ? activeEntities : defaultEntities;
+  const { entities, mappedEntities, emptyMessage } = buildArchiveMapPreviewState(
+    filteredEntries,
+    entries,
+    publicState,
+    archiveHasActiveFilters()
+  );
   if (!entities.length) {
     tagsHost.innerHTML = "";
     destroyLeafletPreview(canvas);
-    canvas.innerHTML = `<div class="map-empty">${archiveHasActiveFilters() ? "No locations tagged in filtered results." : "No locations tagged in the archive yet."}</div>`;
+    canvas.innerHTML = `<div class="map-empty">${emptyMessage}</div>`;
     return;
   }
 
-  const mappedEntities = entities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng));
   tagsHost.innerHTML = entities
     .slice(0, 4)
     .map((entity) => `<a class="tag tag--link" href="./map.html?entity=${encodeURIComponent(entity.slug)}">${escapeHtml(entity.name)}</a>`)
     .join("");
   if (!mappedEntities.length) {
     destroyLeafletPreview(canvas);
-    canvas.innerHTML = `<div class="map-empty">No mapped locations in the current results.</div>`;
+    canvas.innerHTML = `<div class="map-empty">${emptyMessage}</div>`;
     return;
   }
   renderLeafletPreviewMap(canvas, mappedEntities);
