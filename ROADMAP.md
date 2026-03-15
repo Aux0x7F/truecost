@@ -8,7 +8,7 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - Keep improving relay compatibility and degraded-mode behavior so the site remains usable even when some relays are noisy or incomplete.
 - Tighten the Linux pinner setup path into a repeatable install, update, and recovery workflow for non-developer operators.
 - Expand end-to-end browser validation around submissions, moderation, publishing, and comment handling before each release.
-- Route approved Home / About page snapshots into the bakedown path so reviewed page edits are written into the repository snapshot layer instead of living only in relay state and browser storage.
+- Add clearer history and conflict handling when multiple queued edits target the same static page before bakedown, so operators can see what will win and why.
 
 ## Publishing Workflow
 
@@ -18,7 +18,7 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 
 ## Longer Term
 
-- Expand transparent page editing beyond Home and About, and add stronger review/history handling around queued page snapshots.
+- Expand transparent page editing beyond hero sections and add stronger review/history handling around queued page snapshots.
 - Add image handling inside the document editor, including attachment, placement controls (left, right, full width), and markdown-safe storage through the existing blob workflow.
 - Add a navigable entity wiki that can enrich facilities, companies, agencies, and related records with expandable fields, history, clearer cross-links into investigations and the map, and a richer type / class / taxonomy model.
 - Add collaborative editing for drafts so more than one approved user can work on a document without relying only on queued revisions and review handoffs.
