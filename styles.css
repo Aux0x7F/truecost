@@ -2031,7 +2031,7 @@ h3 {
 }
 
 .map-board::before {
-  content: "Live entity layer";
+  content: "Map";
   position: absolute;
   left: 1rem;
   top: 1rem;
@@ -2183,6 +2183,9 @@ h3 {
 
 .picker-results--dropdown {
   padding: 0.5rem;
+  max-height: 15rem;
+  overflow: auto;
+  overscroll-behavior: contain;
   border-radius: 18px;
   border: 1px solid rgba(18, 18, 18, 0.08);
   background: rgba(250, 247, 241, 0.96);
