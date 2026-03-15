@@ -1,6 +1,6 @@
 # Architecture
 
-This document captures the intended operating model for The True Cost Project site so it does not depend on chat history.
+This document captures the intended operating model for The True Cost Project site.
 
 ## Repo boundary
 
