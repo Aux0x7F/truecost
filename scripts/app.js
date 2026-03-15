@@ -46,6 +46,10 @@ const ARCHIVE_STATUS_OPTIONS = [
 ];
 
 const STATIC_EDITABLE_PAGES = new Set(["home", "about"]);
+const STATIC_PAGE_META = Object.freeze({
+  home: { title: "Home page", path: "./index.html" },
+  about: { title: "About page", path: "./about.html" }
+});
 
 const state = {
   session: getStoredSession(),
@@ -404,7 +408,7 @@ async function initInvestigationCards() {
     }
     if (listGrid) {
       const entries = canEdit
-        ? buildInvestigationArchiveEntries(posts, publicState.drafts || [])
+        ? buildInvestigationArchiveEntries(posts, investigationDrafts(publicState.drafts || []))
         : posts.map((post) => ({
             ...post,
             archiveStatus: "posted",
@@ -440,15 +444,44 @@ async function initStaticPageEditing() {
   if (!editableElements.length) return;
 
   const publicState = await getPublicState().catch(() => null);
-  if (!publicState || !editorEntryAllowed(publicState)) return;
+  if (!publicState) return;
 
-  const originalContent = collectStaticEditContent(editableElements);
+  const committedContent = collectStaticEditContent(editableElements);
+  const publishedDraft = latestApprovedPageDraft(publicState, pageId);
+  const publishedContent = publishedDraft?.page_content && typeof publishedDraft.page_content === "object"
+    ? cloneStaticEditContent(publishedDraft.page_content)
+    : cloneStaticEditContent(committedContent);
+  applyStaticEditContent(editableElements, publishedContent, committedContent);
+
+  const params = new URLSearchParams(window.location.search);
+  const draftSlug = cleanSlug(params.get("draft") || "");
+  if (draftSlug && editorEntryAllowed(publicState)) {
+    const localPreviewDraft = findPageDraftPreview(publicState, pageId, draftSlug);
+    const targetedDraft = localPreviewDraft ? null : await loadDraftBySlug(draftSlug);
+    const previewDraft = localPreviewDraft || (
+      targetedDraft &&
+      isPageDraft(targetedDraft) &&
+      cleanSlug(targetedDraft.page_id || "") === pageId
+        ? targetedDraft
+        : null
+    );
+    if (previewDraft) {
+      applyStaticEditContent(editableElements, previewDraft.page_content || {}, publishedContent);
+      renderStaticPageReviewPreview(previewDraft);
+      return;
+    }
+  }
+
+  if (!editorEntryAllowed(publicState)) return;
+
   const storedSnapshot = loadStaticEditSnapshot(pageId);
+  const savedContent = cloneStaticEditContent(storedSnapshot?.content || publishedContent);
   state.staticEdit = {
     pageId,
     elements: editableElements,
-    originalContent,
-    history: [cloneStaticEditContent(storedSnapshot?.content || originalContent)],
+    originalContent: publishedContent,
+    savedContent,
+    history: [cloneStaticEditContent(savedContent)],
     historyIndex: 0,
     enabled: false,
     status: storedSnapshot?.savedAt
@@ -459,7 +492,7 @@ async function initStaticPageEditing() {
   };
 
   if (storedSnapshot?.content) {
-    applyStaticEditContent(editableElements, storedSnapshot.content, originalContent);
+    applyStaticEditContent(editableElements, storedSnapshot.content, publishedContent);
   }
 
   renderStaticEditBar();
@@ -522,9 +555,13 @@ async function initInvestigationDetail() {
     const slug = cleanSlug(params.get("slug") || "");
     const draftSlug = cleanSlug(params.get("draft") || "");
     const canReview = editorEntryAllowed(publicState);
-    const draft = draftSlug
-      ? (publicState.drafts || []).find((item) => item.slug === draftSlug) || null
+    let draft = draftSlug
+      ? investigationDrafts(publicState.drafts || []).find((item) => item.slug === draftSlug) || null
       : null;
+    if (!draft && draftSlug && canReview) {
+      const targetedDraft = await loadDraftBySlug(draftSlug);
+      if (targetedDraft && !isPageDraft(targetedDraft)) draft = targetedDraft;
+    }
     const isDraftPreview = Boolean(draft && canReview);
     if (draftSlug && !isDraftPreview) {
       throw new Error("Draft preview unavailable.");
@@ -1571,6 +1608,95 @@ function normalizeDraftStatus(status) {
   return String(status || "").trim().toLowerCase();
 }
 
+function isPageDraft(draft) {
+  return String(draft?.content_type || "").trim().toLowerCase() === "page" &&
+    STATIC_EDITABLE_PAGES.has(cleanSlug(draft?.page_id || ""));
+}
+
+function investigationDrafts(drafts) {
+  return (Array.isArray(drafts) ? drafts : []).filter((draft) => !isPageDraft(draft));
+}
+
+function pageDrafts(drafts) {
+  return (Array.isArray(drafts) ? drafts : []).filter((draft) => isPageDraft(draft));
+}
+
+function staticPageMeta(pageId) {
+  return STATIC_PAGE_META[cleanSlug(pageId || "")] || { title: "Static page", path: "./index.html" };
+}
+
+function staticPageDraftSlug(pageId) {
+  return `page-${cleanSlug(pageId || "")}`;
+}
+
+function staticPageSummary(content) {
+  const plainText = Object.values(content || {})
+    .map((value) => stripHtml(String(value || "")).trim())
+    .filter(Boolean);
+  return trimmed(plainText.find((value) => value.length > 40) || plainText.join(" "), 180);
+}
+
+function stripHtml(value) {
+  return String(value || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function buildStaticPageDraftPayload(pageId, content) {
+  const cleanPageId = cleanSlug(pageId || "");
+  const meta = staticPageMeta(cleanPageId);
+  const titleKey = cleanPageId === "home" ? "home.hero.title" : `${cleanPageId}.hero.title`;
+  const ledeKey = cleanPageId === "home" ? "home.hero.lede" : `${cleanPageId}.hero.lede`;
+  const title = stripHtml(content?.[titleKey] || meta.title) || meta.title;
+  const summary = stripHtml(content?.[ledeKey] || staticPageSummary(content));
+  return {
+    slug: staticPageDraftSlug(cleanPageId),
+    content_type: "page",
+    page_id: cleanPageId,
+    page_path: meta.path,
+    title,
+    summary: summary || `${meta.title} update`,
+    status: "candidate",
+    date: new Date().toISOString().slice(0, 10),
+    markdown: "",
+    tags: [],
+    entity_refs: [],
+    page_content: cloneStaticEditContent(content),
+    author_pubkey: state.viewer?.pubkey || ""
+  };
+}
+
+function findPageDraftPreview(publicState, pageId, draftSlug) {
+  const cleanPageId = cleanSlug(pageId || "");
+  return pageDrafts(publicState?.drafts || []).find(
+    (draft) => draft.slug === draftSlug && cleanSlug(draft.page_id || "") === cleanPageId
+  ) || null;
+}
+
+function latestApprovedPageDraft(publicState, pageId) {
+  const cleanPageId = cleanSlug(pageId || "");
+  const history = publicState?.draftHistoryBySlug?.get?.(staticPageDraftSlug(cleanPageId)) || [];
+  return history.find(
+    (draft) => isPageDraft(draft) && cleanSlug(draft.page_id || "") === cleanPageId && normalizeDraftStatus(draft.status) === "approved"
+  ) || null;
+}
+
+function pageDraftHref(draft, statusOverride = "") {
+  const pageId = cleanSlug(draft?.page_id || "");
+  const meta = staticPageMeta(pageId);
+  const status = normalizeDraftStatus(statusOverride || draft?.status);
+  if (["revision", "approved", "denied"].includes(status)) return meta.path;
+  return `${meta.path}?draft=${encodeURIComponent(draft.slug)}`;
+}
+
+function pageDraftActionLabel(draft, statusOverride = "") {
+  const status = normalizeDraftStatus(statusOverride || draft?.status);
+  return ["revision", "approved", "denied"].includes(status) ? "Open page" : "Open preview";
+}
+
+function pageDraftLabel(draft) {
+  const meta = staticPageMeta(draft?.page_id || "");
+  return meta.title;
+}
+
 function draftReviewAction(draft) {
   const tag = Array.isArray(draft?._event?.tags)
     ? draft._event.tags.find((item) => Array.isArray(item) && item[0] === "review")
@@ -1671,6 +1797,97 @@ async function loadPost(file) {
   };
 }
 
+async function loadDraftBySlug(slug) {
+  const clean = cleanSlug(slug || "");
+  if (!clean) return null;
+  await ensureEventToolsLoaded();
+  const tools = window.EventTools || window.NostrTools;
+  if (!tools?.SimplePool) return null;
+  const relays = dedupe([...(SITE.nostr.authorityRelays || []), ...(SITE.nostr.relays || [])]);
+  if (!relays.length) return null;
+  const pool = new tools.SimplePool();
+  try {
+    const events = await Promise.race([
+      pool.querySync(relays, {
+        kinds: [SITE.nostr.kinds.draft],
+        "#d": [clean],
+        "#t": [SITE.nostr.appTag],
+        limit: 24
+      }, {}),
+      timeoutAfter(Math.max(Number(SITE.nostr.authorityConnectTimeoutMs || 0), 9000))
+    ]);
+    const ordered = (Array.isArray(events) ? events : [])
+      .map(parseDraftEvent)
+      .filter(Boolean)
+      .sort(compareDraftEventsDesc);
+    if (!ordered.length) return null;
+    return {
+      ...ordered[0],
+      revisions: ordered,
+      revisionCount: ordered.length
+    };
+  } catch {
+    return null;
+  } finally {
+    pool.close(relays);
+  }
+}
+
+function parseDraftEvent(event) {
+  if (!event || Number(event.kind) !== Number(SITE.nostr.kinds.draft)) return null;
+  let payload = {};
+  try {
+    payload = JSON.parse(String(event.content || ""));
+  } catch {
+    payload = {};
+  }
+  const slug = cleanSlug(payload?.slug || eventTagValue(event, "d"));
+  if (!slug) return null;
+  const contentType = String(payload?.content_type || payload?.contentType || "post").trim().toLowerCase() || "post";
+  return {
+    slug,
+    author: String(event.pubkey || "").trim().toLowerCase(),
+    title: String(payload?.title || slug).trim(),
+    summary: String(payload?.summary || "").trim(),
+    location: String(payload?.location || "Undisclosed location").trim(),
+    status: String(payload?.status || "draft").trim(),
+    tags: Array.isArray(payload?.tags) ? payload.tags : [],
+    markdown: String(payload?.markdown || "").trim(),
+    featured: Boolean(payload?.featured),
+    date: String(payload?.date || new Date(Number(event.created_at || 0) * 1000 || Date.now()).toISOString().slice(0, 10)),
+    entity_refs: Array.isArray(payload?.entity_refs) ? payload.entity_refs : [],
+    content_type: contentType,
+    page_id: cleanSlug(payload?.page_id || payload?.pageId || ""),
+    page_path: String(payload?.page_path || payload?.pagePath || "").trim(),
+    page_content: payload?.page_content && typeof payload.page_content === "object"
+      ? payload.page_content
+      : payload?.pageContent && typeof payload.pageContent === "object"
+        ? payload.pageContent
+        : null,
+    created_at: Number(event.created_at || 0) || 0,
+    id: event.id,
+    _event: event
+  };
+}
+
+function eventTagValue(event, key) {
+  const tag = (event?.tags || []).find((item) => Array.isArray(item) && item[0] === key);
+  return String(tag?.[1] || "");
+}
+
+function compareDraftEventsDesc(left, right) {
+  const leftTime = Number(left?.created_at || left?._event?.created_at || 0);
+  const rightTime = Number(right?.created_at || right?._event?.created_at || 0);
+  if (leftTime !== rightTime) return rightTime - leftTime;
+  return String(right?.id || right?._event?.id || "").localeCompare(String(left?.id || left?._event?.id || ""));
+}
+
+function timeoutAfter(ms) {
+  return new Promise((_, reject) => {
+    window.setTimeout(() => reject(new Error("Relay connection timed out.")), Number(ms) || 0);
+  });
+}
+
 function buildEntityUsage(posts, entities) {
   const usage = new Map();
   for (const post of posts) {
@@ -1717,11 +1934,24 @@ function renderReviewPreviewPanel(draft) {
   const ownerLabel = owner?.displayName || owner?.username || shortReviewKey(draftOwnerPubkey(draft));
   const reviewAction = draftReviewAction(draft);
   const canReview = ["candidate", "review", "submitted"].includes(status);
+  const isPage = isPageDraft(draft);
+  const previewLabel = isPage ? "Page review" : "Review preview";
+  const openHref = isPage
+    ? pageDraftHref(draft, draft.status)
+    : normalizeDraftStatus(draft.status) === "revision"
+      ? `./editor.html?slug=${encodeURIComponent(draft.slug)}`
+      : "./investigations.html";
+  const openLabel = isPage
+    ? pageDraftActionLabel(draft, draft.status)
+    : normalizeDraftStatus(draft.status) === "revision"
+      ? "Open in editor"
+      : "Back to investigations";
   return `
-    <div class="eyebrow">Review preview</div>
+    <div class="eyebrow">${escapeHtml(previewLabel)}</div>
     <h3>${escapeHtml(draftStatusLabel(status, reviewAction))}</h3>
     <p class="muted-text">Submitted by ${escapeHtml(ownerLabel)}. This view is read-only so the review decision happens against what was actually submitted.</p>
     <div class="tag-row">
+      <span class="tag">${escapeHtml(isPage ? pageDraftLabel(draft) : "Investigation")}</span>
       <span class="tag">${escapeHtml(draftStatusLabel(status, reviewAction))}</span>
       <span class="tag">${escapeHtml(formatDate(draft.date))}</span>
     </div>
@@ -1733,9 +1963,7 @@ function renderReviewPreviewPanel(draft) {
             <button class="button-ghost" type="button" data-review-action="revise" data-draft-slug="${escapeAttribute(draft.slug)}">Request revision</button>
             <button class="button-ghost" type="button" data-review-action="deny" data-draft-slug="${escapeAttribute(draft.slug)}">Deny</button>
           `
-          : normalizeDraftStatus(draft.status) === "revision"
-            ? `<a class="button-ghost" href="./editor.html?slug=${encodeURIComponent(draft.slug)}">Open in editor</a>`
-            : `<a class="button-ghost" href="./investigations.html">Back to investigations</a>`
+          : `<a class="button-ghost" href="${escapeAttribute(openHref)}">${escapeHtml(openLabel)}</a>`
       }
     </div>
     ${
@@ -1743,8 +1971,12 @@ function renderReviewPreviewPanel(draft) {
         ? ""
         : `<p class="muted-text">${
             normalizeDraftStatus(draft.status) === "revision"
-              ? "Revision has been requested on this investigation."
-              : "This investigation is not waiting for review right now."
+              ? isPage
+                ? "Revision has been requested on this page update."
+                : "Revision has been requested on this investigation."
+              : isPage
+                ? "This page update is not waiting for review right now."
+                : "This investigation is not waiting for review right now."
           }</p>`
     }
   `;
@@ -1754,58 +1986,81 @@ function bindReviewPreviewPanel(panel, draft) {
   const buttons = panel.querySelectorAll("[data-review-action]");
   for (const button of buttons) {
     button.addEventListener("click", async () => {
-      const action = button.getAttribute("data-review-action") || "";
-      let statusBox = panel.querySelector("[data-review-status]");
-      if (!state.session || !editorEntryAllowed(state.publicState)) return;
-      if (!(statusBox instanceof HTMLElement)) {
-        statusBox = document.createElement("div");
-        statusBox.className = "status-box";
-        statusBox.setAttribute("data-review-status", "");
-        statusBox.setAttribute("aria-live", "polite");
-        panel.append(statusBox);
-      }
-      button.setAttribute("disabled", "disabled");
-      if (statusBox instanceof HTMLElement) {
-        statusBox.textContent = "Saving review decision...";
-        statusBox.dataset.state = "pending";
-      }
-      try {
-        await publishTaggedJson({
-          kind: SITE.nostr.kinds.draft,
-          secretKeyHex: state.session.secretKeyHex,
-          tags: [
-            ["d", draft.slug],
-            ["status", reviewStatusForAction(action)],
-            ["review", action]
-          ],
-          content: {
-            ...draft,
-            author_pubkey: draftOwnerPubkey(draft),
-            status: reviewStatusForAction(action),
-            reviewed_at: new Date().toISOString(),
-            reviewed_by: state.viewer?.pubkey || "",
-            review_action: action
-          }
-        });
-        state.publicState = await loadPublicState(true);
-        state.notifications = [];
-        void hydrateNotifications(true);
-        if (statusBox instanceof HTMLElement) {
-          statusBox.textContent = reviewActionMessage(action);
-          statusBox.dataset.state = "success";
-        }
-        window.setTimeout(() => {
-          window.location.href = "./investigations.html";
-        }, 700);
-      } catch (error) {
-        if (statusBox instanceof HTMLElement) {
-          statusBox.textContent = String(error?.message || error || "Review action failed.");
-          statusBox.dataset.state = "error";
-        }
-      } finally {
-        button.removeAttribute("disabled");
+      await publishReviewDecision(panel, draft, button);
+    });
+  }
+}
+
+function renderStaticPageReviewPreview(draft) {
+  const main = document.querySelector(".page-shell main");
+  if (!(main instanceof HTMLElement)) return;
+  let shell = document.querySelector("[data-static-review-shell]");
+  if (!(shell instanceof HTMLElement)) {
+    shell = document.createElement("section");
+    shell.className = "section section--tight";
+    shell.setAttribute("data-static-review-shell", "");
+    main.prepend(shell);
+  }
+  shell.innerHTML = `<div class="wrap"><div class="surface-panel" data-static-review-panel>${renderReviewPreviewPanel(draft)}</div></div>`;
+  const panel = shell.querySelector("[data-static-review-panel]");
+  if (panel instanceof HTMLElement) bindReviewPreviewPanel(panel, draft);
+}
+
+async function publishReviewDecision(panel, draft, button) {
+  const action = button.getAttribute("data-review-action") || "";
+  let statusBox = panel.querySelector("[data-review-status]");
+  if (!state.session || !editorEntryAllowed(state.publicState)) return;
+  if (!(statusBox instanceof HTMLElement)) {
+    statusBox = document.createElement("div");
+    statusBox.className = "status-box";
+    statusBox.setAttribute("data-review-status", "");
+    statusBox.setAttribute("aria-live", "polite");
+    panel.append(statusBox);
+  }
+  button.setAttribute("disabled", "disabled");
+  if (statusBox instanceof HTMLElement) {
+    statusBox.textContent = "Saving review decision...";
+    statusBox.dataset.state = "pending";
+  }
+  try {
+    await publishTaggedJson({
+      kind: SITE.nostr.kinds.draft,
+      secretKeyHex: state.session.secretKeyHex,
+      tags: [
+        ["d", draft.slug],
+        ["status", reviewStatusForAction(action)],
+        ["review", action],
+        ...(isPageDraft(draft) ? [["content", "page"], ["page", cleanSlug(draft.page_id || "")]] : [])
+      ],
+      content: {
+        ...draft,
+        author_pubkey: draftOwnerPubkey(draft),
+        status: reviewStatusForAction(action),
+        reviewed_at: new Date().toISOString(),
+        reviewed_by: state.viewer?.pubkey || "",
+        review_action: action
       }
     });
+    state.publicState = await loadPublicState(true);
+    state.notifications = [];
+    void hydrateNotifications(true);
+    if (statusBox instanceof HTMLElement) {
+      statusBox.textContent = reviewActionMessage(action, draft);
+      statusBox.dataset.state = "success";
+    }
+    const destination = isPageDraft(draft)
+      ? pageDraftHref(draft, reviewStatusForAction(action))
+      : "./investigations.html";
+    window.setTimeout(() => {
+      window.location.href = destination;
+    }, 700);
+  } catch (error) {
+    if (statusBox instanceof HTMLElement) {
+      statusBox.textContent = String(error?.message || error || "Review action failed.");
+      statusBox.dataset.state = "error";
+    }
+  } finally {
+    button.removeAttribute("disabled");
   }
 }
 
@@ -1815,7 +2070,12 @@ function reviewStatusForAction(action) {
   return "revision";
 }
 
-function reviewActionMessage(action) {
+function reviewActionMessage(action, draft = null) {
+  if (isPageDraft(draft)) {
+    if (action === "approve") return "Page update approved for publish.";
+    if (action === "deny") return "Page update denied.";
+    return "Revision requested on this page update.";
+  }
   if (action === "approve") return "Investigation approved for publish.";
   if (action === "deny") return "Investigation denied.";
   return "Revision requested.";
@@ -1881,26 +2141,32 @@ async function buildNotifications(publicState) {
     const reviewAction = draftReviewAction(draft);
     const ownerPubkey = draftOwnerPubkey(draft);
     const isPending = ["candidate", "review", "submitted"].includes(normalizeDraftStatus(draft.status));
+    const isPage = isPageDraft(draft);
+    const reviewHref = isPage
+      ? pageDraftHref(draft, draft.status)
+      : normalizeDraftStatus(draft.status) === "revision"
+        ? `./editor.html?slug=${encodeURIComponent(draft.slug)}`
+        : `./investigation.html?draft=${encodeURIComponent(draft.slug)}`;
+    const reviewLabel = isPage ? "Page review" : "Investigation review";
+    const reviewDetail = isPage ? pageDraftLabel(draft) : draft.title;
     if (ownerPubkey === viewer.pubkey && ["approve", "revise", "deny"].includes(reviewAction)) {
       notifications.push({
         id: `draft-review:${draft.slug}:${draft.created_at}`,
         createdAt: draft.created_at,
-        href: normalizeDraftStatus(draft.status) === "revision"
-          ? `./editor.html?slug=${encodeURIComponent(draft.slug)}`
-          : `./investigation.html?draft=${encodeURIComponent(draft.slug)}`,
-        label: "Investigation review",
-        title: reviewNotificationTitle(reviewAction),
-        detail: draft.title
+        href: reviewHref,
+        label: reviewLabel,
+        title: reviewNotificationTitle(reviewAction, isPage),
+        detail: reviewDetail
       });
     }
     if (isAdmin && isPending) {
       notifications.push({
         id: `pending-draft:${draft.slug}:${draft.created_at}`,
         createdAt: draft.created_at,
-        href: `./investigation.html?draft=${encodeURIComponent(draft.slug)}`,
+        href: isPage ? pageDraftHref(draft, "candidate") : `./investigation.html?draft=${encodeURIComponent(draft.slug)}`,
         label: "Review queue",
-        title: "New investigation pending review",
-        detail: draft.title
+        title: isPage ? "New page update pending review" : "New investigation pending review",
+        detail: reviewDetail
       });
     }
   }
@@ -2043,7 +2309,12 @@ function renderNotificationItem(item) {
   `;
 }
 
-function reviewNotificationTitle(action) {
+function reviewNotificationTitle(action, isPage = false) {
+  if (isPage) {
+    if (action === "approve") return "Your page update was approved";
+    if (action === "deny") return "A page update was denied";
+    return "Revision was requested on your page update";
+  }
   if (action === "approve") return "Your investigation was approved";
   if (action === "deny") return "An investigation was denied";
   return "Revision was requested on your investigation";
@@ -2313,6 +2584,11 @@ function renderStaticEditBar() {
 
 function handleStaticEditShortcut(event) {
   if (!state.staticEdit) return;
+  if (event.key === "Escape" && state.staticEdit.enabled) {
+    event.preventDefault();
+    cancelStaticEditChanges();
+    return;
+  }
   if (!event.ctrlKey || !event.shiftKey || event.key.toLowerCase() !== "e") return;
   event.preventDefault();
   toggleStaticEditMode();
@@ -2349,7 +2625,7 @@ function handleStaticEditInteraction(event) {
   if (action instanceof HTMLElement) {
     event.preventDefault();
     if (action.hasAttribute("data-static-edit-snapshot")) {
-      saveStaticEditSnapshot();
+      void saveStaticEditSnapshot();
       return;
     }
     if (action.hasAttribute("data-static-edit-undo")) {
@@ -2429,6 +2705,7 @@ function revertStaticEditToPublished() {
   if (!editState) return;
   clearStaticEditSnapshot(editState.pageId);
   applyStaticEditContent(editState.elements, editState.originalContent, editState.originalContent);
+  editState.savedContent = cloneStaticEditContent(editState.originalContent);
   editState.history = [cloneStaticEditContent(editState.originalContent)];
   editState.historyIndex = 0;
   editState.savedAt = 0;
@@ -2437,24 +2714,77 @@ function revertStaticEditToPublished() {
   renderStaticEditBar();
 }
 
-function saveStaticEditSnapshot() {
+function cancelStaticEditChanges() {
+  const editState = state.staticEdit;
+  if (!editState) return;
+  if (editState.historyTimer) {
+    window.clearTimeout(editState.historyTimer);
+    editState.historyTimer = 0;
+  }
+  const baseline = cloneStaticEditContent(editState.savedContent || editState.originalContent);
+  applyStaticEditContent(editState.elements, baseline, editState.originalContent);
+  editState.history = [cloneStaticEditContent(baseline)];
+  editState.historyIndex = 0;
+  editState.saveState = staticEditContentMatches(baseline, editState.originalContent) && !editState.savedAt ? "idle" : "saved";
+  editState.enabled = false;
+  document.body.classList.remove("is-static-editing");
+  for (const element of editState.elements) {
+    element.contentEditable = "false";
+    element.spellcheck = false;
+    element.classList.remove("static-edit-target");
+  }
+  editState.status = editState.savedAt
+    ? `Discarded unsaved changes and returned to the last snapshot from ${formatLocalTimestamp(editState.savedAt)}.`
+    : "Discarded unsaved changes and returned to the published page.";
+  renderStaticEditBar();
+}
+
+async function saveStaticEditSnapshot() {
   const editState = state.staticEdit;
   if (!editState) return;
   const content = collectStaticEditContent(editState.elements);
   const savedAt = Date.now();
-  window.localStorage.setItem(staticEditStorageKey(editState.pageId), JSON.stringify({
-    pageId: editState.pageId,
-    savedAt,
-    content
-  }));
+  persistStaticEditSnapshot(editState.pageId, savedAt, content);
+  editState.savedContent = cloneStaticEditContent(content);
   editState.savedAt = savedAt;
   editState.saveState = "saved";
-  editState.status = `Snapshot saved locally at ${formatLocalTimestamp(savedAt)}.`;
+  editState.status = `Snapshot saved locally at ${formatLocalTimestamp(savedAt)}. Sending it to review...`;
   if (!staticEditContentMatches(editState.history[editState.historyIndex], content)) {
     editState.history.push(cloneStaticEditContent(content));
     editState.historyIndex = editState.history.length - 1;
   }
   renderStaticEditBar();
+  try {
+    if (!state.session?.secretKeyHex) throw new Error("Log in with an admin account first.");
+    const payload = buildStaticPageDraftPayload(editState.pageId, content);
+    await publishTaggedJson({
+      kind: SITE.nostr.kinds.draft,
+      secretKeyHex: state.session.secretKeyHex,
+      tags: [
+        ["d", payload.slug],
+        ["status", payload.status],
+        ["content", payload.content_type],
+        ["page", payload.page_id]
+      ],
+      content: payload
+    });
+    state.publicState = await loadPublicState(true);
+    state.notifications = [];
+    void hydrateNotifications(true);
+    editState.status = `Snapshot saved locally at ${formatLocalTimestamp(savedAt)} and sent to review.`;
+  } catch (error) {
+    editState.status = `Snapshot saved locally at ${formatLocalTimestamp(savedAt)}. Review handoff failed: ${String(error?.message || error || "Unknown error")}`;
+    editState.saveState = "dirty";
+  }
+  renderStaticEditBar();
+}
+
+function persistStaticEditSnapshot(pageId, savedAt, content) {
+  window.localStorage.setItem(staticEditStorageKey(pageId), JSON.stringify({
+    pageId,
+    savedAt,
+    content
+  }));
 }
 
 function collectStaticEditContent(elements) {
