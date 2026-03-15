@@ -240,7 +240,9 @@ async function refreshWorkspace(force = false) {
 
 function renderWorkspaceLoading(message) {
   const shell = document.querySelector("[data-workspace-shell]");
+  const title = document.querySelector("[data-workspace-title]");
   const lede = document.querySelector("[data-workspace-lede]");
+  if (title) title.textContent = "Workspace";
   if (lede) lede.textContent = message;
   if (shell) shell.innerHTML = renderLoadingState(message);
 }
