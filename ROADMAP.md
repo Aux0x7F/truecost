@@ -8,6 +8,7 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - Keep improving relay compatibility and degraded-mode behavior so the site remains usable even when some relays are noisy or incomplete.
 - Tighten the Linux pinner setup path into a repeatable install, update, and recovery workflow for non-developer operators.
 - Expand end-to-end browser validation around submissions, moderation, publishing, and comment handling before each release.
+- Wire the new in-place static page editing workflow into bakedown / review so Home and About snapshots can move cleanly from browser edits into the repository layer.
 
 ## Publishing Workflow
 
@@ -17,7 +18,7 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 
 ## Longer Term
 
-- Add transparent page editing for static pages such as Home and About. The intended workflow is a keyboard shortcut (`Ctrl+Shift+E`) that reveals a fixed bottom control bar with revert, undo, redo, and save actions while the page itself is edited in place. This editing mode is meant for queued snapshot-to-GitHub bakedown, not synchronized live co-editing.
+- Expand transparent page editing beyond Home and About, and add stronger review/history handling around queued page snapshots.
 - Add image handling inside the document editor, including attachment, placement controls (left, right, full width), and markdown-safe storage through the existing blob workflow.
 - Add a navigable entity wiki that can enrich facilities, companies, agencies, and related records with expandable fields, history, clearer cross-links into investigations and the map, and a richer type / class / taxonomy model.
 - Add collaborative editing for drafts so more than one approved user can work on a document without relying only on queued revisions and review handoffs.
