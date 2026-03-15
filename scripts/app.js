@@ -45,6 +45,8 @@ const ARCHIVE_STATUS_OPTIONS = [
   { value: "posted", label: "Posted" }
 ];
 
+const STATIC_EDITABLE_PAGES = new Set(["home", "about"]);
+
 const state = {
   session: getStoredSession(),
   guestSession: getStoredGuestSession(),
@@ -60,6 +62,7 @@ const state = {
   archiveFilterOpenField: "",
   archiveStatusMenuOpen: false,
   archiveFilterTimer: null,
+  staticEdit: null,
   map: null,
   markers: null,
   markerIndex: null
@@ -73,6 +76,7 @@ document.addEventListener("DOMContentLoaded", () => {
   void initMarkdownArticles();
   void initMapPage();
   void initAuthoringEntry();
+  void initStaticPageEditing();
   window.addEventListener("truecost:session-changed", handleSessionChanged);
 });
 
@@ -220,6 +224,9 @@ function handleSessionChanged() {
   renderNavigation();
   if (state.session) {
     void hydrateNotifications(true);
+    if (!state.staticEdit) {
+      void initStaticPageEditing();
+    }
   }
 }
 
@@ -276,7 +283,7 @@ function renderNavigation() {
     <a class="${navLinkClass(page, "about")}" href="./about.html">About</a>
     <a class="${navLinkClass(page, "merch")}" href="./merch.html">Merch</a>
     <div class="profile-menu ${NAV_KEYS.workspace.includes(page) ? "is-current" : ""} ${state.profileMenuOpen ? "is-open" : ""}" data-profile-menu>
-      <button class="profile-menu__toggle ${currentUser?.avatarUrl ? "has-avatar" : !isLoggedIn ? "is-wordmark" : ""}" type="button" data-profile-toggle aria-label="${isLoggedIn ? "Profile options" : "Log in"}">
+      <button class="profile-menu__toggle ${currentUser?.avatarUrl ? "has-avatar" : !isLoggedIn ? "is-wordmark" : ""}" type="button" data-profile-toggle aria-label="${isLoggedIn ? (isAdmin ? "Admin" : "Profile") : "Log in"}">
         <span class="profile-menu__badge ${currentUser?.avatarUrl ? "has-avatar" : !isLoggedIn ? "is-wordmark" : ""}">${profileBadgeMarkup(currentUser)}</span>
         ${unreadCount ? `<span class="profile-menu__notice">${Math.min(unreadCount, 9)}${unreadCount > 9 ? "+" : ""}</span>` : ""}
       </button>
@@ -319,8 +326,7 @@ function renderNavigation() {
                     : ""
                 }
               </div>
-              <a href="./admin.html?tab=profile">Profile options</a>
-              ${isAdmin ? `<a href="./admin.html?tab=dashboard">Admin</a>` : ""}
+              <a href="./admin.html?tab=${isAdmin ? "dashboard" : "profile"}">${isAdmin ? "Admin" : "Profile"}</a>
               <button type="button" data-signout>Sign out</button>
             `
             : `<a href="./admin.html?tab=login">Log in</a>`
@@ -423,6 +429,44 @@ async function initAuthoringEntry() {
     return;
   }
   host.innerHTML = `<a class="button" href="./editor.html">Create investigation</a>`;
+}
+
+async function initStaticPageEditing() {
+  const pageId = document.body.dataset.page || "";
+  if (!STATIC_EDITABLE_PAGES.has(pageId) || state.staticEdit) return;
+  const editableElements = [...document.querySelectorAll("[data-static-edit]")].filter(
+    (node) => node instanceof HTMLElement
+  );
+  if (!editableElements.length) return;
+
+  const publicState = await getPublicState().catch(() => null);
+  if (!publicState || !editorEntryAllowed(publicState)) return;
+
+  const originalContent = collectStaticEditContent(editableElements);
+  const storedSnapshot = loadStaticEditSnapshot(pageId);
+  state.staticEdit = {
+    pageId,
+    elements: editableElements,
+    originalContent,
+    history: [cloneStaticEditContent(storedSnapshot?.content || originalContent)],
+    historyIndex: 0,
+    enabled: false,
+    status: storedSnapshot?.savedAt
+      ? `Local snapshot loaded from ${formatLocalTimestamp(storedSnapshot.savedAt)}.`
+      : "Press Ctrl+Shift+E to edit this page.",
+    savedAt: Number(storedSnapshot?.savedAt || 0),
+    saveState: storedSnapshot?.savedAt ? "saved" : "idle"
+  };
+
+  if (storedSnapshot?.content) {
+    applyStaticEditContent(editableElements, storedSnapshot.content, originalContent);
+  }
+
+  renderStaticEditBar();
+  document.addEventListener("keydown", handleStaticEditShortcut);
+  document.addEventListener("input", handleStaticEditInput, true);
+  document.addEventListener("paste", handleStaticEditPaste, true);
+  document.addEventListener("click", handleStaticEditInteraction, true);
 }
 
 function hydrateArchiveSummaryLinks(posts, publicState) {
@@ -2242,6 +2286,221 @@ async function fetchText(path) {
   return response.text();
 }
 
+function renderStaticEditBar() {
+  const editState = state.staticEdit;
+  if (!editState) return;
+  let bar = document.querySelector("[data-static-edit-bar]");
+  if (!(bar instanceof HTMLElement)) {
+    bar = document.createElement("div");
+    bar.className = "static-edit-bar";
+    bar.setAttribute("data-static-edit-bar", "");
+    document.body.append(bar);
+  }
+  bar.classList.toggle("is-visible", editState.enabled);
+  bar.innerHTML = `
+    <div class="static-edit-bar__copy">
+      <strong>Page edit mode</strong>
+      <span>${escapeHtml(editState.status || "Edit directly on the page.")}</span>
+    </div>
+    <div class="static-edit-bar__actions">
+      <button class="button-ghost static-edit-bar__button" type="button" data-static-edit-revert>Revert</button>
+      <button class="button-ghost static-edit-bar__button" type="button" data-static-edit-undo ${editState.historyIndex > 0 ? "" : "disabled"}>Undo</button>
+      <button class="button-ghost static-edit-bar__button" type="button" data-static-edit-redo ${editState.historyIndex < editState.history.length - 1 ? "" : "disabled"}>Redo</button>
+      <button class="button static-edit-bar__button" type="button" data-static-edit-snapshot>Snapshot</button>
+    </div>
+  `;
+}
+
+function handleStaticEditShortcut(event) {
+  if (!state.staticEdit) return;
+  if (!event.ctrlKey || !event.shiftKey || event.key.toLowerCase() !== "e") return;
+  event.preventDefault();
+  toggleStaticEditMode();
+}
+
+function toggleStaticEditMode(force) {
+  const editState = state.staticEdit;
+  if (!editState) return;
+  const next = typeof force === "boolean" ? force : !editState.enabled;
+  editState.enabled = next;
+  document.body.classList.toggle("is-static-editing", next);
+  for (const element of editState.elements) {
+    element.contentEditable = next ? "true" : "false";
+    element.spellcheck = next;
+    element.classList.toggle("static-edit-target", next);
+  }
+  editState.status = next
+    ? editState.savedAt
+      ? `Editing local snapshot from ${formatLocalTimestamp(editState.savedAt)}.`
+      : "Editing this page directly. Snapshot when ready."
+    : editState.savedAt
+      ? `Local snapshot saved ${formatLocalTimestamp(editState.savedAt)}.`
+      : "Press Ctrl+Shift+E to edit this page.";
+  renderStaticEditBar();
+}
+
+function handleStaticEditInteraction(event) {
+  const editState = state.staticEdit;
+  if (!editState) return;
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+
+  const action = target.closest("[data-static-edit-snapshot], [data-static-edit-undo], [data-static-edit-redo], [data-static-edit-revert]");
+  if (action instanceof HTMLElement) {
+    event.preventDefault();
+    if (action.hasAttribute("data-static-edit-snapshot")) {
+      saveStaticEditSnapshot();
+      return;
+    }
+    if (action.hasAttribute("data-static-edit-undo")) {
+      stepStaticEditHistory(-1);
+      return;
+    }
+    if (action.hasAttribute("data-static-edit-redo")) {
+      stepStaticEditHistory(1);
+      return;
+    }
+    if (action.hasAttribute("data-static-edit-revert")) {
+      revertStaticEditToPublished();
+    }
+    return;
+  }
+
+  if (!editState.enabled) return;
+  const editable = target.closest("[data-static-edit]");
+  if (!(editable instanceof HTMLElement)) return;
+  const link = target.closest("a");
+  if (link) {
+    event.preventDefault();
+  }
+}
+
+function handleStaticEditInput(event) {
+  const editState = state.staticEdit;
+  if (!editState?.enabled) return;
+  const target = event.target;
+  if (!(target instanceof HTMLElement) || !target.matches("[data-static-edit]")) return;
+  queueStaticEditHistory();
+}
+
+function handleStaticEditPaste(event) {
+  const editState = state.staticEdit;
+  if (!editState?.enabled) return;
+  const target = event.target;
+  if (!(target instanceof HTMLElement) || !target.matches("[data-static-edit]")) return;
+  event.preventDefault();
+  const text = event.clipboardData?.getData("text/plain") || "";
+  if (!text) return;
+  document.execCommand("insertText", false, text);
+}
+
+function queueStaticEditHistory() {
+  const editState = state.staticEdit;
+  if (!editState) return;
+  if (editState.historyTimer) window.clearTimeout(editState.historyTimer);
+  editState.historyTimer = window.setTimeout(() => {
+    editState.historyTimer = 0;
+    const nextContent = collectStaticEditContent(editState.elements);
+    const currentContent = editState.history[editState.historyIndex] || editState.originalContent;
+    if (staticEditContentMatches(currentContent, nextContent)) return;
+    editState.history = editState.history.slice(0, editState.historyIndex + 1);
+    editState.history.push(cloneStaticEditContent(nextContent));
+    editState.historyIndex = editState.history.length - 1;
+    editState.saveState = "dirty";
+    editState.status = "Unsaved page edits.";
+    renderStaticEditBar();
+  }, 120);
+}
+
+function stepStaticEditHistory(direction) {
+  const editState = state.staticEdit;
+  if (!editState) return;
+  const nextIndex = editState.historyIndex + direction;
+  if (nextIndex < 0 || nextIndex >= editState.history.length) return;
+  editState.historyIndex = nextIndex;
+  applyStaticEditContent(editState.elements, editState.history[nextIndex], editState.originalContent);
+  editState.saveState = staticEditContentMatches(editState.history[nextIndex], editState.originalContent) ? "idle" : "dirty";
+  editState.status = direction < 0 ? "Undid the last page edit." : "Restored the next page edit.";
+  renderStaticEditBar();
+}
+
+function revertStaticEditToPublished() {
+  const editState = state.staticEdit;
+  if (!editState) return;
+  clearStaticEditSnapshot(editState.pageId);
+  applyStaticEditContent(editState.elements, editState.originalContent, editState.originalContent);
+  editState.history = [cloneStaticEditContent(editState.originalContent)];
+  editState.historyIndex = 0;
+  editState.savedAt = 0;
+  editState.saveState = "idle";
+  editState.status = "Reverted to the published page.";
+  renderStaticEditBar();
+}
+
+function saveStaticEditSnapshot() {
+  const editState = state.staticEdit;
+  if (!editState) return;
+  const content = collectStaticEditContent(editState.elements);
+  const savedAt = Date.now();
+  window.localStorage.setItem(staticEditStorageKey(editState.pageId), JSON.stringify({
+    pageId: editState.pageId,
+    savedAt,
+    content
+  }));
+  editState.savedAt = savedAt;
+  editState.saveState = "saved";
+  editState.status = `Snapshot saved locally at ${formatLocalTimestamp(savedAt)}.`;
+  if (!staticEditContentMatches(editState.history[editState.historyIndex], content)) {
+    editState.history.push(cloneStaticEditContent(content));
+    editState.historyIndex = editState.history.length - 1;
+  }
+  renderStaticEditBar();
+}
+
+function collectStaticEditContent(elements) {
+  return Object.fromEntries(
+    (Array.isArray(elements) ? elements : []).map((element) => [
+      element.getAttribute("data-static-edit") || "",
+      element.innerHTML
+    ])
+  );
+}
+
+function applyStaticEditContent(elements, content, fallback = {}) {
+  for (const element of Array.isArray(elements) ? elements : []) {
+    const key = element.getAttribute("data-static-edit") || "";
+    element.innerHTML = Object.prototype.hasOwnProperty.call(content || {}, key)
+      ? String(content[key] || "")
+      : String(fallback?.[key] || "");
+  }
+}
+
+function loadStaticEditSnapshot(pageId) {
+  try {
+    const raw = window.localStorage.getItem(staticEditStorageKey(pageId));
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && parsed.content ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearStaticEditSnapshot(pageId) {
+  window.localStorage.removeItem(staticEditStorageKey(pageId));
+}
+
+function staticEditStorageKey(pageId) {
+  return `${SITE.nostr.storageNamespace}.static-edit.${pageId}`;
+}
+
+function staticEditContentMatches(left, right) {
+  return JSON.stringify(left || {}) === JSON.stringify(right || {});
+}
+
+function cloneStaticEditContent(content) {
+  return JSON.parse(JSON.stringify(content || {}));
+}
+
 function renderError(node, message) {
   if (!node) return;
   node.innerHTML = `<div class="empty-state">${escapeHtml(message)}</div>`;
@@ -2298,6 +2557,16 @@ function formatDateTime(unixSeconds) {
     hour: "numeric",
     minute: "2-digit"
   }).format(new Date(unixSeconds * 1000));
+}
+
+function formatLocalTimestamp(value) {
+  if (!value) return "just now";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(new Date(value));
 }
 
 function buildArticleMetaLine(post) {

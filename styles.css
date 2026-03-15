@@ -36,6 +36,10 @@ body {
     linear-gradient(180deg, #f2eee9 0%, #e8e1d7 52%, #ebe6df 100%);
 }
 
+body.is-static-editing {
+  padding-bottom: 6rem;
+}
+
 img {
   display: block;
   max-width: 100%;
@@ -2553,6 +2557,78 @@ h3 {
 .loading-state__reload {
   min-height: 2.4rem;
   padding: 0.55rem 0.95rem;
+}
+
+.static-edit-target {
+  transition: background 160ms ease, outline-color 160ms ease;
+}
+
+body.is-static-editing [data-static-edit] {
+  cursor: text;
+  outline: 1px dashed rgba(156, 29, 24, 0.22);
+  outline-offset: 0.18rem;
+  background: rgba(255, 255, 255, 0.32);
+}
+
+body.is-static-editing [data-static-edit]:hover,
+body.is-static-editing [data-static-edit]:focus {
+  outline-color: rgba(156, 29, 24, 0.48);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.static-edit-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 1rem;
+  z-index: 1800;
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  width: min(60rem, calc(100vw - 2rem));
+  padding: 0.95rem 1rem;
+  border-radius: 22px;
+  border: 1px solid rgba(18, 18, 18, 0.08);
+  background: rgba(18, 18, 18, 0.92);
+  color: #fbf6ef;
+  box-shadow: 0 24px 50px rgba(18, 18, 18, 0.24);
+  transform: translateX(-50%);
+}
+
+.static-edit-bar.is-visible {
+  display: flex;
+}
+
+.static-edit-bar__copy {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.static-edit-bar__copy strong {
+  font-size: 0.95rem;
+}
+
+.static-edit-bar__copy span {
+  color: rgba(251, 246, 239, 0.78);
+  font-size: 0.9rem;
+}
+
+.static-edit-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.static-edit-bar__button.button-ghost {
+  border-color: rgba(251, 246, 239, 0.18);
+  color: #fbf6ef;
+}
+
+.static-edit-bar__button[disabled] {
+  opacity: 0.42;
+  cursor: default;
 }
 
 .loading-spinner {
