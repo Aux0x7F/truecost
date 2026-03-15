@@ -8,6 +8,8 @@ The reusable framework now lives separately in the sibling `nostr-site` repo.
 
 - `scripts/`: True Cost browser code and entrypoints
 - `scripts/core/`: site config, session, content, and Nostr helpers
+- `ARCHITECTURE.md`: project-specific publishing and trust model
+- `OPERATIONS.md`: project operating and bakedown expectations
 - `vendor/nostr-site-support.esm.js`: vendored minified browser bundle built from `nostr-site/support-lib`
 - sibling `nostr-site/`: standalone generic framework repo boundary, including the bundled `peer-pinner` package
 
@@ -67,3 +69,5 @@ The production hardening and release checklist lives in the sibling `nostr-site`
 ## Generic boundary
 
 `truecost` now consumes the built `nostr-site` support bundle rather than maintaining its own local copy of the generic relay/CMS source layer.
+
+See `ARCHITECTURE.md` for the intended static-baseline plus verified-live-overlay model and how this repo should relate to `nostr-site` and `nostr-crdt`.
