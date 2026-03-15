@@ -50,12 +50,15 @@ const ARCHIVE_STATUS_OPTIONS = [
 const STATIC_PAGE_META = Object.freeze({
   home: { title: "Home page", path: "./index.html" },
   investigations: { title: "Investigations page", path: "./investigations.html" },
+  investigation: { title: "Investigation page", path: "./investigation.html" },
   guide: { title: "Guide page", path: "./guide.html" },
   submit: { title: "Submit page", path: "./submit.html" },
   "get-involved": { title: "Get involved page", path: "./get-involved.html" },
   about: { title: "About page", path: "./about.html" },
   merch: { title: "Merch page", path: "./merch.html" },
-  map: { title: "Map page", path: "./map.html" }
+  map: { title: "Map page", path: "./map.html" },
+  workspace: { title: "Workspace page", path: "./admin.html" },
+  editor: { title: "Editor page", path: "./editor.html" }
 });
 const STATIC_EDITABLE_PAGES = new Set(Object.keys(STATIC_PAGE_META));
 
@@ -530,6 +533,9 @@ function hydrateArchiveSummaryLinks(posts, publicState) {
   const hosts = [...document.querySelectorAll("[data-archive-summary]")];
   if (!hosts.length) return;
   const publishedCount = Array.isArray(posts) ? posts.length : 0;
+  const activeCount = investigationDrafts(publicState?.drafts || []).length;
+  const investigationCount = publishedCount > 0 ? publishedCount : activeCount;
+  const investigationLabel = publishedCount > 0 ? "Published investigations" : "Active investigations";
   const entities = Array.isArray(publicState?.approvedEntities) ? publicState.approvedEntities : [];
   const mappedCount = entities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng)).length;
   const locationCount = dedupe(entities.map((entity) => String(entity.location || "").trim()).filter(Boolean)).length;
@@ -538,8 +544,8 @@ function hydrateArchiveSummaryLinks(posts, publicState) {
   ).length;
   const markup = `
     <a class="hero-summary__item" href="./investigations.html">
-      <strong>${publishedCount}</strong>
-      <span>Published investigations</span>
+      <strong>${investigationCount}</strong>
+      <span>${investigationLabel}</span>
     </a>
     <a class="hero-summary__item" href="./map.html#entity-index">
       <strong>${entities.length}</strong>
@@ -2675,6 +2681,7 @@ function queueStaticEditLivePublish() {
       const nextContent = collectStaticEditContent(editState.elements);
       const changed = await overlayState.controller.setContent(nextContent);
       if (changed) {
+        await overlayState.controller.flush?.().catch(() => null);
         overlayState.currentContent = cloneStaticEditContent(nextContent);
       }
     } catch {
@@ -2700,6 +2707,7 @@ function renderStaticEditBar() {
       <span>${escapeHtml(editState.status || "Edit directly on the page.")}</span>
     </div>
     <div class="static-edit-bar__actions">
+      <button class="button-ghost static-edit-bar__button" type="button" data-static-edit-close>Close</button>
       <button class="button-ghost static-edit-bar__button" type="button" data-static-edit-revert>Revert</button>
       <button class="button-ghost static-edit-bar__button" type="button" data-static-edit-undo ${editState.historyIndex > 0 ? "" : "disabled"}>Undo</button>
       <button class="button-ghost static-edit-bar__button" type="button" data-static-edit-redo ${editState.historyIndex < editState.history.length - 1 ? "" : "disabled"}>Redo</button>
@@ -2755,9 +2763,13 @@ function handleStaticEditInteraction(event) {
   const target = event.target;
   if (!(target instanceof Element)) return;
 
-  const action = target.closest("[data-static-edit-snapshot], [data-static-edit-undo], [data-static-edit-redo], [data-static-edit-revert]");
+  const action = target.closest("[data-static-edit-snapshot], [data-static-edit-undo], [data-static-edit-redo], [data-static-edit-revert], [data-static-edit-close]");
   if (action instanceof HTMLElement) {
     event.preventDefault();
+    if (action.hasAttribute("data-static-edit-close")) {
+      cancelStaticEditChanges();
+      return;
+    }
     if (action.hasAttribute("data-static-edit-snapshot")) {
       void saveStaticEditSnapshot();
       return;

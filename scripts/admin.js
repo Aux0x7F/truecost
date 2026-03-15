@@ -426,14 +426,14 @@ function renderLoginPane() {
       <form class="tip-form" data-login-form>
         <label>
           <span>Username</span>
-          <input name="username" type="text" maxlength="40" placeholder="field-notes" required>
+          <input name="username" type="text" maxlength="40" placeholder="username" required>
         </label>
         <label>
           <span>Password</span>
           <input name="password" type="password" maxlength="120" placeholder="••••••••" required>
         </label>
         <div class="button-row">
-          <button class="button" type="submit">Log in</button>
+          <button class="button" type="submit" data-login-submit>Create/Login</button>
         </div>
         <div class="status-box" data-workspace-status>This site uses your username and password to reopen the same account.</div>
       </form>
@@ -1185,7 +1185,13 @@ function renderChatModal() {
 
 async function handleLogin(form) {
   const status = form.querySelector("[data-workspace-status]");
+  const submitButton = form.querySelector("[data-login-submit]");
   try {
+    setLoginPending(submitButton, true);
+    if (status) {
+      status.textContent = "Opening account...";
+      status.dataset.state = "pending";
+    }
     const formData = new FormData(form);
     const session = await signInWithCredentials(formData.get("username"), formData.get("password"));
     await rebroadcastAccount(session);
@@ -1200,7 +1206,18 @@ async function handleLogin(form) {
       status.textContent = String(error?.message || error || "Login failed.");
       status.dataset.state = "error";
     }
+  } finally {
+    setLoginPending(submitButton, false);
   }
+}
+
+function setLoginPending(button, pending) {
+  if (!(button instanceof HTMLButtonElement)) return;
+  button.disabled = pending;
+  button.dataset.busy = pending ? "yes" : "no";
+  button.innerHTML = pending
+    ? `<span class="loading-spinner" aria-hidden="true"></span><span>Opening account...</span>`
+    : "Create/Login";
 }
 
 async function handleProfileSave(form) {
