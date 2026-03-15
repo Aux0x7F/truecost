@@ -863,18 +863,18 @@ function renderReviewPane() {
             <span class="tag">${pending.length} waiting</span>
           </div>
         </div>
-        <p class="muted-text">Writers use the editor to save working drafts and send finished versions here for review. Approving keeps the post in the next bakedown queue.</p>
+        <p class="muted-text">Investigations and page updates land here once they are submitted for review. Approving keeps the latest cleartext version in the next bakedown queue.</p>
         <div class="roster-list">
           ${
             pending.length
               ? pending.map((draft) => renderReviewCard(draft)).join("")
-              : `<div class="empty-state">No posts are waiting for review.</div>`
+              : `<div class="empty-state">No updates are waiting for review.</div>`
           }
         </div>
       </section>
       <section class="surface-panel">
         <div class="eyebrow">Recent decisions</div>
-        <h2>Reviewed posts</h2>
+        <h2>Reviewed updates</h2>
         <div class="roster-list">
           ${
             recentlyDecided.length
@@ -892,6 +892,7 @@ function renderReviewCard(draft) {
   const author = (workspaceState.publicState?.users || []).find((user) => user.pubkey === authorPubkey);
   const authorLabel = author?.displayName || author?.username || shortKey(authorPubkey);
   const revisionLabel = draft.revisionCount > 1 ? `${draft.revisionCount} saved versions` : "1 saved version";
+  const pageDraft = isPageDraft(draft);
   return `
     <article class="review-card">
       <div class="workspace-list__row">
@@ -900,13 +901,14 @@ function renderReviewCard(draft) {
           <span>${escapeHtml(draft.date)} • ${escapeHtml(revisionLabel)}</span>
         </div>
         <div class="tag-row">
+          <span class="tag">${escapeHtml(pageDraft ? pageDraftLabel(draft) : "Investigation")}</span>
           <span class="tag">Ready for review</span>
         </div>
       </div>
       <p class="review-card__summary">${escapeHtml(draft.summary || "No summary added yet.")}</p>
-      <span class="muted-text">By ${escapeHtml(authorLabel)}${draft.entity_refs?.length ? ` • ${escapeHtml(draft.entity_refs.map(resolveEntityDisplayValue).join(", "))}` : ""}</span>
+      <span class="muted-text">By ${escapeHtml(authorLabel)}${!pageDraft && draft.entity_refs?.length ? ` • ${escapeHtml(draft.entity_refs.map(resolveEntityDisplayValue).join(", "))}` : ""}</span>
       <div class="button-row button-row--tight">
-        <a class="text-link" href="./investigation.html?draft=${encodeURIComponent(draft.slug)}">Open preview</a>
+        <a class="text-link" href="${escapeAttribute(reviewedDraftHref(draft, "candidate"))}">Open preview</a>
         <button class="button-ghost" type="button" data-review-action="approve" data-draft-slug="${escapeAttribute(draft.slug)}">Approve for publish</button>
         <button class="button-ghost" type="button" data-review-action="revise" data-draft-slug="${escapeAttribute(draft.slug)}">Request revision</button>
         <button class="button-ghost" type="button" data-review-action="deny" data-draft-slug="${escapeAttribute(draft.slug)}">Deny</button>
@@ -917,16 +919,37 @@ function renderReviewCard(draft) {
 
 function renderReviewedCard(draft) {
   const reviewAction = draftReviewAction(draft);
+  const pageDraft = isPageDraft(draft);
   return `
     <article class="review-card review-card--history">
       <strong>${escapeHtml(draft.title)}</strong>
       <span>${escapeHtml(reviewStatusLabel(draft.status, reviewAction))} • ${escapeHtml(draft.date)}</span>
       <p class="review-card__summary">${escapeHtml(trimmed(draft.summary || draft.markdown || "", 180))}</p>
+      <div class="tag-row"><span class="tag">${escapeHtml(pageDraft ? pageDraftLabel(draft) : "Investigation")}</span></div>
       <div class="button-row button-row--tight">
         <a class="text-link" href="${escapeAttribute(reviewedDraftHref(draft))}">${escapeHtml(reviewedDraftAction(draft))}</a>
       </div>
     </article>
   `;
+}
+
+function isPageDraft(draft) {
+  return String(draft?.content_type || "").trim().toLowerCase() === "page" && cleanSlug(draft?.page_id || "");
+}
+
+function pageDraftLabel(draft) {
+  const pageId = cleanSlug(draft?.page_id || "");
+  if (pageId === "home") return "Home page";
+  if (pageId === "about") return "About page";
+  return "Page";
+}
+
+function pageDraftHref(draft, statusOverride = "") {
+  const pageId = cleanSlug(draft?.page_id || "");
+  const status = String(statusOverride || draft?.status || "").trim().toLowerCase();
+  const path = pageId === "about" ? "./about.html" : "./index.html";
+  if (["approved", "revision", "denied"].includes(status)) return path;
+  return `${path}?draft=${encodeURIComponent(draft.slug)}`;
 }
 
 function draftOwnerPubkey(draft) {
@@ -952,14 +975,20 @@ function reviewStatusLabel(status, reviewAction = "") {
   return "Draft";
 }
 
-function reviewedDraftHref(draft) {
-  const status = String(draft?.status || "").trim().toLowerCase();
+function reviewedDraftHref(draft, statusOverride = "") {
+  const status = String(statusOverride || draft?.status || "").trim().toLowerCase();
+  if (isPageDraft(draft)) return pageDraftHref(draft, status);
   return status === "revision"
     ? `./editor.html?slug=${encodeURIComponent(draft.slug)}`
     : `./investigation.html?draft=${encodeURIComponent(draft.slug)}`;
 }
 
 function reviewedDraftAction(draft) {
+  if (isPageDraft(draft)) {
+    return ["revision", "approved", "denied"].includes(String(draft?.status || "").trim().toLowerCase())
+      ? "Open page"
+      : "Open preview";
+  }
   return String(draft?.status || "").trim().toLowerCase() === "revision"
     ? "Open draft"
     : "Open preview";
@@ -1462,7 +1491,12 @@ async function handleReviewAction(button) {
     await publishTaggedJson({
       kind: SITE.nostr.kinds.draft,
       secretKeyHex: workspaceState.session.secretKeyHex,
-      tags: [["d", draft.slug], ["status", nextStatus], ["review", action]],
+      tags: [
+        ["d", draft.slug],
+        ["status", nextStatus],
+        ["review", action],
+        ...(isPageDraft(draft) ? [["content", "page"], ["page", cleanSlug(draft.page_id || "")]] : [])
+      ],
       content: {
         ...draft,
         author_pubkey: draftOwnerPubkey(draft),

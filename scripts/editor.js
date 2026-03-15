@@ -261,8 +261,11 @@ function bindEditorShell() {
 
 function hydrateDraftState() {
   const requestedSlug = cleanSlug(new URLSearchParams(window.location.search).get("slug") || "");
+  const relayDrafts = (editorState.publicState?.drafts || []).filter(
+    (draft) => String(draft?.content_type || "").trim().toLowerCase() !== "page"
+  );
   const relayDraft = requestedSlug
-    ? (editorState.publicState?.drafts || []).find((draft) => draft.slug === requestedSlug) || null
+    ? relayDrafts.find((draft) => draft.slug === requestedSlug) || null
     : null;
 
   editorState.currentSlug = relayDraft?.slug || requestedSlug || "";
@@ -347,9 +350,12 @@ function buildDraftPayload(status = "draft") {
 
 function takenSlugs() {
   const current = editorState.currentSlug ? [editorState.currentSlug] : [];
+  const relayDraftSlugs = (editorState.publicState?.drafts || [])
+    .filter((draft) => String(draft?.content_type || "").trim().toLowerCase() !== "page")
+    .map((draft) => draft.slug);
   return dedupe([
     ...editorState.staticSlugs,
-    ...(editorState.publicState?.drafts || []).map((draft) => draft.slug),
+    ...relayDraftSlugs,
     ...current
   ]);
 }

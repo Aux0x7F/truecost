@@ -8,12 +8,12 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - Keep improving relay compatibility and degraded-mode behavior so the site remains usable even when some relays are noisy or incomplete.
 - Tighten the Linux pinner setup path into a repeatable install, update, and recovery workflow for non-developer operators.
 - Expand end-to-end browser validation around submissions, moderation, publishing, and comment handling before each release.
-- Wire the new in-place static page editing workflow into bakedown / review so Home and About snapshots can move cleanly from browser edits into the repository layer.
+- Route approved Home / About page snapshots into the bakedown path so reviewed page edits are written into the repository snapshot layer instead of living only in relay state and browser storage.
 
 ## Publishing Workflow
 
 - Continue treating live relay state as the working layer and reviewed repository content as the stable snapshot layer.
-- Improve the bakedown path so approved cleartext content can be reviewed and merged cleanly without turning day-to-day publishing into a developer task.
+- Improve the bakedown path so approved cleartext content, including static page edits, can be reviewed and merged cleanly without turning day-to-day publishing into a developer task.
 - Refine the audit trail around admin actions, submission handling, and publishing events.
 
 ## Longer Term
