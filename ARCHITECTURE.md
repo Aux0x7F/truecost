@@ -61,18 +61,20 @@ Today, True Cost already has:
 - relay-backed live state for admin actions, drafts, entities, comments, and submissions
 - peer-pinner PR bakedown support
 - in-place page editing and editorial review mechanics
+- CRDT-backed live overlay plumbing for static page units
+- trusted static-page live updates applied after the static baseline loads
 
 Today, True Cost does not yet have:
 
-- generic CRDT-backed live collaborative units
-- live trusted overlay derived from CRDT document state
+- live CRDT-backed overlay on investigations and entity records
+- periodic PR cadence driven from the live collaborative unit layer instead of the older review queue
 
 ## Target implementation
 
 The next architectural shift should be:
 
-- use `nostr-crdt` for collaborative units that need shared state
-- let `nostr-site` provide the trust and publishing policy
+- expand `nostr-crdt` usage beyond static pages into investigations and entity records
+- let `nostr-site` keep the trust and publishing policy
 - let `truecost` define which units are collaborative and how they render
 
 That should simplify:

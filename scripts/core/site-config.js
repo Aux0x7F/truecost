@@ -56,7 +56,8 @@ export const SITE = Object.freeze({
       blobFulfillment: 34140,
       visitPulse: 34141,
       siteKey: 34142,
-      adminKeyRequest: 34143
+      adminKeyRequest: 34143,
+      collabDocument: 34144
     }
   }
 });
