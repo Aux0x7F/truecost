@@ -34,9 +34,10 @@ export const SITE = Object.freeze({
     maxAttachmentBytes: 90000,
     connectTimeoutMs: 3200,
     authorityConnectTimeoutMs: 9000,
+    publicRefreshMs: 15000,
     publicLoadLimit: 400,
     privateLoadLimit: 200,
-    filterChunkSize: 12,
+    filterChunkSize: 4,
     kinds: {
       snapshot: 34126,
       tip: 4,
