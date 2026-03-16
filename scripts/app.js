@@ -17,7 +17,8 @@ import {
   loadPublicState,
   loadSubmissionThread,
   loadUserSubmissions,
-  publishTaggedJson
+  publishTaggedJson,
+  warmPublicState
 } from "./core/nostr.js";
 import { clearSession, getOrCreateGuestSession, getStoredGuestSession, getStoredSession } from "./core/session.js";
 
@@ -67,6 +68,9 @@ const state = {
   guestSession: getStoredGuestSession(),
   viewer: null,
   publicState: null,
+  publicStateDigest: "",
+  publicStateRefreshTimer: 0,
+  publicStateRefreshInFlight: false,
   postsPromise: null,
   commentReply: null,
   notifications: [],
@@ -82,20 +86,44 @@ const state = {
   staticEditListenersBound: false,
   map: null,
   markers: null,
-  markerIndex: null
+  markerIndex: null,
+  highlightedCommentId: ""
 };
 
 document.addEventListener("DOMContentLoaded", () => {
   initExternalLinks();
   initNavigation();
+  bindGlobalSiteInteractions();
   initInvestigationCards();
   void initInvestigationDetail();
   void initMarkdownArticles();
   void initMapPage();
   void initAuthoringEntry();
   void initStaticPageEditing();
+  startBackgroundPrefetch();
   window.addEventListener("truecost:session-changed", handleSessionChanged);
+  document.addEventListener("visibilitychange", handlePublicVisibilityChange);
+  window.addEventListener("focus", handlePublicWindowFocus);
 });
+
+function bindGlobalSiteInteractions() {
+  document.addEventListener("click", async (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+
+    const userTrigger = target.closest("[data-open-user]");
+    if (userTrigger instanceof HTMLElement) {
+      event.preventDefault();
+      await openUserProfileModal(userTrigger.getAttribute("data-open-user") || "");
+      return;
+    }
+
+    if (target.closest("[data-close-user-modal]")) {
+      event.preventDefault();
+      closeUserProfileModal();
+    }
+  });
+}
 
 function initNavigation() {
   const toggle = document.querySelector("[data-nav-toggle]");
@@ -225,6 +253,7 @@ async function bootstrapRelayState() {
       state.guestSession = await getOrCreateGuestSession().catch(() => null);
     }
     state.publicState = await loadPublicState();
+    state.publicStateDigest = createPublicStateDigest(state.publicState);
     if (state.session) {
       state.viewer = deriveIdentity(state.session.secretKeyHex);
     }
@@ -234,6 +263,45 @@ async function bootstrapRelayState() {
   void publishVisitPulse();
   void hydrateNotifications();
   renderNavigation();
+  schedulePublicStateRefresh();
+}
+
+function handlePublicVisibilityChange() {
+  if (document.visibilityState === "visible") {
+    void syncPublicState(true);
+  } else if (state.publicStateRefreshTimer) {
+    window.clearTimeout(state.publicStateRefreshTimer);
+    state.publicStateRefreshTimer = 0;
+  }
+}
+
+function handlePublicWindowFocus() {
+  void syncPublicState(true);
+}
+
+function startBackgroundPrefetch() {
+  const task = () => {
+    const routes = [
+      "./index.html",
+      "./investigations.html",
+      "./map.html",
+      "./about.html",
+      "./guide.html",
+      "./submit.html",
+      "./admin.html?tab=login"
+    ];
+    for (const route of routes) {
+      fetch(route, { cache: "force-cache" }).catch(() => null);
+    }
+    fetch("./content/investigations/index.json", { cache: "force-cache" }).catch(() => null);
+    void loadPosts().catch(() => []);
+    void warmPublicState().catch(() => null);
+  };
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(task, { timeout: 1800 });
+    return;
+  }
+  window.setTimeout(task, 900);
 }
 
 function handleSessionChanged() {
@@ -936,6 +1004,8 @@ async function renderComments(postSlug, publicState) {
       }
     });
   }
+
+  focusRequestedComment(postSlug);
 }
 
 function renderComment(comment, publicState, options = {}, depth = 0) {
@@ -948,11 +1018,13 @@ function renderComment(comment, publicState, options = {}, depth = 0) {
   return `
     <article class="comment-card ${depth ? "comment-card--reply" : ""}" id="comment-${escapeAttribute(comment.id)}" data-comment-id="${escapeAttribute(comment.id)}">
       <div class="comment-card__shell">
-        ${renderAvatarBadge(author, authorLabel, "comment-card__avatar")}
+        <button class="comment-card__avatar-button" type="button" data-open-user="${escapeAttribute(comment.author)}" aria-label="Open ${escapeAttribute(authorLabel)}">
+          ${renderAvatarBadge(author, authorLabel, "comment-card__avatar")}
+        </button>
         <div class="comment-card__main">
           <div class="comment-card__meta">
             <div>
-              <strong>${escapeHtml(authorLabel)}</strong>
+              <button class="comment-card__author-button" type="button" data-open-user="${escapeAttribute(comment.author)}">${escapeHtml(authorLabel)}</button>
               <span>${formatDateTime(comment.created_at)}</span>
             </div>
           </div>
@@ -996,6 +1068,70 @@ function buildCommentTree(comments) {
   }
   sortCommentNodes(roots);
   return roots;
+}
+
+function focusRequestedComment(postSlug, attempt = 0) {
+  const requestedId = cleanSlug(new URLSearchParams(window.location.search).get("comment") || "") || String(new URLSearchParams(window.location.search).get("comment") || "").trim();
+  if (!requestedId || state.highlightedCommentId === requestedId) return;
+  const target = document.querySelector(`[data-comment-id="${CSS.escape(requestedId)}"]`);
+  if (!(target instanceof HTMLElement)) {
+    if (attempt < 20) {
+      window.setTimeout(() => focusRequestedComment(postSlug, attempt + 1), Math.min(600 + attempt * 120, 1800));
+    }
+    return;
+  }
+  const container = target.closest(".comment-card");
+  (container instanceof HTMLElement ? container : target).scrollIntoView({ behavior: "smooth", block: "center" });
+  target.classList.add("comment-card--focus");
+  state.highlightedCommentId = requestedId;
+  window.setTimeout(() => target.classList.remove("comment-card--focus"), 1800);
+}
+
+async function openUserProfileModal(pubkey) {
+  const cleanPubkey = String(pubkey || "").trim().toLowerCase();
+  if (!cleanPubkey) return;
+  const publicState = state.publicState || await getPublicState();
+  const user = (publicState?.users || []).find((item) => item.pubkey === cleanPubkey);
+  if (!user) return;
+  closeUserProfileModal();
+  const modal = document.createElement("div");
+  modal.className = "modal-backdrop";
+  modal.setAttribute("data-user-modal", "");
+  const displayName = user.displayName || user.username || "User";
+  modal.innerHTML = `
+    <section class="modal-card user-profile-modal">
+      <div class="workspace-list__row">
+        <div>
+          <div class="eyebrow">Profile</div>
+          <h2>${escapeHtml(displayName)}</h2>
+        </div>
+        <button class="button-ghost" type="button" data-close-user-modal>Close</button>
+      </div>
+      <div class="user-profile-modal__hero">
+        <div class="user-profile-modal__avatar-wrap">
+          ${renderAvatarBadge(user, displayName, "user-profile-modal__avatar")}
+        </div>
+        <div class="user-profile-modal__copy">
+          ${user.username ? `<strong>@${escapeHtml(user.username)}</strong>` : ""}
+          <p>${escapeHtml(user.bio || "No bio added yet.")}</p>
+        </div>
+      </div>
+      ${
+        Array.isArray(user.socialLinks) && user.socialLinks.length
+          ? `
+            <div class="user-profile-modal__links">
+              ${user.socialLinks.map((link) => `<a class="text-link" href="${escapeAttribute(link)}" target="_blank" rel="noreferrer">${escapeHtml(link)}</a>`).join("")}
+            </div>
+          `
+          : ""
+      }
+    </section>
+  `;
+  document.body.append(modal);
+}
+
+function closeUserProfileModal() {
+  document.querySelector("[data-user-modal]")?.remove();
 }
 
 function sortCommentNodes(nodes) {
@@ -1132,16 +1268,17 @@ function currentArchiveFilters(canEdit = false) {
   return {
     tag: String(params.get("tag") || "").trim(),
     entity: String(params.get("entity") || "").trim(),
-    status: canEdit ? String(params.get("status") || "").trim().toLowerCase() : ""
+    status: canEdit ? String(params.get("status") || "").trim().toLowerCase() : "",
+    author: String(params.get("author") || "").trim().toLowerCase()
   };
 }
 
 function activeArchiveFilters() {
-  return state.archiveFilters || { tag: "", entity: "", status: "" };
+  return state.archiveFilters || { tag: "", entity: "", status: "", author: "" };
 }
 
 function archiveHasActiveFilters(filters = activeArchiveFilters()) {
-  return Boolean(filters.tag || filters.entity || filters.status);
+  return Boolean(filters.tag || filters.entity || filters.status || filters.author);
 }
 
 function renderArchiveFiltersPanel(entries, publicState, filters, canEdit) {
@@ -1386,7 +1523,7 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
 
     const clear = target.closest("[data-clear-investigation-filters]");
     if (clear) {
-      state.archiveFilters = { tag: "", entity: "", status: "" };
+      state.archiveFilters = { tag: "", entity: "", status: "", author: "" };
       state.archiveFilterOpenField = "";
       state.archiveStatusMenuOpen = false;
       const tagInput = shell.querySelector('[data-filter-input="tag"]');
@@ -1518,6 +1655,8 @@ function syncArchiveFiltersToUrl(canEdit) {
   else url.searchParams.delete("entity");
   if (canEdit && filters.status) url.searchParams.set("status", filters.status);
   else url.searchParams.delete("status");
+  if (filters.author) url.searchParams.set("author", filters.author);
+  else url.searchParams.delete("author");
   history.replaceState({}, "", url);
 }
 
@@ -1612,8 +1751,17 @@ function filterArchiveEntries(entries, publicState, filters) {
   const tagQuery = String(filters?.tag || "").trim().toLowerCase();
   const entityQuery = String(filters?.entity || "").trim().toLowerCase();
   const statusQuery = String(filters?.status || "").trim().toLowerCase();
+  const authorQuery = String(filters?.author || "").trim().toLowerCase();
   return (Array.isArray(entries) ? entries : []).filter((entry) => {
     if (statusQuery && normalizeDraftStatus(entry.archiveStatus) !== statusQuery) return false;
+    if (authorQuery) {
+      const author = String(entry.author || "").trim().toLowerCase();
+      const authorUser = (publicState?.users || []).find((user) => user.pubkey === author) || null;
+      const authorLabels = [author, authorUser?.username, authorUser?.displayName]
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter(Boolean);
+      if (!authorLabels.some((value) => value.includes(authorQuery))) return false;
+    }
     if (tagQuery) {
       const matchesTag = (Array.isArray(entry.tags) ? entry.tags : [])
         .map((tag) => String(tag || "").trim().toLowerCase())
@@ -2498,6 +2646,7 @@ async function getPublicState() {
       state.guestSession = await getOrCreateGuestSession().catch(() => null);
     }
     state.publicState = await loadPublicState();
+    state.publicStateDigest = createPublicStateDigest(state.publicState);
     if (state.session && !state.viewer) {
       state.viewer = deriveIdentity(state.session.secretKeyHex);
     }
@@ -2515,6 +2664,120 @@ async function getPublicState() {
     };
     return state.publicState;
   }
+}
+
+function publicStateRefreshDelayMs() {
+  const configured = Number(SITE.nostr.publicRefreshMs || 15000);
+  return Number.isFinite(configured) && configured > 0 ? configured : 15000;
+}
+
+function shouldRefreshPublicState() {
+  if (document.visibilityState === "hidden") return false;
+  if (document.querySelector("[data-workspace-page]")) return false;
+  return Boolean(
+    state.session ||
+      document.querySelector("[data-home-investigations], [data-investigation-list], [data-archive-summary], [data-investigation-article], [data-map-list], [data-map-canvas]")
+  );
+}
+
+function schedulePublicStateRefresh(delay = publicStateRefreshDelayMs()) {
+  if (state.publicStateRefreshTimer) {
+    window.clearTimeout(state.publicStateRefreshTimer);
+    state.publicStateRefreshTimer = 0;
+  }
+  if (!shouldRefreshPublicState()) return;
+  state.publicStateRefreshTimer = window.setTimeout(() => {
+    void syncPublicState(true);
+  }, delay);
+}
+
+async function syncPublicState(force = true) {
+  if (state.publicStateRefreshInFlight) return;
+  if (!shouldRefreshPublicState()) return;
+  state.publicStateRefreshInFlight = true;
+  try {
+    await ensureEventToolsLoaded();
+    if (!state.guestSession) {
+      state.guestSession = await getOrCreateGuestSession().catch(() => null);
+    }
+    const nextState = await loadPublicState(force);
+    const nextDigest = createPublicStateDigest(nextState);
+    if (nextDigest !== state.publicStateDigest) {
+      state.publicState = nextState;
+      state.publicStateDigest = nextDigest;
+      await applyPublicStateRefresh();
+    }
+  } catch {
+    return;
+  } finally {
+    state.publicStateRefreshInFlight = false;
+    schedulePublicStateRefresh();
+  }
+}
+
+async function applyPublicStateRefresh() {
+  renderNavigation();
+  if (state.session) {
+    void hydrateNotifications(true);
+  }
+
+  if (document.querySelector("[data-home-investigations], [data-investigation-list], [data-archive-summary]")) {
+    if (!archiveInteractionActive()) {
+      await initInvestigationCards();
+    }
+  }
+
+  if (document.querySelector("[data-map-list]") && document.querySelector("[data-map-canvas]")) {
+    if (!mapInteractionActive()) {
+      await initMapPage();
+    }
+  }
+
+  if (document.querySelector("[data-investigation-article]")) {
+    await refreshVisibleCommentThread();
+  }
+
+  window.dispatchEvent(new CustomEvent("truecost:public-state-updated", {
+    detail: {
+      publicState: state.publicState
+    }
+  }));
+}
+
+function archiveInteractionActive() {
+  const active = document.activeElement;
+  return active instanceof HTMLElement && Boolean(active.closest("[data-investigation-filters]"));
+}
+
+function mapInteractionActive() {
+  const active = document.activeElement;
+  return active instanceof HTMLElement && Boolean(active.closest("[data-map-shell], [data-map-list]"));
+}
+
+async function refreshVisibleCommentThread() {
+  const panel = document.querySelector("[data-comment-panel]");
+  if (!(panel instanceof HTMLElement) || panel.hidden) return;
+  const active = document.activeElement;
+  if (active instanceof HTMLElement && active.closest("[data-comment-panel]")) return;
+  const params = new URLSearchParams(window.location.search);
+  const draftSlug = cleanSlug(params.get("draft") || "");
+  if (draftSlug) return;
+  const slug = cleanSlug(params.get("slug") || "");
+  if (!slug || !state.publicState) return;
+  await renderComments(slug, state.publicState);
+}
+
+function createPublicStateDigest(publicState) {
+  const digest = {
+    admins: [...(publicState?.admins || [])].sort(),
+    users: (publicState?.users || []).map((user) => `${user.pubkey}:${user.isAdmin ? 1 : 0}:${user.commentCount || 0}:${user.submissionCount || 0}`),
+    entities: (publicState?.approvedEntities || []).map((entity) => `${entity.slug}:${entity.status || ""}:${entity.updated_at || entity.created_at || ""}`),
+    drafts: (publicState?.drafts || []).map((draft) => `${draft.id || draft.slug}:${draft.status || ""}:${draft.created_at || ""}`),
+    comments: (publicState?.allComments || []).map((comment) => `${comment.id}:${comment.visibility || "visible"}:${comment.created_at || ""}`),
+    keyRequests: (publicState?.pendingAdminKeyRequests || []).map((request) => `${request.id}:${request.requester_pubkey}:${request.site_pubkey}`),
+    activeSite: publicState?.siteInfo?.activePubkey || ""
+  };
+  return JSON.stringify(digest);
 }
 
 async function getViewer() {
