@@ -5,7 +5,10 @@ import {
   deriveIdentity,
   ensureEventToolsLoaded,
   loadPublicState,
-  publishTaggedJson
+  publicStateNeedsRepair,
+  publishTaggedJson,
+  requestPublicStateRepair,
+  startPublicStateRepairPeer
 } from "./core/nostr.js";
 import { getStoredSession } from "./core/session.js";
 
@@ -13,6 +16,9 @@ const editorState = {
   session: getStoredSession(),
   viewer: null,
   publicState: null,
+  publicStateRepairPeerStarted: false,
+  publicStateRepairInFlight: false,
+  publicStateRepairRequestedAt: 0,
   staticSlugs: [],
   currentSlug: "",
   relayVersions: [],
@@ -45,10 +51,44 @@ async function initEditorPage(force = false) {
   }
   renderEditorLoading("Looking up editor...");
   await ensureEventToolsLoaded();
+  await ensureEditorRepairPeer();
   editorState.viewer = deriveIdentity(editorState.session.secretKeyHex);
   editorState.publicState = await loadPublicState(force);
+  void maybeRequestEditorStateRepair(editorState.publicState, "editor");
   editorState.staticSlugs = await loadStaticSlugs().catch(() => []);
   renderEditorShell();
+}
+
+async function ensureEditorRepairPeer() {
+  if (editorState.publicStateRepairPeerStarted) return;
+  try {
+    await startPublicStateRepairPeer();
+    editorState.publicStateRepairPeerStarted = true;
+  } catch {
+    return;
+  }
+}
+
+async function maybeRequestEditorStateRepair(publicState, reason = "") {
+  if (!editorState.session || !publicStateNeedsRepair(publicState) || editorState.publicStateRepairInFlight) return;
+  const now = Date.now();
+  if (now - editorState.publicStateRepairRequestedAt < 45000) return;
+  editorState.publicStateRepairInFlight = true;
+  editorState.publicStateRepairRequestedAt = now;
+  try {
+    await requestPublicStateRepair(editorState.session.secretKeyHex, {
+      reason,
+      page: "editor",
+      knownEventCount: Array.isArray(publicState?.rawEvents) ? publicState.rawEvents.length : 0
+    });
+    window.setTimeout(() => {
+      void initEditorPage(true);
+    }, 2800);
+  } catch {
+    return;
+  } finally {
+    editorState.publicStateRepairInFlight = false;
+  }
 }
 
 function renderEditorLoading(message) {

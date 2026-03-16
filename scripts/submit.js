@@ -8,9 +8,12 @@ import {
   loadPublicState,
   loadSubmissionThread,
   loadUserSubmissions,
+  publicStateNeedsRepair,
   publishTaggedJson,
   publishSubmission,
   publishSubmissionChat,
+  requestPublicStateRepair,
+  startPublicStateRepairPeer,
   resolveSitePubkey
 } from "./core/nostr.js";
 import { getStoredSession } from "./core/session.js";
@@ -19,6 +22,9 @@ const submitState = {
   session: getStoredSession(),
   viewer: null,
   publicState: null,
+  publicStateRepairPeerStarted: false,
+  publicStateRepairInFlight: false,
+  publicStateRepairRequestedAt: 0,
   submissions: [],
   formModal: null,
   chatModal: null
@@ -104,11 +110,45 @@ async function refreshSubmitPage(force = false) {
   }
   renderSubmitLoading("Looking up your submissions...");
   await ensureEventToolsLoaded();
+  await ensureSubmitRepairPeer();
   submitState.viewer = deriveIdentity(submitState.session.secretKeyHex);
   submitState.publicState = await loadPublicState(force);
+  void maybeRequestSubmitStateRepair(submitState.publicState, "submit-page");
   submitState.submissions = await loadUserSubmissions(submitState.session.secretKeyHex).catch(() => []);
   await maybeOpenChatFromUrl();
   renderSubmitPage();
+}
+
+async function ensureSubmitRepairPeer() {
+  if (submitState.publicStateRepairPeerStarted) return;
+  try {
+    await startPublicStateRepairPeer();
+    submitState.publicStateRepairPeerStarted = true;
+  } catch {
+    return;
+  }
+}
+
+async function maybeRequestSubmitStateRepair(publicState, reason = "") {
+  if (!submitState.session || !publicStateNeedsRepair(publicState) || submitState.publicStateRepairInFlight) return;
+  const now = Date.now();
+  if (now - submitState.publicStateRepairRequestedAt < 45000) return;
+  submitState.publicStateRepairInFlight = true;
+  submitState.publicStateRepairRequestedAt = now;
+  try {
+    await requestPublicStateRepair(submitState.session.secretKeyHex, {
+      reason,
+      page: "submit",
+      knownEventCount: Array.isArray(publicState?.rawEvents) ? publicState.rawEvents.length : 0
+    });
+    window.setTimeout(() => {
+      void refreshSubmitPage(true);
+    }, 2800);
+  } catch {
+    return;
+  } finally {
+    submitState.publicStateRepairInFlight = false;
+  }
 }
 
 function renderSubmitLoading(message) {

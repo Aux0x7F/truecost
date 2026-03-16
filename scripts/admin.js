@@ -10,6 +10,7 @@ import {
   loadAdminKeyShares,
   loadInboxSubmissions,
   loadPublicState,
+  publicStateNeedsRepair,
   lookupUsers,
   loadSubmissionThread,
   normalizeUsername,
@@ -18,7 +19,9 @@ import {
   publishSiteKeyEvent,
   publishSubmissionChat,
   publishTaggedJson,
+  requestPublicStateRepair,
   resolveSitePubkey,
+  startPublicStateRepairPeer,
   shortKey,
   uploadPublicBlob
 } from "./core/nostr.js";
@@ -57,6 +60,9 @@ const workspaceState = {
   keyRequestTimer: 0,
   backgroundSyncTimer: 0,
   backgroundSyncInFlight: false,
+  publicStateRepairPeerStarted: false,
+  publicStateRepairInFlight: false,
+  publicStateRepairRequestedAt: 0,
   inboxLoading: false,
   respondedKeyRequests: new Set(),
   keyRequestCache: null
@@ -316,12 +322,14 @@ async function refreshWorkspace(force = false) {
 
   renderWorkspaceLoading("Looking up workspace...");
   await ensureEventToolsLoaded();
+  await ensureWorkspaceRepairPeer();
   await hydrateWorkspaceState(force);
   workspaceState.staticSlugs = await loadStaticSlugs().catch(() => []);
   workspaceState.activeTab = chooseInitialTab(workspaceState.activeTab);
   renderWorkspace();
   await maybeResolveUserDeepLink();
   workspaceState.keyRequestState = "";
+  void maybeRequestWorkspaceStateRepair(workspaceState.publicState, "workspace-load");
   await maybeAutoRespondToKeyRequests().catch(() => {});
   await maybeEnsureCurrentKeyRequest().catch(() => {
     workspaceState.keyRequestState = "error";
@@ -439,7 +447,9 @@ async function syncWorkspaceState(force = true) {
   let didRefresh = false;
   try {
     await ensureEventToolsLoaded();
+    await ensureWorkspaceRepairPeer();
     await hydrateWorkspaceState(force);
+    void maybeRequestWorkspaceStateRepair(workspaceState.publicState, "workspace-sync");
     workspaceState.keyRequestState = "";
     await maybeAutoRespondToKeyRequests().catch(() => {});
     await maybeEnsureCurrentKeyRequest().catch(() => {
@@ -467,6 +477,38 @@ async function syncWorkspaceState(force = true) {
   } finally {
     workspaceState.backgroundSyncInFlight = false;
     if (!didRefresh) scheduleWorkspaceSync();
+  }
+}
+
+async function ensureWorkspaceRepairPeer() {
+  if (workspaceState.publicStateRepairPeerStarted) return;
+  try {
+    await startPublicStateRepairPeer();
+    workspaceState.publicStateRepairPeerStarted = true;
+  } catch {
+    return;
+  }
+}
+
+async function maybeRequestWorkspaceStateRepair(publicState, reason = "") {
+  if (!workspaceState.session || !publicStateNeedsRepair(publicState) || workspaceState.publicStateRepairInFlight) return;
+  const now = Date.now();
+  if (now - workspaceState.publicStateRepairRequestedAt < 45000) return;
+  workspaceState.publicStateRepairInFlight = true;
+  workspaceState.publicStateRepairRequestedAt = now;
+  try {
+    await requestPublicStateRepair(workspaceState.session.secretKeyHex, {
+      reason,
+      page: "workspace",
+      knownEventCount: Array.isArray(publicState?.rawEvents) ? publicState.rawEvents.length : 0
+    });
+    window.setTimeout(() => {
+      void syncWorkspaceState(true);
+    }, 2800);
+  } catch {
+    return;
+  } finally {
+    workspaceState.publicStateRepairInFlight = false;
   }
 }
 

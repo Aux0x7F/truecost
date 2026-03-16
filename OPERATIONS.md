@@ -11,6 +11,7 @@ It is intentionally separate from `ARCHITECTURE.md`:
 
 - visitors receive static content first
 - the browser may then apply trusted live updates
+- when relay reads are incomplete, browsers may request repair and other peers may rebroadcast cached original public events
 - GitHub Pages remains the reviewed baseline
 
 ## Admin experience
