@@ -1491,16 +1491,36 @@ function buildCommentTree(comments, publicState, viewerPubkey = "") {
   const roots = [];
   for (const node of nodes.values()) {
     const parentId = String(node.parent_id || "").trim();
-    const parent = parentId ? nodes.get(parentId) : null;
-    if (parent && parent.post_slug === node.post_slug) {
+    if (!parentId) {
+      roots.push(node);
+      continue;
+    }
+    const parent = nodes.get(parentId);
+    if (isCommentThreadAnchor(parent, node)) {
       if (!node.root_id) node.root_id = parent.root_id || parent.id;
       parent.replies.push(node);
-    } else {
-      roots.push(node);
+      continue;
+    }
+    const rootId = String(node.root_id || "").trim();
+    const threadRoot = rootId ? nodes.get(rootId) : null;
+    if (isCommentThreadAnchor(threadRoot, node)) {
+      node.root_id = threadRoot.id;
+      threadRoot.replies.push(node);
+      continue;
     }
   }
-  sortCommentNodes(roots, publicState, viewerPubkey);
+  sortRootCommentNodes(roots, publicState, viewerPubkey);
   return roots;
+}
+
+function isCommentThreadAnchor(anchor, node) {
+  return Boolean(
+    anchor &&
+    node &&
+    anchor.id !== node.id &&
+    String(anchor.post_slug || "").trim() &&
+    String(anchor.post_slug || "").trim() === String(node.post_slug || "").trim()
+  );
 }
 
 function focusRequestedComment(postSlug, attempt = 0) {
@@ -1568,7 +1588,7 @@ function closeUserProfileModal() {
   document.querySelector("[data-user-modal]")?.remove();
 }
 
-function sortCommentNodes(nodes, publicState, viewerPubkey = "") {
+function sortRootCommentNodes(nodes, publicState, viewerPubkey = "") {
   nodes.sort((left, right) => {
     const leftOwn = Boolean(viewerPubkey) && left?.author === viewerPubkey;
     const rightOwn = Boolean(viewerPubkey) && right?.author === viewerPubkey;
@@ -1583,7 +1603,19 @@ function sortCommentNodes(nodes, publicState, viewerPubkey = "") {
     return String(left?.id || "").localeCompare(String(right?.id || ""));
   });
   for (const node of nodes) {
-    if (Array.isArray(node.replies) && node.replies.length) sortCommentNodes(node.replies, publicState, viewerPubkey);
+    if (Array.isArray(node.replies) && node.replies.length) sortReplyCommentNodes(node.replies);
+  }
+}
+
+function sortReplyCommentNodes(nodes) {
+  nodes.sort((left, right) => {
+    const leftTime = Number(left?.created_at || 0);
+    const rightTime = Number(right?.created_at || 0);
+    if (leftTime !== rightTime) return leftTime - rightTime;
+    return String(left?.id || "").localeCompare(String(right?.id || ""));
+  });
+  for (const node of nodes) {
+    if (Array.isArray(node.replies) && node.replies.length) sortReplyCommentNodes(node.replies);
   }
 }
 

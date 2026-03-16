@@ -56,6 +56,8 @@ const workspaceState = {
   ownCommentMenuId: "",
   submissionFilterHighlight: -1,
   submissionFilterOpen: false,
+  entityLocationFilterHighlight: -1,
+  entityLocationFilterOpen: false,
   userFilters: {
     karma: ""
   },
@@ -232,9 +234,21 @@ function bindWorkspace() {
       const field = clearEntityFilter.getAttribute("data-clear-entity-filter") || "";
       if (field && Object.prototype.hasOwnProperty.call(workspaceState.entityFilters, field)) {
         workspaceState.entityFilters[field] = "";
+        if (field === "location") {
+          workspaceState.entityLocationFilterHighlight = -1;
+          workspaceState.entityLocationFilterOpen = false;
+        }
         renderWorkspace({ soft: true });
         focusWorkspaceSearchField(`[data-entity-filter-${field}]`);
       }
+      return;
+    }
+
+    const entityLocationSuggestion = target.closest("[data-entity-location-suggestion]");
+    if (entityLocationSuggestion) {
+      applyEntityLocationSuggestion(entityLocationSuggestion.getAttribute("data-entity-location-suggestion") || "");
+      renderWorkspace({ soft: true });
+      focusWorkspaceSearchField("[data-entity-filter-location]");
       return;
     }
 
@@ -334,17 +348,35 @@ function bindWorkspace() {
         workspaceState.submissionFilterOpen = nextOpen;
         renderWorkspace({ soft: true });
       }
+      return;
+    }
+    if (target.matches("[data-entity-filter-location]")) {
+      const nextOpen = Boolean(String(target.value || "").trim() && entityLocationFilterSuggestions().length);
+      if (workspaceState.entityLocationFilterOpen !== nextOpen) {
+        workspaceState.entityLocationFilterOpen = nextOpen;
+        workspaceState.entityLocationFilterHighlight = nextOpen ? 0 : -1;
+        renderWorkspace({ soft: true });
+      }
     }
   });
 
   document.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
+    let didRefresh = false;
     const activeSearch = document.querySelector("[data-submission-filter-input]")?.closest(".workspace-search");
-    if (activeSearch instanceof HTMLElement && activeSearch.contains(target)) return;
-    if (workspaceState.submissionFilterOpen) {
+    if (!(activeSearch instanceof HTMLElement && activeSearch.contains(target)) && workspaceState.submissionFilterOpen) {
       workspaceState.submissionFilterOpen = false;
       workspaceState.submissionFilterHighlight = -1;
+      didRefresh = true;
+    }
+    const entityLocationSearch = document.querySelector("[data-entity-filter-location]")?.closest(".workspace-search");
+    if (!(entityLocationSearch instanceof HTMLElement && entityLocationSearch.contains(target)) && workspaceState.entityLocationFilterOpen) {
+      workspaceState.entityLocationFilterOpen = false;
+      workspaceState.entityLocationFilterHighlight = -1;
+      didRefresh = true;
+    }
+    if (didRefresh) {
       renderWorkspace({ soft: true });
     }
   });
@@ -423,6 +455,9 @@ function bindWorkspace() {
     }
     if (target.matches("[data-entity-filter-location]")) {
       workspaceState.entityFilters.location = String(target.value || "");
+      const suggestions = entityLocationFilterSuggestions();
+      workspaceState.entityLocationFilterOpen = Boolean(String(target.value || "").trim() && suggestions.length);
+      workspaceState.entityLocationFilterHighlight = suggestions.length ? 0 : -1;
       renderWorkspace({ soft: true });
       return;
     }
@@ -450,6 +485,40 @@ function bindWorkspace() {
       event.preventDefault();
       await handleDirectUserLookup();
       return;
+    }
+    if (target.matches("[data-entity-filter-location]")) {
+      const suggestions = entityLocationFilterSuggestions();
+      if (event.key === "ArrowDown" && suggestions.length) {
+        event.preventDefault();
+        workspaceState.entityLocationFilterOpen = true;
+        workspaceState.entityLocationFilterHighlight = workspaceState.entityLocationFilterHighlight >= 0
+          ? (workspaceState.entityLocationFilterHighlight + 1) % suggestions.length
+          : 0;
+        renderWorkspace({ soft: true });
+        return;
+      }
+      if (event.key === "ArrowUp" && suggestions.length) {
+        event.preventDefault();
+        workspaceState.entityLocationFilterOpen = true;
+        workspaceState.entityLocationFilterHighlight = workspaceState.entityLocationFilterHighlight > 0
+          ? workspaceState.entityLocationFilterHighlight - 1
+          : suggestions.length - 1;
+        renderWorkspace({ soft: true });
+        return;
+      }
+      if (event.key === "Escape") {
+        workspaceState.entityLocationFilterOpen = false;
+        workspaceState.entityLocationFilterHighlight = -1;
+        renderWorkspace({ soft: true });
+        return;
+      }
+      if (event.key === "Enter" && suggestions.length) {
+        event.preventDefault();
+        const selected = suggestions[Math.max(0, workspaceState.entityLocationFilterHighlight)];
+        applyEntityLocationSuggestion(selected);
+        renderWorkspace({ soft: true });
+        return;
+      }
     }
     if (!target.matches("[data-submission-filter-input]")) return;
     const suggestions = submissionFilterSuggestions();
@@ -930,37 +999,35 @@ function renderUsersPane() {
       </section>
       <aside class="workspace-rail-stack">
         <section class="surface-panel workspace-rail-panel">
+          <label class="workspace-search">
+            <span class="sr-only">Username</span>
+            <input class="workspace-search__input" data-quick-user-input type="text" maxlength="80" placeholder="username" value="${escapeAttribute(workspaceState.userLookupQuery || "")}" autocomplete="off">
+            ${
+              workspaceState.userLookupQuery && !workspaceState.userLookupLoading
+                ? `<button class="workspace-search__clear" type="button" data-clear-user-lookup aria-label="Clear lookup">×</button>`
+                : ""
+            }
+            ${
+              workspaceState.userLookupLoading
+                ? `<span class="workspace-search__spinner" aria-hidden="true"><span class="loading-spinner"></span></span>`
+                : ""
+            }
+          </label>
           <label class="workspace-select">
             <span class="sr-only">Filter users by karma</span>
             <select data-user-filter-karma>
               ${renderKarmaSelectOptions(workspaceState.userFilters.karma)}
             </select>
           </label>
+          ${
+              workspaceState.userDirectStatus
+                ? `<div class="status-box">${escapeHtml(workspaceState.userDirectStatus)}</div>`
+                : ""
+          }
+          ${renderLookupCandidate()}
         </section>
         <section class="surface-panel workspace-rail-panel">
           ${renderUserStatsCard()}
-        </section>
-        <section class="surface-panel workspace-rail-panel">
-        <label class="workspace-search">
-          <span class="sr-only">Username</span>
-          <input class="workspace-search__input" data-quick-user-input type="text" maxlength="80" placeholder="username" value="${escapeAttribute(workspaceState.userLookupQuery || "")}" autocomplete="off">
-          ${
-            workspaceState.userLookupQuery && !workspaceState.userLookupLoading
-              ? `<button class="workspace-search__clear" type="button" data-clear-user-lookup aria-label="Clear lookup">×</button>`
-              : ""
-          }
-          ${
-            workspaceState.userLookupLoading
-              ? `<span class="workspace-search__spinner" aria-hidden="true"><span class="loading-spinner"></span></span>`
-              : ""
-          }
-        </label>
-        ${
-            workspaceState.userDirectStatus
-              ? `<div class="status-box">${escapeHtml(workspaceState.userDirectStatus)}</div>`
-              : ""
-        }
-        ${renderLookupCandidate()}
         </section>
       </aside>
     </div>
@@ -3577,6 +3644,7 @@ function findLocalUserCandidate(value) {
 
 function visibleWorkspaceUsers() {
   const karmaBucket = String(workspaceState.userFilters.karma || "").trim().toLowerCase();
+  const query = String(workspaceState.userLookupQuery || "").trim().toLowerCase();
   return (workspaceState.publicState?.users || []).filter((user) => {
     const visible =
       user.isAdmin ||
@@ -3588,7 +3656,17 @@ function visibleWorkspaceUsers() {
       (Array.isArray(user.socialLinks) && user.socialLinks.length) ||
       user.avatarUrl ||
       user.avatarBlob;
-    return visible && karmaBucketMatches(resolveWorkspaceUserKarma(user.pubkey), karmaBucket);
+    if (!visible || !karmaBucketMatches(resolveWorkspaceUserKarma(user.pubkey), karmaBucket)) return false;
+    if (!query) return true;
+    const haystacks = [
+      user.displayName,
+      user.username,
+      user.bio,
+      user.pubkey
+    ]
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean);
+    return haystacks.some((value) => value.includes(query));
   });
 }
 
@@ -3686,12 +3764,13 @@ function renderEntityManagementRail() {
     </label>
     <label class="workspace-search">
       <span class="sr-only">Filter by state or country</span>
-      <input class="workspace-search__input" data-entity-filter-location type="text" maxlength="120" placeholder="State or country" value="${escapeAttribute(workspaceState.entityFilters.location || "")}" autocomplete="off">
+      <input class="workspace-search__input" data-entity-filter-location type="text" maxlength="120" placeholder="State or county" value="${escapeAttribute(workspaceState.entityFilters.location || "")}" autocomplete="off">
       ${
         workspaceState.entityFilters.location
           ? `<button class="workspace-search__clear" type="button" data-clear-entity-filter="location" aria-label="Clear location filter">×</button>`
           : ""
       }
+      ${renderEntityLocationFilterSuggestions()}
     </label>
     <label class="workspace-search">
       <span class="sr-only">Filter by submitting user</span>
@@ -3703,6 +3782,59 @@ function renderEntityManagementRail() {
       }
     </label>
   `;
+}
+
+function renderEntityLocationFilterSuggestions() {
+  const suggestions = entityLocationFilterSuggestions();
+  if (!suggestions.length || !workspaceState.entityLocationFilterOpen) return "";
+  return `
+    <div class="picker-results picker-results--dropdown workspace-search__results" data-open="yes">
+      ${suggestions
+        .map(
+          (value, index) => `
+            <button
+              class="picker-chip${workspaceState.entityLocationFilterHighlight === index ? " is-highlighted" : ""}"
+              type="button"
+              data-entity-location-suggestion="${escapeAttribute(value)}"
+              data-entity-location-index="${index}"
+              aria-selected="${workspaceState.entityLocationFilterHighlight === index ? "true" : "false"}"
+            >
+              <strong>${escapeHtml(value)}</strong>
+            </button>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function entityLocationFilterSuggestions() {
+  const query = String(workspaceState.entityFilters.location || "").trim().toLowerCase();
+  if (!query) return [];
+  return buildEntityLocationFilterValues()
+    .filter((value) => value.toLowerCase().includes(query))
+    .slice(0, 8);
+}
+
+function buildEntityLocationFilterValues() {
+  return [...new Set(
+    (workspaceState.publicState?.entities || []).flatMap((entity) => {
+      const raw = String(entity?.location || "").trim();
+      if (!raw) return [];
+      const parts = raw.split(",").map((value) => value.trim()).filter(Boolean);
+      if (!parts.length) return [];
+      if (parts.length === 1) return parts;
+      return parts.filter((value, index) => index > 0 || /county/i.test(value));
+    })
+  )]
+    .filter(Boolean)
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function applyEntityLocationSuggestion(value) {
+  workspaceState.entityFilters.location = String(value || "").trim();
+  workspaceState.entityLocationFilterOpen = false;
+  workspaceState.entityLocationFilterHighlight = -1;
 }
 
 function hydrateLookupCandidate(user) {
