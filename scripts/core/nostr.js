@@ -4,6 +4,8 @@ import {
   createDeterministicSessionApi,
   createNostrCmsClient,
   createStaticPageOverlayApi,
+  sanitizeTrustedHtml,
+  sanitizeUrl
 } from "../../vendor/nostr-site-support.esm.js";
 
 const client = createNostrCmsClient(SITE);
@@ -51,6 +53,7 @@ export const {
 } = blobs;
 
 export { createDeterministicSessionApi };
+export { sanitizeTrustedHtml, sanitizeUrl };
 export const {
   connectPage: connectStaticPageOverlay,
   createRoomId: createStaticPageRoomId,

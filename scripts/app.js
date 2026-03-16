@@ -20,6 +20,8 @@ import {
   publicStateNeedsRepair,
   publishTaggedJson,
   requestPublicStateRepair,
+  sanitizeTrustedHtml,
+  sanitizeUrl,
   startPublicStateRepairPeer,
   stopPublicStateRepairPeer,
   warmPublicState
@@ -370,8 +372,8 @@ function renderNavigation() {
   const profileMarkup = isLoggedIn
     ? `
       <div class="profile-menu ${NAV_KEYS.workspace.includes(page) ? "is-current" : ""} ${state.profileMenuOpen ? "is-open" : ""}" data-profile-menu>
-        <button class="profile-menu__toggle ${currentUser?.avatarUrl ? "has-avatar" : ""}" type="button" data-profile-toggle aria-label="${isAdmin ? "Admin" : "Profile"}">
-          <span class="profile-menu__badge ${currentUser?.avatarUrl ? "has-avatar" : ""}">${profileBadgeMarkup(currentUser)}</span>
+        <button class="profile-menu__toggle ${safeAvatarUrl(currentUser?.avatarUrl || "") ? "has-avatar" : ""}" type="button" data-profile-toggle aria-label="${isAdmin ? "Admin" : "Profile"}">
+          <span class="profile-menu__badge ${safeAvatarUrl(currentUser?.avatarUrl || "") ? "has-avatar" : ""}">${profileBadgeMarkup(currentUser)}</span>
           ${unreadCount ? `<span class="profile-menu__notice">${Math.min(unreadCount, 9)}${unreadCount > 9 ? "+" : ""}</span>` : ""}
         </button>
         <div class="profile-menu__panel">
@@ -456,13 +458,14 @@ function renderNavigation() {
 }
 
 function profileBadgeMarkup(user) {
-  if (user?.avatarUrl) {
+  const avatarUrl = safeAvatarUrl(user?.avatarUrl || "");
+  if (avatarUrl) {
     const label = user.displayName || user.username || "Profile";
     const blob = user.avatarBlob;
     const blobAttrs = blob?.sha256
-      ? ` data-avatar-sha="${escapeAttribute(blob.sha256)}" data-avatar-url="${escapeAttribute(blob.url || user.avatarUrl)}" data-avatar-type="${escapeAttribute(blob.type || "")}" data-avatar-name="${escapeAttribute(blob.name || "")}"`
+      ? ` data-avatar-sha="${escapeAttribute(blob.sha256)}" data-avatar-url="${escapeAttribute(blob.url || avatarUrl)}" data-avatar-type="${escapeAttribute(blob.type || "")}" data-avatar-name="${escapeAttribute(blob.name || "")}"`
       : "";
-    return `<img src="${escapeAttribute(user.avatarUrl)}" alt="${escapeAttribute(label)}"${blobAttrs}>`;
+    return `<img src="${escapeAttribute(avatarUrl)}" alt="${escapeAttribute(label)}"${blobAttrs}>`;
   }
   if (!state.session?.username) return "Create/Login";
   return escapeHtml(profileInitials(user?.displayName || state.session.username));
@@ -822,11 +825,19 @@ async function renderComments(postSlug, publicState) {
   if (!panel) return;
 
   const comments = publicState.commentsByPost.get(postSlug) || [];
-  const threadedComments = buildCommentTree(comments);
   const isLoggedIn = Boolean(state.session);
   const isAdmin = Boolean(state.viewer && trustedAdminPubkeys(publicState).includes(state.viewer.pubkey));
-  const currentUser = isLoggedIn && state.viewer
-    ? publicState.users.find((user) => user.pubkey === state.viewer.pubkey) || null
+  let viewerPubkey = state.viewer?.pubkey || "";
+  if (!viewerPubkey && state.session?.secretKeyHex) {
+    try {
+      viewerPubkey = deriveIdentity(state.session.secretKeyHex).pubkey;
+    } catch {
+      viewerPubkey = "";
+    }
+  }
+  const threadedComments = buildCommentTree(comments, publicState, viewerPubkey);
+  const currentUser = isLoggedIn && viewerPubkey
+    ? publicState.users.find((user) => user.pubkey === viewerPubkey) || null
     : null;
   const replyTargetId = state.commentReply?.postSlug === postSlug
     ? state.commentReply.commentId
@@ -851,7 +862,7 @@ async function renderComments(postSlug, publicState) {
             <form class="comment-composer__form" data-comment-form="root">
               <div class="comment-composer__head">
                 <strong>Add a comment</strong>
-                <span>Keep it specific and tied to the post.</span>
+                <span>Markdown works here. Keep it specific and tied to the post.</span>
               </div>
               <label class="sr-only" for="commentComposerInput">Comment</label>
               <textarea id="commentComposerInput" class="comment-composer__input" name="markdown" placeholder="Write a comment..." required></textarea>
@@ -867,7 +878,7 @@ async function renderComments(postSlug, publicState) {
     }
     ${
       threadedComments.length
-        ? `<div class="comment-list">${threadedComments.map((comment) => renderComment(comment, publicState, { isAdmin, canReply: isLoggedIn, replyTargetId })).join("")}</div>`
+        ? `<div class="comment-list">${threadedComments.map((comment) => renderComment(comment, publicState, { isAdmin, canReply: isLoggedIn, canVote: isLoggedIn, replyTargetId, viewerPubkey })).join("")}</div>`
         : isLoggedIn
           ? `<div class="comment-list"><div class="empty-state">No comments yet. Start the discussion.</div></div>`
           : ""
@@ -1024,6 +1035,41 @@ async function renderComments(postSlug, publicState) {
     });
   }
 
+  for (const button of panel.querySelectorAll("[data-comment-vote]")) {
+    button.addEventListener("click", async () => {
+      if (!state.session?.secretKeyHex || !viewerPubkey) return;
+      const commentId = String(button.getAttribute("data-comment-vote") || "").trim();
+      const requestedValue = Number(button.getAttribute("data-comment-vote-value") || 0);
+      if (!commentId || !Number.isFinite(requestedValue) || ![1, -1].includes(requestedValue)) return;
+      const currentValue = resolveCurrentVoteForComment(publicState, commentId, viewerPubkey);
+      const nextValue = currentValue === requestedValue ? 0 : requestedValue;
+      try {
+        button.disabled = true;
+        applyLocalCommentVote(commentId, viewerPubkey, nextValue);
+        updateRenderedCommentVoteState(panel, commentId, publicState, viewerPubkey);
+        await publishTaggedJson({
+          kind: SITE.nostr.kinds.commentVote,
+          secretKeyHex: state.session.secretKeyHex,
+          tags: [
+            ["d", `comment-vote:${commentId}`],
+            ["e", commentId],
+            ["v", String(nextValue)],
+            ["op", nextValue > 0 ? "upvote" : nextValue < 0 ? "downvote" : "clear"]
+          ],
+          content: {
+            target_id: commentId,
+            value: nextValue
+          }
+        });
+      } catch {
+        applyLocalCommentVote(commentId, viewerPubkey, currentValue);
+        updateRenderedCommentVoteState(panel, commentId, publicState, viewerPubkey);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  }
+
   focusRequestedComment(postSlug);
 }
 
@@ -1031,6 +1077,8 @@ function renderComment(comment, publicState, options = {}, depth = 0) {
   const author = publicState.users.find((user) => user.pubkey === comment.author);
   const authorLabel = author?.displayName || author?.username || "User";
   const replies = Array.isArray(comment.replies) ? comment.replies : [];
+  const voteSummary = resolveCommentVoteSummary(publicState, comment.id);
+  const viewerVote = options.viewerPubkey ? resolveCurrentVoteForComment(publicState, comment.id, options.viewerPubkey) : 0;
   const replyForm = options.canReply && options.replyTargetId === comment.id
     ? renderInlineReplyForm(comment, publicState)
     : "";
@@ -1048,9 +1096,32 @@ function renderComment(comment, publicState, options = {}, depth = 0) {
             </div>
           </div>
           <div class="comment-card__body">${renderMiniMarkdown(comment.markdown)}</div>
-          <div class="comment-card__actions">
-            ${options.canReply ? `<button type="button" class="button-ghost" data-reply-comment="${escapeAttribute(comment.id)}">Reply</button>` : ""}
-            ${options.isAdmin ? `<button type="button" class="button-ghost" data-hide-comment="${escapeAttribute(comment.id)}">Hide</button>` : ""}
+          <div class="comment-card__toolbar">
+            <div class="comment-card__votes" aria-label="Comment score">
+              <button
+                type="button"
+                class="comment-vote ${viewerVote > 0 ? "is-active" : ""}"
+                data-comment-vote="${escapeAttribute(comment.id)}"
+                data-comment-vote-value="1"
+                aria-label="Upvote comment"
+                aria-pressed="${viewerVote > 0 ? "true" : "false"}"
+                ${options.canVote ? "" : "disabled"}
+              >▲</button>
+              <span class="comment-card__score" data-comment-score-value="${escapeAttribute(comment.id)}">${voteSummary.score}</span>
+              <button
+                type="button"
+                class="comment-vote ${viewerVote < 0 ? "is-active" : ""}"
+                data-comment-vote="${escapeAttribute(comment.id)}"
+                data-comment-vote-value="-1"
+                aria-label="Downvote comment"
+                aria-pressed="${viewerVote < 0 ? "true" : "false"}"
+                ${options.canVote ? "" : "disabled"}
+              >▼</button>
+            </div>
+            <div class="comment-card__actions">
+              ${options.canReply ? `<button type="button" class="button-ghost" data-reply-comment="${escapeAttribute(comment.id)}">Reply</button>` : ""}
+              ${options.isAdmin ? `<button type="button" class="button-ghost" data-hide-comment="${escapeAttribute(comment.id)}">Hide</button>` : ""}
+            </div>
           </div>
           ${replyForm}
           ${
@@ -1064,7 +1135,7 @@ function renderComment(comment, publicState, options = {}, depth = 0) {
   `;
 }
 
-function buildCommentTree(comments) {
+function buildCommentTree(comments, publicState, viewerPubkey = "") {
   const nodes = new Map(
     (Array.isArray(comments) ? comments : []).map((comment) => [
       comment.id,
@@ -1085,7 +1156,7 @@ function buildCommentTree(comments) {
       roots.push(node);
     }
   }
-  sortCommentNodes(roots);
+  sortCommentNodes(roots, publicState, viewerPubkey);
   return roots;
 }
 
@@ -1136,10 +1207,10 @@ async function openUserProfileModal(pubkey) {
         </div>
       </div>
       ${
-        Array.isArray(user.socialLinks) && user.socialLinks.length
+        safeUserSocialLinks(user).length
           ? `
             <div class="user-profile-modal__links">
-              ${user.socialLinks.map((link) => `<a class="text-link" href="${escapeAttribute(link)}" target="_blank" rel="noreferrer">${escapeHtml(link)}</a>`).join("")}
+              ${safeUserSocialLinks(user).map((link) => `<a class="text-link" href="${escapeAttribute(link)}" target="_blank" rel="noreferrer">${escapeHtml(link)}</a>`).join("")}
             </div>
           `
           : ""
@@ -1153,15 +1224,22 @@ function closeUserProfileModal() {
   document.querySelector("[data-user-modal]")?.remove();
 }
 
-function sortCommentNodes(nodes) {
+function sortCommentNodes(nodes, publicState, viewerPubkey = "") {
   nodes.sort((left, right) => {
+    const leftOwn = Boolean(viewerPubkey) && left?.author === viewerPubkey;
+    const rightOwn = Boolean(viewerPubkey) && right?.author === viewerPubkey;
+    if (leftOwn !== rightOwn) return leftOwn ? -1 : 1;
+    const leftVotes = resolveCommentVoteSummary(publicState, left?.id);
+    const rightVotes = resolveCommentVoteSummary(publicState, right?.id);
+    if (leftVotes.score !== rightVotes.score) return rightVotes.score - leftVotes.score;
+    if (leftVotes.upvoteCount !== rightVotes.upvoteCount) return rightVotes.upvoteCount - leftVotes.upvoteCount;
     const leftTime = Number(left?.created_at || 0);
     const rightTime = Number(right?.created_at || 0);
-    if (leftTime !== rightTime) return leftTime - rightTime;
+    if (leftTime !== rightTime) return rightTime - leftTime;
     return String(left?.id || "").localeCompare(String(right?.id || ""));
   });
   for (const node of nodes) {
-    if (Array.isArray(node.replies) && node.replies.length) sortCommentNodes(node.replies);
+    if (Array.isArray(node.replies) && node.replies.length) sortCommentNodes(node.replies, publicState, viewerPubkey);
   }
 }
 
@@ -1174,14 +1252,107 @@ function commentAuthorLabel(comment, publicState) {
   return author?.displayName || author?.username || "User";
 }
 
+function resolveCommentVoteSummary(publicState, commentId) {
+  const summary = publicState?.commentVotes instanceof Map
+    ? publicState.commentVotes.get(String(commentId || "").trim())
+    : null;
+  return summary || emptyCommentVoteSummary();
+}
+
+function resolveCurrentVoteForComment(publicState, commentId, viewerPubkey) {
+  const cleanViewer = String(viewerPubkey || "").trim().toLowerCase();
+  if (!cleanViewer) return 0;
+  const summary = resolveCommentVoteSummary(publicState, commentId);
+  return summary.byPubkey instanceof Map
+    ? Number(summary.byPubkey.get(cleanViewer) || 0) || 0
+    : 0;
+}
+
+function emptyCommentVoteSummary() {
+  return {
+    score: 0,
+    upvoteCount: 0,
+    downvoteCount: 0,
+    byPubkey: new Map()
+  };
+}
+
+function applyLocalCommentVote(commentId, viewerPubkey, nextValue) {
+  const cleanId = String(commentId || "").trim();
+  const cleanViewer = String(viewerPubkey || "").trim().toLowerCase();
+  if (!cleanId || !cleanViewer || !state.publicState) return;
+  if (!(state.publicState.commentVotes instanceof Map)) {
+    state.publicState.commentVotes = new Map();
+  }
+  const existing = resolveCommentVoteSummary(state.publicState, cleanId);
+  const byPubkey = new Map(existing.byPubkey instanceof Map ? existing.byPubkey : []);
+  const currentValue = Number(byPubkey.get(cleanViewer) || 0) || 0;
+  const summary = {
+    score: Number(existing.score || 0) || 0,
+    upvoteCount: Number(existing.upvoteCount || 0) || 0,
+    downvoteCount: Number(existing.downvoteCount || 0) || 0,
+    byPubkey
+  };
+
+  if (currentValue > 0) {
+    summary.score -= 1;
+    summary.upvoteCount = Math.max(0, summary.upvoteCount - 1);
+  } else if (currentValue < 0) {
+    summary.score += 1;
+    summary.downvoteCount = Math.max(0, summary.downvoteCount - 1);
+  }
+
+  if (nextValue > 0) {
+    summary.score += 1;
+    summary.upvoteCount += 1;
+    byPubkey.set(cleanViewer, 1);
+  } else if (nextValue < 0) {
+    summary.score -= 1;
+    summary.downvoteCount += 1;
+    byPubkey.set(cleanViewer, -1);
+  } else {
+    byPubkey.delete(cleanViewer);
+  }
+
+  state.publicState.commentVotes.set(cleanId, summary);
+}
+
+function updateRenderedCommentVoteState(scope, commentId, publicState, viewerPubkey = "") {
+  const container = scope instanceof HTMLElement
+    ? scope.querySelector(`[data-comment-id="${CSS.escape(String(commentId || "").trim())}"]`)
+    : null;
+  if (!(container instanceof HTMLElement)) return;
+  const summary = resolveCommentVoteSummary(publicState, commentId);
+  const currentVote = resolveCurrentVoteForComment(publicState, commentId, viewerPubkey);
+  const score = container.querySelector(`[data-comment-score-value="${CSS.escape(String(commentId || "").trim())}"]`);
+  if (score instanceof HTMLElement) score.textContent = String(summary.score);
+  for (const button of container.querySelectorAll(`[data-comment-vote="${CSS.escape(String(commentId || "").trim())}"]`)) {
+    const value = Number(button.getAttribute("data-comment-vote-value") || 0);
+    const active = currentVote === value && value !== 0;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+}
+
+function safeAvatarUrl(value) {
+  return sanitizeUrl(value, "src");
+}
+
+function safeUserSocialLinks(user) {
+  return (Array.isArray(user?.socialLinks) ? user.socialLinks : [])
+    .map((link) => sanitizeUrl(link, "href"))
+    .filter(Boolean);
+}
+
 function renderAvatarBadge(user, fallbackLabel, className) {
   const label = user?.displayName || user?.username || fallbackLabel || "Profile";
-  if (user?.avatarUrl) {
+  const avatarUrl = safeAvatarUrl(user?.avatarUrl || "");
+  if (avatarUrl) {
     const blob = user.avatarBlob;
     const blobAttrs = blob?.sha256
-      ? ` data-avatar-sha="${escapeAttribute(blob.sha256)}" data-avatar-url="${escapeAttribute(blob.url || user.avatarUrl)}" data-avatar-type="${escapeAttribute(blob.type || "")}" data-avatar-name="${escapeAttribute(blob.name || "")}"`
+      ? ` data-avatar-sha="${escapeAttribute(blob.sha256)}" data-avatar-url="${escapeAttribute(blob.url || avatarUrl)}" data-avatar-type="${escapeAttribute(blob.type || "")}" data-avatar-name="${escapeAttribute(blob.name || "")}"`
       : "";
-    return `<span class="${className} ${className}--image"><img src="${escapeAttribute(user.avatarUrl)}" alt="${escapeAttribute(label)}"${blobAttrs}></span>`;
+    return `<span class="${className} ${className}--image"><img src="${escapeAttribute(avatarUrl)}" alt="${escapeAttribute(label)}"${blobAttrs}></span>`;
   }
   return `<span class="${className}">${escapeHtml(profileInitials(label))}</span>`;
 }
@@ -1360,7 +1531,16 @@ function renderInlineReplyForm(comment, publicState) {
 function appendLocalComment(postSlug, comment) {
   if (!state.publicState?.commentsByPost) return;
   const current = state.publicState.commentsByPost.get(postSlug) || [];
-  state.publicState.commentsByPost.set(postSlug, dedupeCommentList([...current, comment]));
+  const nextByPost = dedupeCommentList([...current, comment]);
+  state.publicState.commentsByPost.set(postSlug, nextByPost);
+  state.publicState.allComments = dedupeCommentList([...(state.publicState.allComments || []), comment]);
+  state.publicState.comments = dedupeCommentList([...(state.publicState.comments || []), comment]);
+  const authorBucket = state.publicState.commentsByAuthor?.get(comment.author) || [];
+  state.publicState.commentsByAuthor?.set(comment.author, dedupeCommentList([...authorBucket, comment]));
+  const user = (state.publicState.users || []).find((entry) => entry.pubkey === comment.author);
+  if (user) {
+    user.commentCount = (state.publicState.commentsByAuthor?.get(comment.author) || []).length;
+  }
 }
 
 function dedupeCommentList(comments) {
@@ -1939,12 +2119,7 @@ function renderRecordList(records) {
 }
 
 function renderMarkdown(node, markdown) {
-  if (window.marked) {
-    window.marked.setOptions({ gfm: true, breaks: false });
-    node.innerHTML = window.marked.parse(String(markdown || ""));
-  } else {
-    node.innerHTML = renderMiniMarkdown(markdown);
-  }
+  node.innerHTML = renderMarkedHtml(markdown, { breaks: false });
 
   for (const heading of node.querySelectorAll("h2, h3")) {
     heading.id = heading.id || slugify(heading.textContent || "section");
@@ -3287,7 +3462,7 @@ function collectStaticEditContent(elements) {
   return Object.fromEntries(
     (Array.isArray(elements) ? elements : []).map((element) => [
       element.getAttribute("data-static-edit") || "",
-      element.innerHTML
+      sanitizeTrustedHtml(element.innerHTML)
     ])
   );
 }
@@ -3297,8 +3472,8 @@ function applyStaticEditContent(elements, content, fallback = {}) {
     const key = element.getAttribute("data-static-edit") || "";
     const primaryValue = resolveStaticEditValue(content, key);
     element.innerHTML = primaryValue.length
-      ? primaryValue
-      : resolveStaticEditValue(fallback, key);
+      ? sanitizeTrustedHtml(primaryValue)
+      : sanitizeTrustedHtml(resolveStaticEditValue(fallback, key));
   }
 }
 
@@ -3377,8 +3552,26 @@ function renderTagList(tags) {
 }
 
 function renderMiniMarkdown(markdown) {
-  const text = escapeHtml(String(markdown || "")).replace(/\n{2,}/g, "</p><p>").replace(/\n/g, "<br>");
-  return `<p>${text}</p>`;
+  return renderMarkedHtml(markdown, { breaks: true });
+}
+
+function renderMarkedHtml(markdown, options = {}) {
+  const source = String(markdown || "").trim();
+  if (!source) return "";
+  if (window.marked) {
+    window.marked.setOptions({ gfm: true, breaks: Boolean(options.breaks) });
+    return sanitizeTrustedHtml(window.marked.parse(source));
+  }
+  return sanitizeTrustedHtml(renderBasicMarkdown(source, options));
+}
+
+function renderBasicMarkdown(markdown, options = {}) {
+  const escaped = escapeHtml(String(markdown || ""));
+  const paragraphs = escaped
+    .split(/\n{2,}/)
+    .map((block) => `<p>${block.replace(/\n/g, options.breaks ? "<br>" : " ")}</p>`)
+    .join("");
+  return paragraphs;
 }
 
 function setText(selector, value) {
