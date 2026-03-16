@@ -54,9 +54,13 @@ const workspaceState = {
   commentMenuId: "",
   ownCommentMenuId: "",
   submissionFilterHighlight: -1,
+  userFilters: {
+    karma: ""
+  },
   commentFilters: {
     query: "",
-    role: ""
+    role: "",
+    karma: ""
   },
   submissionFilters: {
     query: ""
@@ -156,6 +160,9 @@ function bindWorkspace() {
     if (openSubmission) {
       const submissionId = openSubmission.getAttribute("data-open-submission") || "";
       workspaceState.submissionModal = { submissionId };
+      if (workspaceState.chatModal?.submissionId && workspaceState.chatModal.submissionId !== submissionId) {
+        workspaceState.chatModal = null;
+      }
       renderWorkspace();
       void markSubmissionViewed(submissionId);
       return;
@@ -256,13 +263,21 @@ function bindWorkspace() {
 
     const openChat = target.closest("[data-open-chat]");
     if (openChat) {
+      const submissionId = openChat.getAttribute("data-open-chat") || "";
+      const targetPubkey = openChat.getAttribute("data-chat-target") || "";
+      if (workspaceState.chatModal?.submissionId === submissionId) {
+        workspaceState.chatModal = null;
+        renderWorkspace({ soft: true });
+        return;
+      }
+      workspaceState.submissionModal = { submissionId };
       workspaceState.chatModal = {
-        submissionId: openChat.getAttribute("data-open-chat") || "",
-        targetPubkey: openChat.getAttribute("data-chat-target") || "",
+        submissionId,
+        targetPubkey,
         loading: true,
         messages: []
       };
-      renderWorkspace();
+      renderWorkspace({ soft: true });
       await hydrateChatModal();
       return;
     }
@@ -322,10 +337,20 @@ function bindWorkspace() {
       renderWorkspace({ soft: true });
       return;
     }
+    if (target.matches("[data-comment-filter-karma]")) {
+      workspaceState.commentFilters.karma = String(target.value || "").trim().toLowerCase();
+      renderWorkspace({ soft: true });
+      return;
+    }
     if (target.matches("[data-submission-filter-input]")) {
       workspaceState.submissionFilters.query = String(target.value || "");
       const suggestions = submissionFilterSuggestions();
       workspaceState.submissionFilterHighlight = suggestions.length ? 0 : -1;
+      renderWorkspace({ soft: true });
+      return;
+    }
+    if (target.matches("[data-user-filter-karma]")) {
+      workspaceState.userFilters.karma = String(target.value || "").trim().toLowerCase();
       renderWorkspace({ soft: true });
       return;
     }
@@ -419,7 +444,7 @@ async function refreshWorkspace(force = false) {
     workspaceState.keyRequestState = "error";
   });
   if (currentUserHasInboxAccess()) {
-    void hydrateInboxSubmissions();
+    await hydrateInboxSubmissions({ background: false });
   } else {
     workspaceState.inboxLoading = false;
     workspaceState.inboxSubmissions = [];
@@ -540,7 +565,7 @@ async function syncWorkspaceState(force = true) {
       workspaceState.keyRequestState = "error";
     });
     if (currentUserHasInboxAccess()) {
-      void hydrateInboxSubmissions();
+      void hydrateInboxSubmissions({ background: true });
     } else {
       workspaceState.inboxLoading = false;
       workspaceState.inboxSubmissions = [];
@@ -618,7 +643,7 @@ function renderWorkspace(options = {}) {
 
   const tabsMarkup = tabButtons().map((tab) => renderTabButton(tab)).join("");
   const paneMarkup = renderActivePane();
-  const overlayMarkup = `${renderEntityModal()}${renderChatModal()}${renderUserProfileModal()}${renderUserActionModal()}${renderCommentActionModal()}${renderSubmissionModal()}`;
+  const overlayMarkup = `${renderEntityModal()}${renderUserProfileModal()}${renderUserActionModal()}${renderCommentActionModal()}${renderSubmissionModal()}`;
   const tabs = shell.querySelector("[data-workspace-tabs]");
   const pane = shell.querySelector("[data-workspace-pane]");
   const overlays = shell.querySelector("[data-workspace-overlays]");
@@ -653,6 +678,10 @@ function captureWorkspaceFocusState() {
       ? "[data-comment-filter-query]"
       : active.matches("[data-comment-filter-role]")
         ? "[data-comment-filter-role]"
+        : active.matches("[data-comment-filter-karma]")
+          ? "[data-comment-filter-karma]"
+          : active.matches("[data-user-filter-karma]")
+            ? "[data-user-filter-karma]"
         : active.matches("[data-submission-filter-input]")
           ? "[data-submission-filter-input]"
           : active.matches("[data-quick-user-input]")
@@ -758,10 +787,14 @@ function renderDashboardPane() {
 
 function renderProfilePane() {
   const current = currentUser();
+  const karma = resolveWorkspaceUserKarma(workspaceState.viewer?.pubkey || "");
   return `
     <section class="surface-panel">
       <div class="eyebrow">Profile</div>
       <h2>Profile settings</h2>
+      <div class="tag-row">
+        <span class="tag">Karma ${formatWorkspaceKarma(karma)}</span>
+      </div>
       <form class="tip-form" data-profile-form>
         <label>
           <span>Display name</span>
@@ -795,6 +828,14 @@ function renderUsersPane() {
       <section class="surface-panel">
         <div class="eyebrow">User Management</div>
         <h2>Shared roster</h2>
+        <div class="workspace-filter-bar workspace-filter-bar--stacked">
+          <label class="workspace-select">
+            <span class="sr-only">Filter users by karma</span>
+            <select data-user-filter-karma>
+              ${renderKarmaSelectOptions(workspaceState.userFilters.karma)}
+            </select>
+          </label>
+        </div>
         <div class="roster-list">
           ${
             visibleUsers
@@ -832,6 +873,7 @@ function renderUserCard(user) {
   const canManage = currentUserIsAdmin() && !isRootAdmin && user.pubkey !== workspaceState.viewer?.pubkey;
   const submissionHref = `./investigations.html?author=${encodeURIComponent(user.username || user.pubkey)}`;
   const commentHref = `./admin.html?tab=comments&user=${encodeURIComponent(user.username || user.pubkey)}`;
+  const karma = resolveWorkspaceUserKarma(user.pubkey);
   return `
     <article class="roster-item" id="user-${escapeAttribute(user.pubkey)}" data-user-card="${escapeAttribute(user.pubkey)}">
       <div class="workspace-list__row">
@@ -840,6 +882,7 @@ function renderUserCard(user) {
           <span>${user.username ? `@${escapeHtml(user.username)}` : "Shared account"}</span>
         </div>
         <div class="tag-row">
+          <span class="tag">Karma ${formatWorkspaceKarma(karma)}</span>
           ${user.isAdmin ? `<span class="tag">admin</span>` : ""}
           ${user.moderation ? `<span class="tag">${escapeHtml(user.moderation.action)}</span>` : ""}
         </div>
@@ -871,6 +914,7 @@ function renderUserCard(user) {
 function renderLookupCandidate() {
   const user = workspaceState.userLookupResult;
   if (!user) return "";
+  const karma = resolveWorkspaceUserKarma(user.pubkey);
   return `
     <article class="roster-item" data-user-card="${escapeAttribute(user.pubkey)}">
       <div class="workspace-list__row">
@@ -879,6 +923,7 @@ function renderLookupCandidate() {
           <span>${user.username ? `@${escapeHtml(user.username)}` : "Shared account"}</span>
         </div>
         <div class="tag-row">
+          <span class="tag">Karma ${formatWorkspaceKarma(karma)}</span>
           ${user.isAdmin ? `<span class="tag">admin</span>` : `<span class="tag">member</span>`}
         </div>
       </div>
@@ -909,10 +954,12 @@ function renderUserIdentityButton(user, fallbackPubkey = user?.pubkey || "") {
 function filterWorkspaceComments(comments) {
   const query = String(workspaceState.commentFilters.query || "").trim().toLowerCase();
   const role = String(workspaceState.commentFilters.role || "").trim().toLowerCase();
+  const karmaBucket = String(workspaceState.commentFilters.karma || "").trim().toLowerCase();
   return (Array.isArray(comments) ? comments : []).filter((comment) => {
     const author = resolveWorkspaceUser(comment.author);
     if (role === "admin" && !author?.isAdmin) return false;
     if (role === "user" && author?.isAdmin) return false;
+    if (!karmaBucketMatches(resolveWorkspaceCommentKarma(comment), karmaBucket)) return false;
     if (!query) return true;
     const haystacks = [
       comment.markdown,
@@ -931,6 +978,73 @@ function resolveWorkspaceUser(pubkey) {
   return (workspaceState.publicState?.users || []).find((user) => user.pubkey === cleanPubkey) || null;
 }
 
+function resolveWorkspaceCommentKarma(commentOrId) {
+  const commentId =
+    typeof commentOrId === "string"
+      ? String(commentOrId || "").trim()
+      : String(commentOrId?.id || "").trim();
+  if (!commentId) return 0;
+  const summary = workspaceState.publicState?.commentVotes instanceof Map
+    ? workspaceState.publicState.commentVotes.get(commentId)
+    : null;
+  return Number(summary?.score || commentOrId?.score || 0) || 0;
+}
+
+function resolveWorkspaceUserKarma(pubkey) {
+  const cleanPubkey = String(pubkey || "").trim().toLowerCase();
+  if (!cleanPubkey) return 0;
+  const comments = workspaceState.publicState?.commentsByAuthor instanceof Map
+    ? workspaceState.publicState.commentsByAuthor.get(cleanPubkey) || []
+    : [];
+  return comments.reduce((total, comment) => total + resolveWorkspaceCommentKarma(comment), 0);
+}
+
+function formatWorkspaceKarma(value) {
+  const score = Number(value || 0) || 0;
+  return score > 0 ? `+${score}` : String(score);
+}
+
+function karmaBucketMatches(score, bucket) {
+  const cleanBucket = String(bucket || "").trim().toLowerCase();
+  const numeric = Number(score || 0) || 0;
+  if (!cleanBucket) return true;
+  if (cleanBucket === "lt0") return numeric < 0;
+  if (cleanBucket === "0-5") return numeric >= 0 && numeric <= 5;
+  if (cleanBucket === "6-50") return numeric >= 6 && numeric <= 50;
+  if (cleanBucket === "51-500") return numeric >= 51 && numeric <= 500;
+  if (cleanBucket === "gt500") return numeric > 500;
+  return true;
+}
+
+function renderKarmaSelectOptions(selectedValue) {
+  const value = String(selectedValue || "").trim().toLowerCase();
+  const options = [
+    ["", "All karma"],
+    ["lt0", "Karma < 0"],
+    ["0-5", "Karma 0-5"],
+    ["6-50", "Karma 6-50"],
+    ["51-500", "Karma 51-500"],
+    ["gt500", "Karma > 500"]
+  ];
+  return options
+    .map(([optionValue, label]) => `<option value="${optionValue}" ${value === optionValue ? "selected" : ""}>${label}</option>`)
+    .join("");
+}
+
+function commentToneState(score) {
+  const value = Number(score || 0) || 0;
+  if (value >= 0) {
+    return {
+      tone: "",
+      amount: "0"
+    };
+  }
+  return {
+    tone: value <= -3 ? "negative" : "warning",
+    amount: Math.min(Math.abs(value) / 5, 1).toFixed(2)
+  };
+}
+
 function userNeedsCurrentSiteKey(user) {
   const targetPubkey = String(user?.pubkey || "").trim().toLowerCase();
   const sitePubkey = activeSitePubkey();
@@ -946,6 +1060,7 @@ function renderUserProfileModal() {
   const displayName = user.displayName || user.username || shortKey(user.pubkey);
   const avatarUrl = safeWorkspaceAvatarUrl(user.avatarUrl || "");
   const socialLinks = safeWorkspaceSocialLinks(user);
+  const karma = resolveWorkspaceUserKarma(user.pubkey);
   return `
     <div class="modal-backdrop">
       <section class="modal-card user-profile-modal">
@@ -964,11 +1079,12 @@ function renderUserProfileModal() {
                 : `<span class="user-profile-modal__avatar">${escapeHtml(profileInitials(displayName))}</span>`
             }
           </div>
-          <div class="user-profile-modal__copy">
-            ${user.username ? `<strong>@${escapeHtml(user.username)}</strong>` : ""}
-            <p>${escapeHtml(user.bio || "No bio added yet.")}</p>
-          </div>
+        <div class="user-profile-modal__copy">
+          ${user.username ? `<strong>@${escapeHtml(user.username)}</strong>` : ""}
+          <span class="muted-text">Karma ${formatWorkspaceKarma(karma)}</span>
+          <p>${escapeHtml(user.bio || "No bio added yet.")}</p>
         </div>
+      </div>
         ${
           socialLinks.length
             ? `<div class="user-profile-modal__links">${socialLinks.map((link) => `<a class="text-link" href="${escapeAttribute(link)}" target="_blank" rel="noreferrer">${escapeHtml(link)}</a>`).join("")}</div>`
@@ -1018,7 +1134,11 @@ function renderUserActionModal() {
               ? `
                 <button class="button-ghost" type="button" data-user-action="mod" data-target-pubkey="${user.pubkey}" data-mode="temp-ban">Temp ban</button>
                 <button class="button-ghost" type="button" data-user-action="mod" data-target-pubkey="${user.pubkey}" data-mode="full-ban">Full ban</button>
-                <button class="button-ghost" type="button" data-user-action="mod" data-target-pubkey="${user.pubkey}" data-mode="clear">Clear moderation</button>
+                ${
+                  user.moderation
+                    ? `<button class="button-ghost" type="button" data-user-action="mod" data-target-pubkey="${user.pubkey}" data-mode="clear">Lift restrictions</button>`
+                    : ""
+                }
               `
               : ""
           }
@@ -1099,6 +1219,7 @@ function renderSubmissionModal() {
   const reviewState = deriveSubmissionReviewState(item);
   const author = resolveWorkspaceUser(item.author);
   const attachment = latest.attachment || null;
+  const chatState = workspaceState.chatModal?.submissionId === item.id ? workspaceState.chatModal : null;
   return `
     <div class="modal-backdrop">
       <section class="modal-card modal-card--wide">
@@ -1156,8 +1277,9 @@ function renderSubmissionModal() {
               : ""
           }
         </div>
+        ${renderSubmissionChatPanel(item, chatState)}
         <div class="button-row">
-          <button class="button-ghost" type="button" data-open-chat="${item.id}" data-chat-target="${item.author}">Open chat</button>
+          <button class="button-ghost" type="button" data-open-chat="${item.id}" data-chat-target="${item.author}">${chatState ? "Hide chat" : "Open chat"}</button>
           <button
             class="button"
             type="button"
@@ -1176,6 +1298,51 @@ function renderSubmissionModal() {
         </div>
       </section>
     </div>
+  `;
+}
+
+function renderSubmissionChatPanel(item, chatState) {
+  if (!chatState) return "";
+  const messages = Array.isArray(chatState.messages) ? chatState.messages : [];
+  const loading = Boolean(chatState.loading);
+  return `
+    <section class="submission-chat-panel">
+      <div class="workspace-list__row">
+        <div>
+          <div class="eyebrow">Submission chat</div>
+          <h3>Conversation</h3>
+        </div>
+      </div>
+      <div class="chat-thread">
+        ${
+          loading
+            ? renderLoadingState("Looking up chat...")
+            : messages.length
+              ? messages
+                  .map(
+                    (message) => `
+                      <article class="chat-message ${message.author === workspaceState.viewer?.pubkey ? "is-self" : ""}">
+                        <strong>${message.author === workspaceState.viewer?.pubkey ? "You" : shortKey(message.author)}</strong>
+                        <p>${escapeHtml(message.payload.body || "")}</p>
+                      </article>
+                    `
+                  )
+                  .join("")
+              : `<div class="empty-state">No messages yet.</div>`
+        }
+      </div>
+      <form class="tip-form" data-chat-form>
+        <input name="submissionId" type="hidden" value="${escapeAttribute(item.id)}">
+        <input name="targetPubkey" type="hidden" value="${escapeAttribute(chatState.targetPubkey || item.author)}">
+        <label>
+          <span>Reply</span>
+          <textarea name="body" placeholder="Write a reply" required></textarea>
+        </label>
+        <div class="button-row">
+          <button class="button" type="submit">Send message</button>
+        </div>
+      </form>
+    </section>
   `;
 }
 
@@ -1579,6 +1746,12 @@ function renderCommentsPane() {
               <option value="user" ${workspaceState.commentFilters.role === "user" ? "selected" : ""}>User</option>
             </select>
           </label>
+          <label class="workspace-select">
+            <span class="sr-only">Filter by karma</span>
+            <select data-comment-filter-karma>
+              ${renderKarmaSelectOptions(workspaceState.commentFilters.karma)}
+            </select>
+          </label>
         </div>
         <div class="roster-list">
           ${
@@ -1615,14 +1788,19 @@ function renderModerationComment(comment) {
   const menuOpen = workspaceState.commentMenuId === comment.id;
   const preview = trimmed(comment.markdown, 220);
   const threadHref = `./investigation.html?slug=${encodeURIComponent(comment.post_slug)}&comment=${encodeURIComponent(comment.id)}`;
+  const karma = resolveWorkspaceCommentKarma(comment);
+  const tone = commentToneState(karma);
   return `
-    <article class="roster-item">
+    <article class="roster-item" data-comment-tone="${escapeAttribute(tone.tone)}" style="--comment-review-tone:${escapeAttribute(tone.amount)};">
       <div class="workspace-list__row">
         <div>
           ${renderUserIdentityButton(author || { pubkey: comment.author, displayName: authorLabel, username: author?.username || "" }, comment.author)}
           <span>${escapeHtml(comment.post_slug)} • ${escapeHtml(new Date(comment.created_at * 1000).toLocaleString())}</span>
         </div>
-        <button class="button-ghost button-ghost--icon" type="button" data-comment-menu-toggle="${escapeAttribute(comment.id)}" aria-label="Comment actions">...</button>
+        <div class="tag-row">
+          <span class="tag">Karma ${formatWorkspaceKarma(karma)}</span>
+          <button class="button-ghost button-ghost--icon" type="button" data-comment-menu-toggle="${escapeAttribute(comment.id)}" aria-label="Comment actions">...</button>
+        </div>
       </div>
       <span>${escapeHtml(preview)}</span>
       ${
@@ -1646,6 +1824,7 @@ function renderModerationComment(comment) {
 
 function renderOwnCommentRow(comment) {
   const menuOpen = workspaceState.ownCommentMenuId === comment.id;
+  const karma = resolveWorkspaceCommentKarma(comment);
   return `
     <article class="roster-item">
       <div class="workspace-list__row">
@@ -1653,7 +1832,10 @@ function renderOwnCommentRow(comment) {
           <strong>${escapeHtml(comment.post_slug)}</strong>
           <span>${escapeHtml(new Date(comment.created_at * 1000).toLocaleString())}</span>
         </div>
-        <button class="button-ghost button-ghost--icon" type="button" data-own-comment-menu-toggle="${escapeAttribute(comment.id)}" aria-label="Comment options">...</button>
+        <div class="tag-row">
+          <span class="tag">Karma ${formatWorkspaceKarma(karma)}</span>
+          <button class="button-ghost button-ghost--icon" type="button" data-own-comment-menu-toggle="${escapeAttribute(comment.id)}" aria-label="Comment options">...</button>
+        </div>
       </div>
       <span>${escapeHtml(trimmed(comment.markdown, 220))}</span>
       ${
@@ -2334,14 +2516,19 @@ async function hydrateChatModal() {
   renderWorkspace();
 }
 
-async function hydrateInboxSubmissions() {
+async function hydrateInboxSubmissions(options = {}) {
   if (!currentUserHasInboxAccess()) return;
-  workspaceState.inboxLoading = true;
-  renderWorkspace({ soft: true });
+  const background = Boolean(options.background);
+  if (!background) {
+    workspaceState.inboxLoading = true;
+    renderWorkspace({ soft: true });
+  }
   const nextSubmissions = await loadInboxSubmissions(workspaceState.siteKeyShares).catch(() => workspaceState.inboxSubmissions);
   workspaceState.inboxSubmissions = Array.isArray(nextSubmissions) ? nextSubmissions : workspaceState.inboxSubmissions;
   workspaceState.inboxLoading = false;
-  renderWorkspace({ soft: true });
+  if (!background) {
+    renderWorkspace({ soft: true });
+  }
   await maybeOpenAdminChatFromUrl();
 }
 
@@ -2360,6 +2547,7 @@ async function maybeOpenAdminChatFromUrl() {
   ) {
     return;
   }
+  workspaceState.submissionModal = { submissionId };
   workspaceState.chatModal = {
     submissionId,
     targetPubkey: nextTargetPubkey,
@@ -2959,6 +3147,10 @@ function renderSiteKeyShareStatus() {
 function applyLocalCommentModeration(commentId, action, note) {
   const publicState = workspaceState.publicState;
   if (!publicState || !Array.isArray(publicState.allComments)) return;
+  const cleanCommentId = String(commentId || "").trim();
+  const hiddenIds = action === "hide"
+    ? collectWorkspaceCommentBranchIds(cleanCommentId, publicState.allComments)
+    : [cleanCommentId];
   const moderation = {
     action: action === "restore" ? "restore" : "hide",
     note: String(note || "").trim(),
@@ -2966,7 +3158,7 @@ function applyLocalCommentModeration(commentId, action, note) {
     by: workspaceState.viewer?.pubkey || ""
   };
   publicState.allComments = publicState.allComments.map((comment) =>
-    comment.id === commentId
+    hiddenIds.includes(String(comment.id || "").trim())
       ? {
           ...comment,
           visibility: moderation.action === "hide" ? "hidden" : "visible",
@@ -2985,6 +3177,29 @@ function applyLocalCommentModeration(commentId, action, note) {
   for (const user of publicState.users || []) {
     user.commentCount = (publicState.commentsByAuthor.get(user.pubkey) || []).length;
   }
+}
+
+function collectWorkspaceCommentBranchIds(commentId, comments) {
+  const cleanCommentId = String(commentId || "").trim();
+  if (!cleanCommentId) return [];
+  const byParent = new Map();
+  for (const comment of Array.isArray(comments) ? comments : []) {
+    const parentId = String(comment?.parent_id || "").trim();
+    if (!parentId) continue;
+    const bucket = byParent.get(parentId) || [];
+    bucket.push(String(comment.id || "").trim());
+    byParent.set(parentId, bucket);
+  }
+  const seen = new Set();
+  const stack = [cleanCommentId];
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current || seen.has(current)) continue;
+    seen.add(current);
+    const children = byParent.get(current) || [];
+    for (const childId of children) stack.push(childId);
+  }
+  return [...seen];
 }
 
 function regroupComments(comments, key) {
@@ -3195,6 +3410,7 @@ function findLocalUserCandidate(value) {
 }
 
 function visibleWorkspaceUsers() {
+  const karmaBucket = String(workspaceState.userFilters.karma || "").trim().toLowerCase();
   return (workspaceState.publicState?.users || []).filter((user) => {
     const visible =
       user.isAdmin ||
@@ -3206,7 +3422,7 @@ function visibleWorkspaceUsers() {
       (Array.isArray(user.socialLinks) && user.socialLinks.length) ||
       user.avatarUrl ||
       user.avatarBlob;
-    return visible;
+    return visible && karmaBucketMatches(resolveWorkspaceUserKarma(user.pubkey), karmaBucket);
   });
 }
 

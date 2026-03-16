@@ -1121,7 +1121,7 @@ async function renderComments(postSlug, publicState) {
         const result = await publishTaggedJson({
           kind: SITE.nostr.kinds.comment,
           secretKeyHex: state.session.secretKeyHex,
-          tags: [["d", `comment-${Date.now()}`], ["a", postSlug]],
+          tags: [["d", createCommentDraftKey()], ["a", postSlug]],
           content: {
             post_slug: postSlug,
             markdown,
@@ -1195,7 +1195,7 @@ async function renderComments(postSlug, publicState) {
           kind: SITE.nostr.kinds.comment,
           secretKeyHex: state.session.secretKeyHex,
           tags: [
-            ["d", `comment-${Date.now()}`],
+            ["d", createCommentDraftKey()],
             ["a", postSlug],
             ["e", parentId],
             ["parent", parentId],
@@ -1449,6 +1449,7 @@ async function openUserProfileModal(pubkey) {
         </div>
         <div class="user-profile-modal__copy">
           ${user.username ? `<strong>@${escapeHtml(user.username)}</strong>` : ""}
+          <span class="muted-text">Karma ${formatKarma(resolveUserKarma(publicState, cleanPubkey))}</span>
           <p>${escapeHtml(user.bio || "No bio added yet.")}</p>
         </div>
       </div>
@@ -1503,6 +1504,27 @@ function resolveCommentVoteSummary(publicState, commentId) {
     ? publicState.commentVotes.get(String(commentId || "").trim())
     : null;
   return summary || emptyCommentVoteSummary();
+}
+
+function resolveUserKarma(publicState, pubkey) {
+  const cleanPubkey = String(pubkey || "").trim().toLowerCase();
+  if (!cleanPubkey) return 0;
+  const comments = publicState?.commentsByAuthor instanceof Map
+    ? publicState.commentsByAuthor.get(cleanPubkey) || []
+    : [];
+  return comments.reduce((total, comment) => total + resolveCommentVoteSummary(publicState, comment.id).score, 0);
+}
+
+function formatKarma(value) {
+  const score = Number(value || 0) || 0;
+  return score > 0 ? `+${score}` : String(score);
+}
+
+function createCommentDraftKey() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `comment-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  }
+  return `comment-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function resolveCurrentVoteForComment(publicState, commentId, viewerPubkey) {
@@ -2443,7 +2465,7 @@ function renderRecordList(records) {
 }
 
 function renderMarkdown(node, markdown) {
-  node.innerHTML = renderMarkedHtml(markdown, { breaks: false });
+  node.innerHTML = renderMarkedHtml(markdown, { breaks: false, articleImages: true });
 
   for (const heading of node.querySelectorAll("h2, h3")) {
     heading.id = heading.id || slugify(heading.textContent || "section");
@@ -3888,9 +3910,50 @@ function renderMarkedHtml(markdown, options = {}) {
   if (!source) return "";
   if (window.marked) {
     window.marked.setOptions({ gfm: true, breaks: Boolean(options.breaks) });
-    return sanitizeTrustedHtml(window.marked.parse(source));
+    const html = window.marked.parse(source);
+    return sanitizeTrustedHtml(options.articleImages ? transformArticleImageMarkup(html) : html);
   }
   return sanitizeTrustedHtml(renderBasicMarkdown(source, options));
+}
+
+function transformArticleImageMarkup(rawHtml) {
+  if (typeof document === "undefined") return String(rawHtml || "");
+  const template = document.createElement("template");
+  template.innerHTML = String(rawHtml || "");
+  for (const image of template.content.querySelectorAll("img")) {
+    const parent = image.parentElement;
+    if (!(parent instanceof HTMLElement) || parent.tagName !== "P") continue;
+    const onlyImage = [...parent.childNodes].every((node) => {
+      if (node === image) return true;
+      return node.nodeType === Node.TEXT_NODE && !String(node.textContent || "").trim();
+    });
+    if (!onlyImage) continue;
+    const spec = parseArticleImageSpec(image.getAttribute("title") || "");
+    const figure = document.createElement("figure");
+    figure.className = `article-image article-image--${spec.align}`;
+    image.loading = "lazy";
+    image.decoding = "async";
+    image.removeAttribute("title");
+    figure.append(image);
+    if (spec.caption) {
+      const caption = document.createElement("figcaption");
+      caption.textContent = spec.caption;
+      figure.append(caption);
+    }
+    parent.replaceWith(figure);
+  }
+  return template.innerHTML;
+}
+
+function parseArticleImageSpec(rawTitle) {
+  const title = String(rawTitle || "").trim();
+  if (!title) return { align: "full", caption: "" };
+  const [alignPart, ...captionParts] = title.split("|");
+  const alignMatch = String(alignPart || "").trim().match(/^align:(left|right|full)$/i);
+  return {
+    align: alignMatch ? alignMatch[1].toLowerCase() : "full",
+    caption: captionParts.join("|").trim()
+  };
 }
 
 function renderBasicMarkdown(markdown, options = {}) {
