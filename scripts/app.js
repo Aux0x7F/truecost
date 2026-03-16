@@ -278,9 +278,7 @@ async function bootstrapRelayState() {
     await ensurePublicStateRepairPeer();
     state.publicState = await loadPublicState();
     state.publicStateDigest = createPublicStateDigest(state.publicState);
-    if (state.session) {
-      state.viewer = deriveIdentity(state.session.secretKeyHex);
-    }
+    primeViewerFromSession(true);
   } catch {
     state.publicState = state.publicState || getCachedPublicState();
   }
@@ -379,13 +377,7 @@ function handleSessionChanged() {
   state.notificationsLoading = false;
   state.profileMenuOpen = false;
   state.notificationsExpanded = false;
-  if (state.session && hasNostrTools()) {
-    try {
-      state.viewer = deriveIdentity(state.session.secretKeyHex);
-    } catch {
-      state.viewer = null;
-    }
-  }
+  primeViewerFromSession(hasNostrTools());
   renderNavigation();
   destroyStaticPageOverlay();
   state.staticEdit = null;
@@ -401,13 +393,14 @@ function renderNavigation() {
 
   const page = document.body.dataset.page || "";
   const isLoggedIn = Boolean(state.session);
-  const currentUser = isLoggedIn && state.viewer
-    ? state.publicState?.users?.find((user) => user.pubkey === state.viewer.pubkey) || null
+  const viewerPubkey = sessionViewerPubkey();
+  const currentUser = isLoggedIn && viewerPubkey
+    ? state.publicState?.users?.find((user) => user.pubkey === viewerPubkey) || null
     : null;
   const isAdmin = Boolean(
     isLoggedIn &&
-      state.viewer &&
-      trustedAdminPubkeys(state.publicState).includes(state.viewer.pubkey)
+      viewerPubkey &&
+      trustedAdminPubkeys(state.publicState).includes(viewerPubkey)
   );
   const notifications = isLoggedIn ? state.notifications.slice(0, 8) : [];
   const unreadCount = isLoggedIn ? notifications.length : 0;
@@ -551,6 +544,7 @@ async function initInvestigationCards() {
 
   const cachedPosts = clonePosts(state.posts);
   const cachedPublicState = state.publicState;
+  const renderedCachedCards = Boolean(cachedPosts.length);
   if (cachedPosts.length) {
     const cachedState = cachedPublicState || { drafts: [], approvedEntities: [], users: [] };
     const canEditCached = editorEntryAllowed(cachedState);
@@ -609,8 +603,10 @@ async function initInvestigationCards() {
       initializeArchiveView(entries, publicState, canEdit);
     }
   } catch {
-    renderError(homeGrid || listGrid, "Investigation feed unavailable.");
-    if (rail) renderError(rail, "Archive tools unavailable.");
+    if (!renderedCachedCards) {
+      renderError(homeGrid || listGrid, "Investigation feed unavailable.");
+      if (rail) renderError(rail, "Archive tools unavailable.");
+    }
   }
 }
 
@@ -1086,6 +1082,7 @@ async function initMapPage() {
   if (!list || !canvas) return;
   const mapReady = Boolean(state.map && state.mapCanvas === canvas);
   const cachedEntities = visibleMapEntities(state.publicState);
+  const renderedCachedMap = Boolean(cachedEntities.length);
   if (cachedEntities.length) {
     renderMapPageState(list, canvas, cachedEntities);
   } else {
@@ -1098,23 +1095,30 @@ async function initMapPage() {
     }
   }
 
-  const publicState = await getPublicState();
-  const entities = visibleMapEntities(publicState);
-  if (!entities.length) {
-    list.innerHTML = `<div class="empty-state">Published entities will appear here once approved entries are available.</div>`;
-    destroyLeafletMap();
-    state.mapViewDigest = createMapDataDigest(publicState);
-    canvas.innerHTML = `<div class="map-empty">Map data unavailable.</div>`;
-    return;
-  }
-  state.lastGoodMapEntities = entities.map((entity) => ({ ...entity }));
+  try {
+    const publicState = await getPublicState();
+    const entities = visibleMapEntities(publicState);
+    if (!entities.length) {
+      list.innerHTML = `<div class="empty-state">Published entities will appear here once approved entries are available.</div>`;
+      destroyLeafletMap();
+      state.mapViewDigest = createMapDataDigest(publicState);
+      canvas.innerHTML = `<div class="map-empty">Map data unavailable.</div>`;
+      return;
+    }
+    state.lastGoodMapEntities = entities.map((entity) => ({ ...entity }));
 
-  const posts = await loadPosts().catch(() => []);
-  const entityUsage = buildEntityUsage(posts, entities);
-  renderMapPageState(list, canvas, entities, entityUsage);
-  state.mapViewDigest = createMapDataDigest({
-    approvedEntities: entities
-  });
+    const posts = await loadPosts().catch(() => []);
+    const entityUsage = buildEntityUsage(posts, entities);
+    renderMapPageState(list, canvas, entities, entityUsage);
+    state.mapViewDigest = createMapDataDigest({
+      approvedEntities: entities
+    });
+  } catch {
+    if (!renderedCachedMap) {
+      renderError(list, "Map entries unavailable.");
+      canvas.innerHTML = `<div class="map-empty">Map data unavailable.</div>`;
+    }
+  }
 }
 
 function visibleMapEntities(publicState) {
@@ -1143,14 +1147,7 @@ async function renderComments(postSlug, publicState) {
   const comments = publicState.commentsByPost.get(postSlug) || [];
   const isLoggedIn = Boolean(state.session);
   const isAdmin = Boolean(state.viewer && trustedAdminPubkeys(publicState).includes(state.viewer.pubkey));
-  let viewerPubkey = state.viewer?.pubkey || "";
-  if (!viewerPubkey && state.session?.secretKeyHex) {
-    try {
-      viewerPubkey = deriveIdentity(state.session.secretKeyHex).pubkey;
-    } catch {
-      viewerPubkey = "";
-    }
-  }
+  const viewerPubkey = sessionViewerPubkey();
   const threadedComments = buildCommentTree(comments, publicState, viewerPubkey);
   const currentUser = isLoggedIn && viewerPubkey
     ? publicState.users.find((user) => user.pubkey === viewerPubkey) || null
@@ -3047,10 +3044,8 @@ async function hydrateNotifications(force = false) {
     return;
   }
   const publicState = await getPublicState();
-  if (!editorEntryAllowed(publicState) && !state.viewer) {
-    state.viewer = deriveIdentity(state.session.secretKeyHex);
-  }
-  if (!state.viewer) return;
+  primeViewerFromSession(false);
+  if (!state.viewer?.pubkey) return;
   state.notificationsLoading = true;
   renderNavigation();
   try {
@@ -3490,9 +3485,7 @@ async function getPublicState() {
     await ensurePublicStateRepairPeer();
     state.publicState = await loadPublicState();
     state.publicStateDigest = createPublicStateDigest(state.publicState);
-    if (state.session && !state.viewer) {
-      state.viewer = deriveIdentity(state.session.secretKeyHex);
-    }
+    primeViewerFromSession(true);
     void maybeRequestPublicStateRepair(state.publicState, "get-public-state");
     if (state.session) {
       void hydrateNotifications();
@@ -3673,7 +3666,7 @@ function createMapDataDigest(publicState) {
 }
 
 async function getViewer() {
-  if (state.viewer) return state.viewer;
+  if (state.viewer?.secretKeyHex) return state.viewer;
   if (!state.session) throw new Error("Log in first.");
   await ensureEventToolsLoaded();
   state.viewer = deriveIdentity(state.session.secretKeyHex);
@@ -3682,10 +3675,42 @@ async function getViewer() {
 
 function editorEntryAllowed(publicState) {
   if (!state.session || !trustedAdminPubkeys(publicState).length) return false;
-  if (!state.viewer) {
-    state.viewer = deriveIdentity(state.session.secretKeyHex);
+  const viewerPubkey = sessionViewerPubkey();
+  if (!viewerPubkey) return false;
+  return trustedAdminPubkeys(publicState).includes(viewerPubkey);
+}
+
+function primeViewerFromSession(deriveWhenAvailable = false) {
+  if (!state.session) {
+    state.viewer = null;
+    return null;
   }
-  return trustedAdminPubkeys(publicState).includes(state.viewer.pubkey);
+  if (state.viewer?.pubkey) {
+    if (!state.viewer.secretKeyHex && deriveWhenAvailable && hasNostrTools()) {
+      try {
+        state.viewer = deriveIdentity(state.session.secretKeyHex);
+      } catch {
+        return state.viewer;
+      }
+    }
+    return state.viewer;
+  }
+  const sessionPubkey = String(state.session.pubkey || "").trim();
+  if (sessionPubkey) {
+    state.viewer = { pubkey: sessionPubkey };
+  }
+  if ((!state.viewer || !state.viewer.pubkey) && deriveWhenAvailable && hasNostrTools()) {
+    try {
+      state.viewer = deriveIdentity(state.session.secretKeyHex);
+    } catch {
+      state.viewer = state.viewer?.pubkey ? state.viewer : null;
+    }
+  }
+  return state.viewer;
+}
+
+function sessionViewerPubkey() {
+  return String(primeViewerFromSession(false)?.pubkey || "").trim();
 }
 
 function trustedAdminPubkeys(publicState) {
