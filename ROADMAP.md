@@ -8,7 +8,7 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - Keep improving relay compatibility and degraded-mode behavior so the site remains usable even when some relays are noisy or incomplete.
 - Tighten the Linux pinner setup path into a repeatable install, update, and recovery workflow for non-developer operators.
 - Expand end-to-end browser validation around submissions, moderation, publishing, and comment handling before each release.
-- Extend the live collaborative layer from static pages into investigations and entity records without regressing the static-first baseline.
+- Extend the live collaborative layer from static pages and investigation detail/editor flows into the archive and entity records without regressing the static-first baseline.
 - Add clearer history and conflict handling for live collaborative units before each bakedown cycle, so operators can see what will ship and why.
 
 ## Publishing Workflow

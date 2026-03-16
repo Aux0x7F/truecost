@@ -63,10 +63,11 @@ Today, True Cost already has:
 - in-place page editing and editorial review mechanics
 - CRDT-backed live overlay plumbing for static page units
 - trusted static-page live updates applied after the static baseline loads
+- trusted investigation live updates applied in the editor and detail view on top of the static or draft baseline
 
 Today, True Cost does not yet have:
 
-- live CRDT-backed overlay on investigations and entity records
+- archive-wide and entity-record live overlay coverage
 - periodic PR cadence driven from the live collaborative unit layer instead of the older review queue
 
 ## Target implementation

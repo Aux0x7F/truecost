@@ -12,6 +12,7 @@ import {
   ensureBlobAvailable,
   hasNostrTools,
   connectStaticPageOverlay,
+  connectStructuredUnitOverlay,
   loadAdminKeyShare,
   loadInboxSubmissions,
   loadPublicState,
@@ -91,6 +92,7 @@ const state = {
   archiveStatusMenuOpen: false,
   archiveFilterTimer: null,
   pageOverlay: null,
+  investigationOverlay: null,
   staticEdit: null,
   staticEditListenersBound: false,
   map: null,
@@ -297,6 +299,7 @@ function handlePublicPageHide() {
     state.publicStateRefreshTimer = 0;
   }
   destroyStaticPageOverlay();
+  destroyLiveInvestigationOverlay();
   stopPublicStateRepairPeer();
 }
 
@@ -669,6 +672,7 @@ function hydrateArchiveSummaryLinks(posts, publicState) {
 async function initInvestigationDetail() {
   const article = document.querySelector("[data-investigation-article]");
   if (!article) return;
+  destroyLiveInvestigationOverlay();
   article.innerHTML = renderLoadingState("Looking up article...");
   const commentPanel = document.querySelector("[data-comment-panel]");
   const reviewShell = document.querySelector("[data-investigation-review-shell]");
@@ -702,68 +706,37 @@ async function initInvestigationDetail() {
       : posts.find((item) => item.slug === slug) || posts[0];
     if (!post) throw new Error("No investigations found.");
 
-    renderMarkdown(article, post.body);
-    setText("[data-investigation-title]", post.title);
-    setText("[data-investigation-summary]", post.summary);
-    setText("[data-investigation-meta]", buildArticleMetaLine(post));
-    const tags = document.querySelector("[data-investigation-kicker]");
-    if (tags) tags.innerHTML = renderTagList(post.tags);
-    if (tagsHost instanceof HTMLElement && tagsShell instanceof HTMLElement) {
-      const hasTags = Array.isArray(post.tags) && post.tags.length;
-      tagsHost.innerHTML = hasTags ? renderTagList(post.tags) : "";
-      tagsShell.hidden = !hasTags;
-    }
-    const records = document.querySelector("[data-investigation-records]");
-    if (records) {
-      const hasRecords = Array.isArray(post.records) && post.records.length;
-      records.innerHTML = renderRecordList(post.records);
-      if (recordsShell instanceof HTMLElement) recordsShell.hidden = !hasRecords;
-    }
-    const related = document.querySelector("[data-investigation-related]");
-    if (related) {
-      related.innerHTML = isDraftPreview
-        ? ""
-        : posts
-            .filter((item) => item.slug !== post.slug)
-            .slice(0, 2)
-            .map((item) => renderInvestigationCard(item, true))
-            .join("");
-    }
+    state.investigationOverlay = {
+      documentId: investigationDocumentId(draftSlug || post.slug || slug),
+      slug: cleanSlug(draftSlug || post.slug || slug),
+      baselinePost: cloneInvestigationPost(post),
+      currentPost: cloneInvestigationPost(post),
+      liveContent: null,
+      liveFingerprint: "",
+      controller: null,
+      pollTimer: 0,
+      status: "idle",
+      posts,
+      publicState,
+      isDraftPreview,
+      draft,
+      article,
+      commentPanel,
+      reviewShell,
+      tagsShell,
+      tagsHost,
+      recordsShell,
+      mapShell,
+      mapCanvas
+    };
 
-    enrichArticleEntities(article, publicState);
-    if (reviewShell instanceof HTMLElement) {
-      if (isDraftPreview) {
-        reviewShell.hidden = false;
-        reviewShell.innerHTML = renderReviewPreviewPanel(draft);
-        bindReviewPreviewPanel(reviewShell, draft);
-      } else {
-        reviewShell.hidden = true;
-        reviewShell.innerHTML = "";
-      }
-    }
-    if (mapShell instanceof HTMLElement && mapCanvas instanceof HTMLElement) {
-      const detailEntities = archiveEntitiesForEntries([post], publicState);
-      const mappedEntities = detailEntities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng));
-      if (mappedEntities.length) {
-        mapShell.hidden = false;
-        renderLeafletPreviewMap(mapCanvas, mappedEntities);
-      } else {
-        mapShell.hidden = true;
-        destroyLeafletPreview(mapCanvas);
-        mapCanvas.innerHTML = "";
-      }
-    }
-    if (commentPanel instanceof HTMLElement) {
-      commentPanel.hidden = isDraftPreview;
-      if (!isDraftPreview) {
-        await renderComments(post.slug, publicState);
-      } else {
-        commentPanel.innerHTML = "";
-      }
-    }
-    document.title = `${post.title} | ${SITE.shortName}`;
+    void connectLiveInvestigationDetailOverlay();
+    await renderInvestigationDetailState(state.investigationOverlay, state.investigationOverlay.currentPost, {
+      refreshComments: true
+    });
   } catch {
     renderError(article, "This case file could not be loaded.");
+    destroyLiveInvestigationOverlay();
     if (reviewShell instanceof HTMLElement) {
       reviewShell.hidden = true;
       reviewShell.innerHTML = "";
@@ -776,6 +749,215 @@ async function initInvestigationDetail() {
       mapCanvas.innerHTML = "";
     }
   }
+}
+
+async function renderInvestigationDetailState(overlayState, post, options = {}) {
+  if (!overlayState || !post) return;
+  const {
+    article,
+    commentPanel,
+    reviewShell,
+    tagsShell,
+    tagsHost,
+    recordsShell,
+    mapShell,
+    mapCanvas,
+    publicState,
+    posts,
+    isDraftPreview,
+    draft
+  } = overlayState;
+  const refreshComments = Boolean(options.refreshComments);
+
+  renderMarkdown(article, post.body);
+  setText("[data-investigation-title]", post.title);
+  setText("[data-investigation-summary]", post.summary);
+  setText("[data-investigation-meta]", buildArticleMetaLine(post));
+  const tags = document.querySelector("[data-investigation-kicker]");
+  if (tags) tags.innerHTML = renderTagList(post.tags);
+  if (tagsHost instanceof HTMLElement && tagsShell instanceof HTMLElement) {
+    const hasTags = Array.isArray(post.tags) && post.tags.length;
+    tagsHost.innerHTML = hasTags ? renderTagList(post.tags) : "";
+    tagsShell.hidden = !hasTags;
+  }
+  const records = document.querySelector("[data-investigation-records]");
+  if (records) {
+    const hasRecords = Array.isArray(post.records) && post.records.length;
+    records.innerHTML = renderRecordList(post.records);
+    if (recordsShell instanceof HTMLElement) recordsShell.hidden = !hasRecords;
+  }
+  const related = document.querySelector("[data-investigation-related]");
+  if (related) {
+    related.innerHTML = isDraftPreview
+      ? ""
+      : posts
+          .filter((item) => item.slug !== post.slug)
+          .slice(0, 2)
+          .map((item) => renderInvestigationCard(item, true))
+          .join("");
+  }
+
+  enrichArticleEntities(article, publicState);
+  if (reviewShell instanceof HTMLElement) {
+    if (isDraftPreview && draft) {
+      reviewShell.hidden = false;
+      reviewShell.innerHTML = renderReviewPreviewPanel(draft);
+      bindReviewPreviewPanel(reviewShell, draft);
+    } else {
+      reviewShell.hidden = true;
+      reviewShell.innerHTML = "";
+    }
+  }
+  if (mapShell instanceof HTMLElement && mapCanvas instanceof HTMLElement) {
+    const detailEntities = archiveEntitiesForEntries([post], publicState);
+    const mappedEntities = detailEntities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng));
+    if (mappedEntities.length) {
+      mapShell.hidden = false;
+      renderLeafletPreviewMap(mapCanvas, mappedEntities);
+    } else {
+      mapShell.hidden = true;
+      destroyLeafletPreview(mapCanvas);
+      mapCanvas.innerHTML = "";
+    }
+  }
+  if (commentPanel instanceof HTMLElement) {
+    commentPanel.hidden = isDraftPreview;
+    if (refreshComments && !isDraftPreview) {
+      await renderComments(post.slug, publicState);
+    } else if (isDraftPreview) {
+      commentPanel.innerHTML = "";
+    }
+  }
+  document.title = `${post.title} | ${SITE.shortName}`;
+}
+
+async function connectLiveInvestigationDetailOverlay() {
+  const overlayState = state.investigationOverlay;
+  if (!overlayState?.documentId || overlayState.controller) return;
+
+  try {
+    const secretKeyHex = await getRequestSignerSecretKey();
+    if (!secretKeyHex) return;
+    overlayState.controller = await connectStructuredUnitOverlay({
+      documentId: overlayState.documentId,
+      secretKeyHex,
+      kind: SITE.nostr.kinds.collabDocument,
+      getTrustedPubkeys: () => trustedAdminPubkeys(state.publicState),
+      canPublish: () => false,
+      onRemoteContent: (content, detail) => {
+        void handleLiveInvestigationContent(content, detail);
+      },
+      onStatus: (detail) => handleLiveInvestigationStatus(detail),
+    });
+    const initialContent = overlayState.controller?.getContent?.() || {};
+    if (Object.keys(initialContent).length) {
+      await handleLiveInvestigationContent(initialContent, {
+        documentId: overlayState.documentId,
+        hasLiveContent: true,
+        origin: "initial"
+      });
+    }
+    startLiveInvestigationPolling(overlayState);
+  } catch {
+    return;
+  }
+}
+
+function destroyLiveInvestigationOverlay() {
+  if (state.investigationOverlay?.pollTimer) {
+    window.clearInterval(state.investigationOverlay.pollTimer);
+    state.investigationOverlay.pollTimer = 0;
+  }
+  try {
+    state.investigationOverlay?.controller?.destroy?.();
+  } catch {
+    return;
+  } finally {
+    state.investigationOverlay = null;
+  }
+}
+
+function handleLiveInvestigationStatus(detail) {
+  if (!state.investigationOverlay || detail?.documentId !== state.investigationOverlay.documentId) return;
+  state.investigationOverlay.status = String(detail?.state || "idle");
+}
+
+async function handleLiveInvestigationContent(content, detail) {
+  const overlayState = state.investigationOverlay;
+  if (!overlayState || detail?.documentId !== overlayState.documentId) return;
+  overlayState.liveFingerprint = detail?.hasLiveContent ? JSON.stringify(content || {}) : "";
+  const nextPost = detail?.hasLiveContent
+    ? mergeInvestigationPostOverlay(overlayState.baselinePost, content)
+    : cloneInvestigationPost(overlayState.baselinePost);
+  overlayState.liveContent = detail?.hasLiveContent ? cloneInvestigationPost(content) : null;
+  overlayState.currentPost = cloneInvestigationPost(nextPost);
+  await renderInvestigationDetailState(overlayState, overlayState.currentPost, {
+    refreshComments: false
+  });
+}
+
+function startLiveInvestigationPolling(overlayState) {
+  if (!overlayState?.controller || overlayState.pollTimer) return;
+  overlayState.pollTimer = window.setInterval(() => {
+    const current = overlayState.controller?.getContent?.() || {};
+    const fingerprint = Object.keys(current).length ? JSON.stringify(current) : "";
+    if (fingerprint === overlayState.liveFingerprint) return;
+    void handleLiveInvestigationContent(current, {
+      documentId: overlayState.documentId,
+      hasLiveContent: Boolean(fingerprint),
+      origin: "poll"
+    });
+  }, 1500);
+}
+
+function investigationDocumentId(value) {
+  const slug = cleanSlug(value || "");
+  return slug ? `investigation:${slug}` : "";
+}
+
+function mergeInvestigationPostOverlay(basePost, liveContent) {
+  const base = cloneInvestigationPost(basePost);
+  const live = liveContent && typeof liveContent === "object" ? liveContent : {};
+  const next = {
+    ...base,
+    body: Object.prototype.hasOwnProperty.call(live, "markdown")
+      ? String(live.markdown || "")
+      : Object.prototype.hasOwnProperty.call(live, "body")
+        ? String(live.body || "")
+        : base.body,
+    markdown: Object.prototype.hasOwnProperty.call(live, "markdown")
+      ? String(live.markdown || "")
+      : Object.prototype.hasOwnProperty.call(live, "body")
+        ? String(live.body || "")
+        : String(base.markdown || base.body || "")
+  };
+  for (const key of ["title", "date", "summary", "location", "status", "statusLabel", "author_pubkey"]) {
+    if (Object.prototype.hasOwnProperty.call(live, key)) {
+      next[key] = String(live[key] ?? "");
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(live, "tags")) {
+    next.tags = normalizeLiveArray(live.tags);
+  }
+  if (Object.prototype.hasOwnProperty.call(live, "entity_refs")) {
+    next.entity_refs = normalizeLiveArray(live.entity_refs);
+  }
+  if (Object.prototype.hasOwnProperty.call(live, "records")) {
+    next.records = Array.isArray(live.records) ? JSON.parse(JSON.stringify(live.records)) : [];
+  }
+  if (Object.prototype.hasOwnProperty.call(live, "featured")) {
+    next.featured = Boolean(live.featured);
+  }
+  return next;
+}
+
+function cloneInvestigationPost(post) {
+  return JSON.parse(JSON.stringify(post || {}));
+}
+
+function normalizeLiveArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item ?? "").trim()).filter(Boolean);
 }
 
 async function initMarkdownArticles() {

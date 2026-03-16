@@ -4,6 +4,7 @@ import {
   createDeterministicSessionApi,
   createNostrCmsClient,
   createStaticPageOverlayApi,
+  createStructuredUnitOverlayApi,
   sanitizeTrustedHtml,
   sanitizeUrl
 } from "../../vendor/nostr-site-support.esm.js";
@@ -11,6 +12,7 @@ import {
 const client = createNostrCmsClient(SITE);
 const blobs = createBlobStoreApi(SITE, client);
 const staticPages = createStaticPageOverlayApi(SITE);
+const structuredUnits = createStructuredUnitOverlayApi(SITE);
 let publicStatePromise = null;
 let lastGoodPublicState = null;
 
@@ -59,6 +61,11 @@ export const {
   createRoomId: createStaticPageRoomId,
   ensureEventToolsLoaded: ensureStaticPageToolsLoaded,
 } = staticPages;
+export const {
+  connectUnit: connectStructuredUnitOverlay,
+  createRoomId: createStructuredUnitRoomId,
+  ensureEventToolsLoaded: ensureStructuredUnitToolsLoaded,
+} = structuredUnits;
 
 export async function loadPublicState(force = false) {
   if (publicStatePromise) return publicStatePromise;
@@ -349,6 +356,7 @@ export default {
   ...client,
   ...blobs,
   ...staticPages,
+  ...structuredUnits,
   loadPublicState,
   warmPublicState,
   publicStateNeedsRepair
