@@ -14,7 +14,7 @@ const blobs = createBlobStoreApi(SITE, client);
 const staticPages = createStaticPageOverlayApi(SITE);
 const structuredUnits = createStructuredUnitOverlayApi(SITE);
 let publicStatePromise = null;
-let lastGoodPublicState = null;
+let lastGoodPublicState = clonePublicState(client.getCachedPublicState?.() || null);
 
 export const {
   getEventTools,
@@ -26,6 +26,7 @@ export const {
   deriveIdentity,
   generateSecretKeyHex,
   resolveSitePubkey,
+  getCachedPublicState: getCachedPublicStateFromClient,
   publicStateNeedsRepair,
   requestPublicStateRepair,
   startPublicStateRepairPeer,
@@ -73,12 +74,12 @@ export async function loadPublicState(force = false) {
     .then((publicState) => {
       const normalized = normalizePublicState(publicState, lastGoodPublicState);
       if (isUsablePublicState(normalized)) {
-        lastGoodPublicState = normalized;
+        lastGoodPublicState = clonePublicState(normalized);
       }
       return normalized;
     })
     .catch((error) => {
-      if (lastGoodPublicState) return lastGoodPublicState;
+      if (lastGoodPublicState) return clonePublicState(lastGoodPublicState);
       throw error;
     })
     .finally(() => {
@@ -88,7 +89,17 @@ export async function loadPublicState(force = false) {
 }
 
 export function warmPublicState(force = false) {
-  return loadPublicState(force).catch(() => lastGoodPublicState || null);
+  return loadPublicState(force).catch(() => clonePublicState(lastGoodPublicState));
+}
+
+export function getCachedPublicState() {
+  const cached = clonePublicState(lastGoodPublicState);
+  if (cached) return cached;
+  const next = clonePublicState(getCachedPublicStateFromClient?.() || null);
+  if (next && isUsablePublicState(next)) {
+    lastGoodPublicState = clonePublicState(next);
+  }
+  return next;
 }
 
 function normalizePublicState(publicState, previousPublicState) {
@@ -290,6 +301,18 @@ function isBlankValue(value) {
 function cloneValue(value) {
   if (Array.isArray(value)) return value.map((item) => cloneValue(item));
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cloneValue(item)]));
+  return value;
+}
+
+function clonePublicState(value) {
+  if (!value || typeof value !== "object") return null;
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(value);
+    } catch {
+      return value;
+    }
+  }
   return value;
 }
 

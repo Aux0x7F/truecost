@@ -13,6 +13,7 @@ import {
   hasNostrTools,
   connectStaticPageOverlay,
   connectStructuredUnitOverlay,
+  getCachedPublicState,
   loadAdminKeyShare,
   loadInboxSubmissions,
   loadPublicState,
@@ -69,18 +70,21 @@ const STATIC_PAGE_META = Object.freeze({
   editor: { title: "Editor page", path: "./editor.html" }
 });
 const STATIC_EDITABLE_PAGES = new Set(Object.keys(STATIC_PAGE_META));
+const initialPublicState = getCachedPublicState();
+const initialPosts = loadCachedPosts();
 
 const state = {
   session: getStoredSession(),
   guestSession: getStoredGuestSession(),
   viewer: null,
-  publicState: null,
-  publicStateDigest: "",
+  publicState: initialPublicState,
+  publicStateDigest: createPublicStateDigest(initialPublicState),
   publicStateRefreshTimer: 0,
   publicStateRefreshInFlight: false,
   publicStateRepairPeerStarted: false,
   publicStateRepairInFlight: false,
   publicStateRepairRequestedAt: 0,
+  posts: initialPosts,
   postsPromise: null,
   commentReply: null,
   notifications: [],
@@ -278,7 +282,7 @@ async function bootstrapRelayState() {
       state.viewer = deriveIdentity(state.session.secretKeyHex);
     }
   } catch {
-    state.publicState = null;
+    state.publicState = state.publicState || getCachedPublicState();
   }
   void publishVisitPulse();
   void maybeRequestPublicStateRepair(state.publicState, "bootstrap");
@@ -332,7 +336,7 @@ function startBackgroundPrefetch() {
     fetch("./content/pages/guide.md", { cache: "force-cache" }).catch(() => null);
     fetch("./vendor/leaflet.js", { cache: "force-cache" }).catch(() => null);
     fetch("./vendor/leaflet.css", { cache: "force-cache" }).catch(() => null);
-    void loadPosts().catch(() => []);
+    void refreshPosts().catch(() => []);
     void warmPublicState().catch(() => null);
     if (state.session?.secretKeyHex) {
       void loadUserSubmissions(state.session.secretKeyHex).catch(() => []);
@@ -544,12 +548,41 @@ async function initInvestigationCards() {
   const rail = document.querySelector("[data-investigation-rail]");
   const archiveSummaryHosts = document.querySelectorAll("[data-archive-summary]");
   if (!homeGrid && !listGrid && !archiveSummaryHosts.length) return;
-  if (homeGrid) homeGrid.innerHTML = renderLoadingState("Looking up featured investigations...");
-  if (listGrid) listGrid.innerHTML = renderLoadingState("Looking up investigations...");
-  if (rail) rail.innerHTML = renderLoadingState("Looking up filters and map data...");
+
+  const cachedPosts = clonePosts(state.posts);
+  const cachedPublicState = state.publicState;
+  if (cachedPosts.length) {
+    const cachedState = cachedPublicState || { drafts: [], approvedEntities: [], users: [] };
+    const canEditCached = editorEntryAllowed(cachedState);
+    if (archiveSummaryHosts.length) hydrateArchiveSummaryLinks(cachedPosts, cachedState);
+    if (homeGrid) {
+      const count = Number(homeGrid.getAttribute("data-count") || "2");
+      homeGrid.innerHTML = cachedPosts
+        .filter((post) => post.featured)
+        .slice(0, count)
+        .map((post) => renderInvestigationCard(post, true))
+        .join("");
+    }
+    if (listGrid) {
+      const entries = canEditCached
+        ? buildInvestigationArchiveEntries(cachedPosts, investigationDrafts(cachedState.drafts || []))
+        : cachedPosts.map((post) => ({
+            ...post,
+            archiveStatus: "posted",
+            statusLabel: "Posted",
+            href: `./investigation.html?slug=${encodeURIComponent(post.slug)}`,
+            actionLabel: "Open investigation"
+          }));
+      initializeArchiveView(entries, cachedState, canEditCached);
+    }
+  } else {
+    if (homeGrid) homeGrid.innerHTML = renderLoadingState("Looking up featured investigations...");
+    if (listGrid) listGrid.innerHTML = renderLoadingState("Looking up investigations...");
+    if (rail) rail.innerHTML = renderLoadingState("Looking up filters and map data...");
+  }
 
   try {
-    const posts = await loadPosts();
+    const posts = await refreshPosts();
     const publicState = await getPublicState();
     const canEdit = editorEntryAllowed(publicState);
     if (archiveSummaryHosts.length) {
@@ -713,7 +746,6 @@ async function initInvestigationDetail() {
   const article = document.querySelector("[data-investigation-article]");
   if (!article) return;
   destroyLiveInvestigationOverlay();
-  article.innerHTML = renderLoadingState("Looking up article...");
   const commentPanel = document.querySelector("[data-comment-panel]");
   const reviewShell = document.querySelector("[data-investigation-review-shell]");
   const tagsShell = document.querySelector("[data-investigation-tags-shell]");
@@ -721,14 +753,44 @@ async function initInvestigationDetail() {
   const recordsShell = document.querySelector("[data-investigation-records-shell]");
   const mapShell = document.querySelector("[data-investigation-map-shell]");
   const mapCanvas = document.querySelector("[data-investigation-map-canvas]");
-  if (commentPanel) commentPanel.innerHTML = renderLoadingState("Looking up discussion...");
+  const params = new URLSearchParams(window.location.search);
+  const slug = cleanSlug(params.get("slug") || "");
+  const draftSlug = cleanSlug(params.get("draft") || "");
+  const cachedPosts = clonePosts(state.posts);
+  const cachedPublicState = state.publicState;
+
+  if (!draftSlug && cachedPosts.length) {
+    const cachedPost = cachedPosts.find((item) => item.slug === slug) || cachedPosts[0] || null;
+    if (cachedPost) {
+      if (commentPanel instanceof HTMLElement) commentPanel.innerHTML = "";
+      await renderInvestigationDetailState({
+        article,
+        commentPanel,
+        reviewShell,
+        tagsShell,
+        tagsHost,
+        recordsShell,
+        mapShell,
+        mapCanvas,
+        publicState: cachedPublicState || { approvedEntities: [], commentsByPost: new Map(), users: [] },
+        posts: cachedPosts,
+        isDraftPreview: false,
+        draft: null
+      }, cachedPost, {
+        refreshComments: true
+      });
+    } else {
+      article.innerHTML = renderLoadingState("Looking up article...");
+      if (commentPanel) commentPanel.innerHTML = renderLoadingState("Looking up discussion...");
+    }
+  } else {
+    article.innerHTML = renderLoadingState("Looking up article...");
+    if (commentPanel) commentPanel.innerHTML = renderLoadingState("Looking up discussion...");
+  }
 
   try {
-    const posts = await loadPosts();
+    const posts = await refreshPosts();
     const publicState = await getPublicState();
-    const params = new URLSearchParams(window.location.search);
-    const slug = cleanSlug(params.get("slug") || "");
-    const draftSlug = cleanSlug(params.get("draft") || "");
     const canReview = editorEntryAllowed(publicState);
     let draft = draftSlug
       ? investigationDrafts(publicState.drafts || []).find((item) => item.slug === draftSlug) || null
@@ -1023,22 +1085,21 @@ async function initMapPage() {
   const canvas = document.querySelector("[data-map-canvas]");
   if (!list || !canvas) return;
   const mapReady = Boolean(state.map && state.mapCanvas === canvas);
-  const hasStableMapData = Array.isArray(state.lastGoodMapEntities) && state.lastGoodMapEntities.length;
-  if (!hasStableMapData) {
-    list.innerHTML = renderLoadingState("Looking up map entries...");
-  }
-  if (!mapReady) {
-    canvas.innerHTML = renderLoadingState("Looking up map data...");
+  const cachedEntities = visibleMapEntities(state.publicState);
+  if (cachedEntities.length) {
+    renderMapPageState(list, canvas, cachedEntities);
+  } else {
+    const hasStableMapData = Array.isArray(state.lastGoodMapEntities) && state.lastGoodMapEntities.length;
+    if (!hasStableMapData) {
+      list.innerHTML = renderLoadingState("Looking up map entries...");
+    }
+    if (!mapReady) {
+      canvas.innerHTML = renderLoadingState("Looking up map data...");
+    }
   }
 
   const publicState = await getPublicState();
-  const approvedEntities = Array.isArray(publicState?.approvedEntities) ? publicState.approvedEntities : [];
-  const useFallbackEntities =
-    !approvedEntities.length &&
-    publicStateNeedsRepair(publicState) &&
-    Array.isArray(state.lastGoodMapEntities) &&
-    state.lastGoodMapEntities.length;
-  const entities = approvedEntities.length ? approvedEntities : useFallbackEntities ? state.lastGoodMapEntities : [];
+  const entities = visibleMapEntities(publicState);
   if (!entities.length) {
     list.innerHTML = `<div class="empty-state">Published entities will appear here once approved entries are available.</div>`;
     destroyLeafletMap();
@@ -1050,13 +1111,27 @@ async function initMapPage() {
 
   const posts = await loadPosts().catch(() => []);
   const entityUsage = buildEntityUsage(posts, entities);
-  list.innerHTML = entities
-    .map((entity) => renderEntityCard(entity, entityUsage.get(entity.slug) || []))
-    .join("");
-  renderLeafletMap(canvas, entities);
+  renderMapPageState(list, canvas, entities, entityUsage);
   state.mapViewDigest = createMapDataDigest({
     approvedEntities: entities
   });
+}
+
+function visibleMapEntities(publicState) {
+  const approvedEntities = Array.isArray(publicState?.approvedEntities) ? publicState.approvedEntities : [];
+  if (approvedEntities.length) return approvedEntities;
+  if (Array.isArray(state.lastGoodMapEntities) && state.lastGoodMapEntities.length) {
+    return state.lastGoodMapEntities.map((entity) => ({ ...entity }));
+  }
+  return [];
+}
+
+function renderMapPageState(list, canvas, entities, entityUsage = null) {
+  const posts = entityUsage || buildEntityUsage(clonePosts(state.posts), entities);
+  list.innerHTML = entities
+    .map((entity) => renderEntityCard(entity, posts.get(entity.slug) || []))
+    .join("");
+  renderLeafletMap(canvas, entities);
   bindMapEntityCards();
   focusRequestedEntity();
 }
@@ -2389,16 +2464,13 @@ function renderLeafletPreviewMap(canvas, entities) {
     }).addTo(markers);
     marker.bindTooltip(escapeHtml(entity.name), { direction: "top", opacity: 0.92 });
   }
-  if (points.length) {
-    if (typeof previewMap.flyToBounds === "function") {
-      previewMap.flyToBounds(points, { padding: [28, 28], duration: 0.4 });
-    } else {
-      previewMap.fitBounds(points, { padding: [28, 28] });
-    }
-  } else {
-    previewMap.setView(SITE.map.defaultCenter, SITE.map.defaultZoom);
-  }
-  window.setTimeout(() => previewMap.invalidateSize(), 60);
+  queueLeafletBoundsFit(previewMap, points, {
+    padding: [28, 28],
+    duration: 0.4,
+    defaultCenter: SITE.map.defaultCenter,
+    defaultZoom: SITE.map.defaultZoom,
+    singleZoom: 8
+  });
 }
 
 function filterArchiveEntries(entries, publicState, filters) {
@@ -2613,11 +2685,32 @@ function buildToc(article, target) {
 }
 
 async function loadPosts() {
-  if (!state.postsPromise) {
-    state.postsPromise = fetchJson("./content/investigations/index.json")
-      .then((data) => Promise.all((Array.isArray(data.files) ? data.files : []).map((file) => loadPost(file))))
-      .then((posts) => posts.filter(Boolean).sort((left, right) => String(right.date || "").localeCompare(String(left.date || ""))));
+  if (state.postsPromise) return state.postsPromise;
+  if (Array.isArray(state.posts) && state.posts.length) {
+    return clonePosts(state.posts);
   }
+  return refreshPosts();
+}
+
+async function refreshPosts() {
+  if (state.postsPromise) return state.postsPromise;
+  state.postsPromise = fetchJson("./content/investigations/index.json")
+    .then((data) => Promise.all((Array.isArray(data.files) ? data.files : []).map((file) => loadPost(file))))
+    .then((posts) => {
+      const nextPosts = posts
+        .filter(Boolean)
+        .sort((left, right) => String(right.date || "").localeCompare(String(left.date || "")));
+      state.posts = clonePosts(nextPosts);
+      persistCachedPosts(state.posts);
+      return clonePosts(state.posts);
+    })
+    .catch((error) => {
+      if (Array.isArray(state.posts) && state.posts.length) return clonePosts(state.posts);
+      throw error;
+    })
+    .finally(() => {
+      state.postsPromise = null;
+    });
   return state.postsPromise;
 }
 
@@ -2633,6 +2726,34 @@ async function loadPost(file) {
     slug: parsed.meta.slug || slugify(file.replace(/\.md$/i, "")),
     body: parsed.body
   };
+}
+
+function clonePosts(posts) {
+  return JSON.parse(JSON.stringify(Array.isArray(posts) ? posts : []));
+}
+
+function loadCachedPosts() {
+  if (typeof window === "undefined" || !window.localStorage) return [];
+  try {
+    const raw = window.localStorage.getItem(postsCacheKey());
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? clonePosts(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
+function persistCachedPosts(posts) {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(postsCacheKey(), JSON.stringify(clonePosts(posts)));
+  } catch {
+    return;
+  }
+}
+
+function postsCacheKey() {
+  return `${SITE.nostr.storageNamespace}.posts-cache`;
 }
 
 async function loadDraftBySlug(slug) {
@@ -3240,22 +3361,64 @@ function renderLeafletMap(canvas, entities) {
     });
   }
 
-  if (points.length) {
-    if (typeof state.map.flyToBounds === "function") {
-      state.map.flyToBounds(points, { padding: [40, 40], duration: 0.45 });
-    } else {
-      state.map.fitBounds(points, { padding: [40, 40] });
+  queueLeafletBoundsFit(state.map, points, {
+    padding: [40, 40],
+    duration: 0.45,
+    defaultCenter: SITE.map.defaultCenter,
+    defaultZoom: SITE.map.defaultZoom,
+    singleZoom: 8,
+    onSettled: () => {
+      if (state.pendingMapEntitySlug) {
+        scheduleMapEntityFocus(state.pendingMapEntitySlug, { scrollCard: false });
+      }
     }
-  } else {
-    state.map.setView(SITE.map.defaultCenter, SITE.map.defaultZoom);
-  }
+  });
+}
 
-  window.setTimeout(() => {
-    state.map?.invalidateSize();
-    if (state.pendingMapEntitySlug) {
-      scheduleMapEntityFocus(state.pendingMapEntitySlug, { scrollCard: false });
+function queueLeafletBoundsFit(map, points, options = {}) {
+  if (!map) return;
+  const validPoints = (Array.isArray(points) ? points : []).filter(
+    (point) => Array.isArray(point) && Number.isFinite(point[0]) && Number.isFinite(point[1])
+  );
+  const padding = Array.isArray(options.padding) ? options.padding : [40, 40];
+  const duration = Number.isFinite(options.duration) ? options.duration : 0.45;
+  const defaultCenter = Array.isArray(options.defaultCenter) ? options.defaultCenter : SITE.map.defaultCenter;
+  const defaultZoom = Number.isFinite(options.defaultZoom) ? options.defaultZoom : SITE.map.defaultZoom;
+  const singleZoom = Number.isFinite(options.singleZoom) ? options.singleZoom : Math.max(map.getZoom?.() || defaultZoom, 8);
+
+  const applyFit = (animate) => {
+    map.invalidateSize({ pan: false });
+    if (validPoints.length > 1 && window.L?.latLngBounds) {
+      const bounds = window.L.latLngBounds(validPoints);
+      if (bounds.isValid()) {
+        if (animate && typeof map.flyToBounds === "function") {
+          map.flyToBounds(bounds, { padding, duration });
+        } else {
+          map.fitBounds(bounds, { padding });
+        }
+        return;
+      }
     }
-  }, 50);
+    if (validPoints.length === 1) {
+      const target = validPoints[0];
+      if (animate && typeof map.flyTo === "function") {
+        map.flyTo(target, singleZoom, { duration });
+      } else {
+        map.setView(target, singleZoom);
+      }
+      return;
+    }
+    map.setView(defaultCenter, defaultZoom);
+  };
+
+  const raf = typeof window.requestAnimationFrame === "function"
+    ? window.requestAnimationFrame.bind(window)
+    : (callback) => window.setTimeout(callback, 0);
+  raf(() => applyFit(true));
+  window.setTimeout(() => {
+    applyFit(false);
+    if (typeof options.onSettled === "function") options.onSettled();
+  }, 180);
 }
 
 function bindMapEntityCards() {

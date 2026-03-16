@@ -2319,10 +2319,64 @@ h3 {
   min-height: 24rem;
 }
 
-.workspace-rail-panel {
+.workspace-rail-stack {
+  display: grid;
+  gap: 1rem;
   position: sticky;
   top: 6rem;
   align-self: start;
+}
+
+.workspace-rail-panel {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.workspace-rail-copy {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.workspace-stats-card {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.workspace-stats-card__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.workspace-stats-card__item {
+  display: grid;
+  gap: 0.2rem;
+  width: 100%;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(18, 18, 18, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-stats-card__item strong {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.workspace-stats-card__item span {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.workspace-stats-card__item.is-active,
+.workspace-stats-card__item:hover,
+.workspace-stats-card__item:focus-visible {
+  border-color: rgba(156, 29, 24, 0.24);
+  background: rgba(156, 29, 24, 0.08);
+  outline: none;
 }
 
 .workspace-filter-bar {
@@ -3323,6 +3377,11 @@ body.is-static-editing [data-static-edit]:focus {
   }
 
   .workspace-rail-panel {
+    position: static;
+    top: auto;
+  }
+
+  .workspace-rail-stack {
     position: static;
     top: auto;
   }
