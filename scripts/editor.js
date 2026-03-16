@@ -9,7 +9,8 @@ import {
   publicStateNeedsRepair,
   publishTaggedJson,
   requestPublicStateRepair,
-  startPublicStateRepairPeer
+  startPublicStateRepairPeer,
+  uploadPublicBlob
 } from "./core/nostr.js";
 import { getStoredSession } from "./core/session.js";
 
@@ -32,6 +33,7 @@ const editorState = {
   draftStatus: "draft",
   activePickerField: "",
   entityModal: null,
+  imageModal: null,
   modalRoot: null,
   documentClicksBound: false,
   liveController: null,
@@ -158,6 +160,7 @@ function renderEditorShell() {
           <div class="editor-actions__controls">
             <div class="editor-save-state" data-editor-status aria-live="polite">Autosave is on. Snapshot saves the current draft immediately.</div>
             <div class="button-row">
+              <button class="button-ghost" type="button" data-editor-image>Image</button>
               <button class="button-ghost" type="button" data-editor-save>Snapshot</button>
               <button class="button" type="button" data-editor-submit>Send to review</button>
             </div>
@@ -208,7 +211,7 @@ function renderEditorShell() {
   `;
 
   bindEditorShell();
-  renderEntityModal();
+  renderEditorModal();
   updateMetaPanel();
   updateHistoryPanels();
   hydrateEntityResults();
@@ -300,6 +303,11 @@ function bindEditorShell() {
 
     if (target.closest("[data-editor-save]")) {
       await saveDraftNow("draft");
+      return;
+    }
+
+    if (target.closest("[data-editor-image]")) {
+      openImageModal();
       return;
     }
 
@@ -660,13 +668,29 @@ function matchEntities(query) {
 }
 
 function openEntityModal(fieldName) {
+  editorState.imageModal = null;
   editorState.entityModal = createEntityModalState(fieldName);
-  renderEntityModal();
+  renderEditorModal();
 }
 
 function closeEntityModal() {
   editorState.entityModal = null;
-  renderEntityModal();
+  renderEditorModal();
+}
+
+function openImageModal() {
+  editorState.entityModal = null;
+  editorState.imageModal = {
+    alt: "",
+    caption: "",
+    placement: "full"
+  };
+  renderEditorModal();
+}
+
+function closeImageModal() {
+  editorState.imageModal = null;
+  renderEditorModal();
 }
 
 function createEntityModalState(fieldName) {
@@ -681,14 +705,25 @@ function createEntityModalState(fieldName) {
   };
 }
 
-function renderEntityModal() {
+function renderEditorModal() {
   const root = ensureModalRoot();
-  if (!editorState.entityModal) {
-    root.innerHTML = "";
+  if (editorState.imageModal) {
+    root.innerHTML = renderImageModalMarkup();
+    bindImageModal();
     return;
   }
+  if (editorState.entityModal) {
+    root.innerHTML = renderEntityModalMarkup();
+    bindEntityModal();
+    return;
+  }
+  root.innerHTML = "";
+}
+
+function renderEntityModalMarkup() {
+  if (!editorState.entityModal) return "";
   const { seedName, seedLocation, seedType, seedNotes } = editorState.entityModal;
-  root.innerHTML = `
+  return `
     <div class="modal-backdrop" data-editor-modal-backdrop>
       <section class="modal-card modal-card--editor" aria-label="Add entity">
         <div class="section-heading">
@@ -710,10 +745,7 @@ function renderEntityModal() {
           </label>
           <label class="editor-field editor-field--wide">
             <span class="sr-only">Location</span>
-            <div class="editor-picker editor-picker--modal">
-              <input name="location" type="text" maxlength="160" data-editor-location-input autocomplete="off" placeholder="Location" value="${escapeAttribute(seedLocation)}">
-              <div class="picker-results picker-results--dropdown" data-editor-location-results></div>
-            </div>
+            <input name="location" type="text" maxlength="160" autocomplete="address-level2" placeholder="Location" value="${escapeAttribute(seedLocation)}">
           </label>
           <label class="editor-field editor-field--compact">
             <span class="sr-only">Latitude</span>
@@ -735,8 +767,6 @@ function renderEntityModal() {
       </section>
     </div>
   `;
-  bindEntityModal();
-  renderLocationResults();
 }
 
 function bindEntityModal() {
@@ -746,28 +776,75 @@ function bindEntityModal() {
   root.onclick = (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
-    if (target.matches("[data-editor-modal-backdrop]")) {
+    if (target.matches("[data-editor-modal-backdrop]") || target.closest("[data-editor-modal-close]")) {
       closeEntityModal();
-      return;
-    }
-    if (target.closest("[data-editor-modal-close]")) {
-      closeEntityModal();
-      return;
-    }
-    const locationPick = target.closest("[data-editor-location-pick]");
-    if (locationPick) {
-      applyLocationPick(locationPick);
-    }
-  };
-  form.oninput = (event) => {
-    const target = event.target;
-    if (target instanceof HTMLInputElement && target.matches("[data-editor-location-input]")) {
-      renderLocationResults();
     }
   };
   form.onsubmit = async (event) => {
     event.preventDefault();
     await handleEntitySave(form);
+  };
+}
+
+function renderImageModalMarkup() {
+  if (!editorState.imageModal) return "";
+  const { alt, caption, placement } = editorState.imageModal;
+  return `
+    <div class="modal-backdrop" data-editor-modal-backdrop>
+      <section class="modal-card modal-card--editor" aria-label="Insert image">
+        <div class="section-heading">
+          <div>
+            <div class="eyebrow">Image</div>
+            <h3>Add an image to the investigation</h3>
+            <p>Upload once, then place it directly in the draft.</p>
+          </div>
+          <button class="button-ghost" type="button" data-editor-modal-close>Close</button>
+        </div>
+        <form class="form-grid editor-image-form" data-editor-image-form>
+          <label class="editor-field editor-field--wide">
+            <span class="sr-only">Image file</span>
+            <input name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" required>
+          </label>
+          <label>
+            <span class="sr-only">Alt text</span>
+            <input name="alt" type="text" maxlength="160" placeholder="Alt text" value="${escapeAttribute(alt)}">
+          </label>
+          <label>
+            <span class="sr-only">Placement</span>
+            <select name="placement" aria-label="Image placement">
+              <option value="full" ${placement === "full" ? "selected" : ""}>Full width</option>
+              <option value="left" ${placement === "left" ? "selected" : ""}>Left</option>
+              <option value="right" ${placement === "right" ? "selected" : ""}>Right</option>
+            </select>
+          </label>
+          <label class="editor-field editor-field--wide">
+            <span class="sr-only">Caption</span>
+            <input name="caption" type="text" maxlength="180" placeholder="Caption (optional)" value="${escapeAttribute(caption)}">
+          </label>
+          <div class="button-row">
+            <button class="button-ghost" type="button" data-editor-modal-close>Cancel</button>
+            <button class="button" type="submit">Insert image</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  `;
+}
+
+function bindImageModal() {
+  const root = ensureModalRoot();
+  const form = root.querySelector("[data-editor-image-form]");
+  if (!(form instanceof HTMLFormElement)) return;
+  root.onclick = (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.matches("[data-editor-modal-backdrop]") || target.closest("[data-editor-modal-close]")) {
+      closeImageModal();
+    }
+  };
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    await handleImageInsert(form);
   };
 }
 
@@ -801,6 +878,26 @@ async function handleEntitySave(form) {
   setEditorStatus(`Saved ${entity.name}.`, "success");
 }
 
+async function handleImageInsert(form) {
+  if (!editorState.session || !currentUserIsAdmin()) return;
+  const formData = new FormData(form);
+  const file = formData.get("image");
+  if (!(file instanceof File) || !file.size) return;
+  const placement = normalizeImagePlacement(formData.get("placement"));
+  const alt = String(formData.get("alt") || "").trim() || cleanFileStem(file.name);
+  const caption = String(formData.get("caption") || "").trim();
+  setEditorStatus("Uploading image...", "pending");
+  const upload = await uploadPublicBlob(editorState.session.secretKeyHex, file, {
+    purpose: "investigation-image"
+  });
+  insertEditorImageBlock(upload, { alt, caption, placement });
+  closeImageModal();
+  scheduleLocalSnapshot();
+  scheduleRelaySave();
+  scheduleLivePublish();
+  setEditorStatus("Image inserted.", "success");
+}
+
 function mergeEntityIntoState(entity) {
   if (!editorState.publicState) return;
   const nextEntities = [
@@ -826,52 +923,38 @@ function applyNewEntityToField(entity, fieldName) {
   hydrateEntityResults();
 }
 
-function renderLocationResults() {
-  const host = document.querySelector("[data-editor-location-results]");
-  const input = document.querySelector("[data-editor-location-input]");
-  if (!(host instanceof HTMLElement) || !(input instanceof HTMLInputElement)) return;
-  const query = input.value.trim();
-  const matches = uniqueLocations(query).slice(0, 6);
-  if (!query && !matches.length) {
-    host.innerHTML = "";
-    host.removeAttribute("data-open");
-    return;
+function insertEditorImageBlock(upload, options = {}) {
+  if (!upload?.url) return;
+  const alt = String(options.alt || "").trim() || "Image";
+  const placement = normalizeImagePlacement(options.placement);
+  const caption = String(options.caption || "").trim();
+  const title = caption ? `align:${placement}|${caption}` : `align:${placement}`;
+  const snippet = `![${escapeMarkdownText(alt)}](${upload.url} "${escapeMarkdownTitle(title)}")`;
+  const insertable = `\n\n${snippet}\n\n`;
+  const before = editorState.editor?.getMarkdown?.() || "";
+  if (typeof editorState.editor?.insertText === "function") {
+    editorState.editor.insertText(insertable);
+    const afterInsert = editorState.editor?.getMarkdown?.() || "";
+    if (afterInsert !== before && afterInsert.includes(upload.url)) return;
   }
-  host.setAttribute("data-open", "true");
-  host.innerHTML = `
-    ${matches.length
-      ? matches
-          .map(
-            (location) => `
-              <button class="picker-chip" type="button" data-editor-location-pick="${escapeAttribute(location)}">
-                <strong>${escapeHtml(location)}</strong>
-              </button>
-            `
-          )
-          .join("")
-      : `<div class="picker-hint">${query ? "No saved location matches yet." : "Start typing to reuse a location."}</div>`}
-    ${query
-      ? `<button class="picker-create" type="button" data-editor-location-pick="${escapeAttribute(query)}">
-          <strong>Use "${escapeHtml(query)}"</strong>
-          <span>Keep this exact location</span>
-        </button>`
-      : ""}
-  `;
+  editorState.editor?.setMarkdown?.(`${String(before || "").trimEnd()}${insertable}`, false);
 }
 
-function applyLocationPick(button) {
-  const value = button.getAttribute("data-editor-location-pick") || "";
-  const input = document.querySelector("[data-editor-location-input]");
-  if (!(input instanceof HTMLInputElement)) return;
-  input.value = value;
-  renderLocationResults();
+function normalizeImagePlacement(value) {
+  const clean = String(value || "").trim().toLowerCase();
+  return ["left", "right", "full"].includes(clean) ? clean : "full";
 }
 
-function uniqueLocations(query = "") {
-  const clean = String(query || "").trim().toLowerCase();
-  const values = dedupe((editorState.publicState?.entities || []).map((entity) => entity.location));
-  if (!clean) return values;
-  return values.filter((location) => location.toLowerCase().includes(clean));
+function cleanFileStem(value) {
+  return String(value || "").replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim() || "Image";
+}
+
+function escapeMarkdownText(value) {
+  return String(value || "").replace(/[[\]\\]/g, "\\$&");
+}
+
+function escapeMarkdownTitle(value) {
+  return String(value || "").replace(/["\\]/g, "\\$&");
 }
 
 function ensureModalRoot() {
