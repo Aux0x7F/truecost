@@ -16,6 +16,8 @@
   --radius: 22px;
   --radius-small: 14px;
   --wrap: min(1160px, calc(100vw - 2rem));
+  --rail-stick-top: 6rem;
+  --rail-max-height: calc(100vh - 6.75rem);
 }
 
 * {
@@ -856,13 +858,14 @@ h3 {
   grid-column: 2;
   grid-row: 1;
   position: sticky;
-  top: 6rem;
+  top: var(--rail-stick-top);
   display: grid;
   gap: 1.2rem;
   align-self: start;
   align-content: start;
-  max-height: calc(100vh - 6.75rem);
+  max-height: var(--rail-max-height);
   overflow: auto;
+  overscroll-behavior: contain;
   padding-right: 0.1rem;
   scrollbar-gutter: stable;
 }
@@ -1520,9 +1523,15 @@ h3 {
 
 .article-aside {
   position: sticky;
-  top: 6rem;
+  top: var(--rail-stick-top);
   display: grid;
   gap: 1rem;
+  align-self: start;
+  max-height: var(--rail-max-height);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.1rem;
+  scrollbar-gutter: stable;
 }
 
 .page-layout--article {
@@ -2309,6 +2318,7 @@ h3 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1.2rem;
+  align-items: start;
 }
 
 .workspace-grid--rail {
@@ -2323,13 +2333,24 @@ h3 {
   display: grid;
   gap: 1rem;
   position: sticky;
-  top: 6rem;
+  top: var(--rail-stick-top);
   align-self: start;
+  align-content: start;
+  max-height: var(--rail-max-height);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.1rem;
+  scrollbar-gutter: stable;
 }
 
 .workspace-rail-panel {
   display: grid;
   gap: 0.9rem;
+}
+
+.workspace-rail-panel .workspace-search,
+.workspace-rail-panel .workspace-select {
+  width: 100%;
 }
 
 .workspace-rail-copy {
@@ -3370,6 +3391,9 @@ body.is-static-editing [data-static-edit]:focus {
 
   .article-aside {
     position: static;
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .workspace-grid {
@@ -3384,6 +3408,9 @@ body.is-static-editing [data-static-edit]:focus {
   .workspace-rail-stack {
     position: static;
     top: auto;
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .workspace-filter-bar {
