@@ -89,6 +89,7 @@ const state = {
   notificationsExpanded: false,
   archiveFilters: null,
   archiveFilterOpenField: "",
+  archiveFilterHighlight: -1,
   archiveStatusMenuOpen: false,
   archiveFilterTimer: null,
   pageOverlay: null,
@@ -96,8 +97,13 @@ const state = {
   staticEdit: null,
   staticEditListenersBound: false,
   map: null,
+  mapCanvas: null,
   markers: null,
   markerIndex: null,
+  pendingMapEntitySlug: "",
+  lastGoodMapEntities: [],
+  lastGoodArchiveMapEntities: [],
+  mapViewDigest: "",
   highlightedCommentId: ""
 };
 
@@ -1016,22 +1022,41 @@ async function initMapPage() {
   const list = document.querySelector("[data-map-list]");
   const canvas = document.querySelector("[data-map-canvas]");
   if (!list || !canvas) return;
-  list.innerHTML = renderLoadingState("Looking up map entries...");
-  canvas.innerHTML = renderLoadingState("Looking up map data...");
+  const mapReady = Boolean(state.map && state.mapCanvas === canvas);
+  const hasStableMapData = Array.isArray(state.lastGoodMapEntities) && state.lastGoodMapEntities.length;
+  if (!hasStableMapData) {
+    list.innerHTML = renderLoadingState("Looking up map entries...");
+  }
+  if (!mapReady) {
+    canvas.innerHTML = renderLoadingState("Looking up map data...");
+  }
 
   const publicState = await getPublicState();
-  if (!publicState.connected || !publicState.approvedEntities.length) {
+  const approvedEntities = Array.isArray(publicState?.approvedEntities) ? publicState.approvedEntities : [];
+  const useFallbackEntities =
+    !approvedEntities.length &&
+    publicStateNeedsRepair(publicState) &&
+    Array.isArray(state.lastGoodMapEntities) &&
+    state.lastGoodMapEntities.length;
+  const entities = approvedEntities.length ? approvedEntities : useFallbackEntities ? state.lastGoodMapEntities : [];
+  if (!entities.length) {
     list.innerHTML = `<div class="empty-state">Published entities will appear here once approved entries are available.</div>`;
+    destroyLeafletMap();
+    state.mapViewDigest = createMapDataDigest(publicState);
     canvas.innerHTML = `<div class="map-empty">Map data unavailable.</div>`;
     return;
   }
+  state.lastGoodMapEntities = entities.map((entity) => ({ ...entity }));
 
   const posts = await loadPosts().catch(() => []);
-  const entityUsage = buildEntityUsage(posts, publicState.approvedEntities);
-  list.innerHTML = publicState.approvedEntities
+  const entityUsage = buildEntityUsage(posts, entities);
+  list.innerHTML = entities
     .map((entity) => renderEntityCard(entity, entityUsage.get(entity.slug) || []))
     .join("");
-  renderLeafletMap(canvas, publicState.approvedEntities);
+  renderLeafletMap(canvas, entities);
+  state.mapViewDigest = createMapDataDigest({
+    approvedEntities: entities
+  });
   bindMapEntityCards();
   focusRequestedEntity();
 }
@@ -1768,10 +1793,20 @@ function renderArchiveFiltersPanel(entries, publicState, filters, canEdit) {
         }
         <label class="archive-filters__field" data-filter-field="tag">
           <input name="tag" type="text" placeholder="Search tags" value="${escapeAttribute(filters.tag)}" autocomplete="off" data-filter-input="tag">
+          ${
+            filters.tag
+              ? `<button class="workspace-search__clear archive-filters__clear-button" type="button" data-clear-archive-field="tag" aria-label="Clear tag filter">×</button>`
+              : ""
+          }
           <div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="tag"></div>
         </label>
         <label class="archive-filters__field" data-filter-field="entity">
           <input name="entity" type="text" placeholder="Search entities" value="${escapeAttribute(filters.entity)}" autocomplete="off" data-filter-input="entity">
+          ${
+            filters.entity
+              ? `<button class="workspace-search__clear archive-filters__clear-button" type="button" data-clear-archive-field="entity" aria-label="Clear entity filter">×</button>`
+              : ""
+          }
           <div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="entity"></div>
         </label>
       </div>
@@ -1954,6 +1989,7 @@ function initializeArchiveView(entries, publicState, canEdit) {
   if (!(listGrid instanceof HTMLElement)) return;
   state.archiveFilters = currentArchiveFilters(canEdit);
   state.archiveFilterOpenField = "";
+  state.archiveFilterHighlight = -1;
   state.archiveStatusMenuOpen = false;
 
   listGrid.innerHTML = `
@@ -1979,6 +2015,7 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
     const target = event.target;
     if (!(target instanceof HTMLInputElement) || !target.matches("[data-filter-input]")) return;
     state.archiveFilterOpenField = target.getAttribute("data-filter-input") || "";
+    state.archiveFilterHighlight = 0;
     state.archiveStatusMenuOpen = false;
     updateArchiveStatusMenu(shell);
     updateArchiveFilterPanels(entries, publicState);
@@ -1993,6 +2030,7 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
       [name]: String(target.value || "").trim()
     };
     state.archiveFilterOpenField = name;
+    state.archiveFilterHighlight = archiveFilterSuggestions(name, entries, publicState).matching.length ? 0 : -1;
     syncArchiveFiltersToUrl(canEdit);
     scheduleArchiveResults(entries, publicState, canEdit);
   });
@@ -2008,6 +2046,7 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
       }
       if (state.archiveFilterOpenField) {
         state.archiveFilterOpenField = "";
+        state.archiveFilterHighlight = -1;
         updateArchiveFilterPanels(entries, publicState);
         handled = true;
       }
@@ -2019,18 +2058,27 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
     }
     if (!(target instanceof HTMLInputElement) || !target.matches("[data-filter-input]")) return;
     const field = target.getAttribute("data-filter-input") || "";
+    const descriptor = archiveFilterSuggestions(field, entries, publicState);
+    if (event.key === "ArrowDown" && descriptor.matching.length) {
+      event.preventDefault();
+      state.archiveFilterHighlight = state.archiveFilterHighlight >= 0
+        ? (state.archiveFilterHighlight + 1) % descriptor.matching.length
+        : 0;
+      updateArchiveFilterPanels(entries, publicState);
+      return;
+    }
+    if (event.key === "ArrowUp" && descriptor.matching.length) {
+      event.preventDefault();
+      state.archiveFilterHighlight = state.archiveFilterHighlight > 0
+        ? state.archiveFilterHighlight - 1
+        : descriptor.matching.length - 1;
+      updateArchiveFilterPanels(entries, publicState);
+      return;
+    }
     if (event.key !== "Enter") return;
     event.preventDefault();
-    const descriptor = archiveFilterSuggestions(field, entries, publicState);
-    const nextValue = descriptor.matching[0] || String(target.value || "").trim();
-    target.value = nextValue;
-    state.archiveFilters = {
-      ...activeArchiveFilters(),
-      [field]: nextValue
-    };
-    state.archiveFilterOpenField = "";
-    syncArchiveFiltersToUrl(canEdit);
-    renderInvestigationArchiveResults(entries, publicState, canEdit);
+    const nextValue = descriptor.matching[Math.max(0, state.archiveFilterHighlight)] || String(target.value || "").trim();
+    commitArchiveFilterSelection(field, nextValue, shell, entries, publicState, canEdit);
   });
 
   shell.addEventListener("click", (event) => {
@@ -2063,6 +2111,7 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
     if (clear) {
       state.archiveFilters = { tag: "", entity: "", status: "", author: "" };
       state.archiveFilterOpenField = "";
+      state.archiveFilterHighlight = -1;
       state.archiveStatusMenuOpen = false;
       const tagInput = shell.querySelector('[data-filter-input="tag"]');
       const entityInput = shell.querySelector('[data-filter-input="entity"]');
@@ -2074,19 +2123,22 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
       return;
     }
 
+    const clearField = target.closest("[data-clear-archive-field]");
+    if (clearField instanceof HTMLElement) {
+      const field = clearField.getAttribute("data-clear-archive-field") || "";
+      commitArchiveFilterSelection(field, "", shell, entries, publicState, canEdit);
+      const input = shell.querySelector(`[data-filter-input="${CSS.escape(field)}"]`);
+      if (input instanceof HTMLInputElement) {
+        window.setTimeout(() => input.focus({ preventScroll: true }), 0);
+      }
+      return;
+    }
+
     const suggestion = target.closest("[data-filter-suggestion]");
     if (suggestion instanceof HTMLElement) {
       const field = suggestion.getAttribute("data-filter-suggestion") || "";
       const value = suggestion.getAttribute("data-filter-value") || "";
-      const input = shell.querySelector(`[data-filter-input="${field}"]`);
-      if (input instanceof HTMLInputElement) input.value = value;
-      state.archiveFilters = {
-        ...activeArchiveFilters(),
-        [field]: value
-      };
-      state.archiveFilterOpenField = "";
-      syncArchiveFiltersToUrl(canEdit);
-      renderInvestigationArchiveResults(entries, publicState, canEdit);
+      commitArchiveFilterSelection(field, value, shell, entries, publicState, canEdit);
     }
   });
 
@@ -2099,6 +2151,7 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
       let changed = false;
       if (state.archiveFilterOpenField) {
         state.archiveFilterOpenField = "";
+        state.archiveFilterHighlight = -1;
         changed = true;
       }
       if (state.archiveStatusMenuOpen) {
@@ -2109,6 +2162,21 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
       if (changed) renderInvestigationArchiveResults(entries, publicState, canEdit);
     });
   }
+}
+
+function commitArchiveFilterSelection(field, value, shell, entries, publicState, canEdit) {
+  const cleanField = String(field || "").trim();
+  if (!cleanField) return;
+  const input = shell?.querySelector?.(`[data-filter-input="${CSS.escape(cleanField)}"]`);
+  if (input instanceof HTMLInputElement) input.value = String(value || "");
+  state.archiveFilters = {
+    ...activeArchiveFilters(),
+    [cleanField]: String(value || "").trim()
+  };
+  state.archiveFilterOpenField = "";
+  state.archiveFilterHighlight = -1;
+  syncArchiveFiltersToUrl(canEdit);
+  renderInvestigationArchiveResults(entries, publicState, canEdit);
 }
 
 function scheduleArchiveResults(entries, publicState, canEdit) {
@@ -2141,8 +2209,34 @@ function updateArchiveSummary(filteredEntries, entries) {
 }
 
 function updateArchiveFilterPanels(entries, publicState) {
+  syncArchiveFilterFieldControls();
   renderArchiveSuggestionPanel("tag", archiveFilterSuggestions("tag", entries, publicState));
   renderArchiveSuggestionPanel("entity", archiveFilterSuggestions("entity", entries, publicState));
+}
+
+function syncArchiveFilterFieldControls() {
+  const shell = document.querySelector("[data-investigation-filters]");
+  if (!(shell instanceof HTMLElement)) return;
+  const filters = activeArchiveFilters();
+  for (const field of ["tag", "entity"]) {
+    const value = String(filters?.[field] || "");
+    const input = shell.querySelector(`[data-filter-input="${CSS.escape(field)}"]`);
+    if (input instanceof HTMLInputElement && input.value !== value) {
+      input.value = value;
+    }
+    const existing = shell.querySelector(`[data-clear-archive-field="${CSS.escape(field)}"]`);
+    if (value && !(existing instanceof HTMLElement)) {
+      const button = document.createElement("button");
+      button.className = "workspace-search__clear archive-filters__clear-button";
+      button.type = "button";
+      button.dataset.clearArchiveField = field;
+      button.setAttribute("aria-label", `Clear ${field} filter`);
+      button.textContent = "×";
+      input?.after(button);
+    } else if (!value && existing instanceof HTMLElement) {
+      existing.remove();
+    }
+  }
 }
 
 function archiveFilterSuggestions(field, entries, publicState) {
@@ -2164,7 +2258,7 @@ function renderArchiveSuggestionPanel(field, descriptor) {
   const isOpen = state.archiveFilterOpenField === field;
   const query = String(descriptor?.query || "").trim();
   const matching = Array.isArray(descriptor?.matching) ? descriptor.matching : [];
-  if (!isOpen) {
+  if (!isOpen || !query) {
     host.removeAttribute("data-open");
     host.innerHTML = "";
     return;
@@ -2173,15 +2267,15 @@ function renderArchiveSuggestionPanel(field, descriptor) {
   host.innerHTML = matching.length
     ? matching
         .map(
-          (value) => `
-            <button class="picker-chip" type="button" data-filter-suggestion="${escapeAttribute(field)}" data-filter-value="${escapeAttribute(value)}">
+          (value, index) => `
+            <button class="picker-chip${state.archiveFilterHighlight === index ? " is-highlighted" : ""}" type="button" data-filter-suggestion="${escapeAttribute(field)}" data-filter-value="${escapeAttribute(value)}" aria-selected="${state.archiveFilterHighlight === index ? "true" : "false"}">
               <strong>${escapeHtml(value)}</strong>
               <span>Use ${field}</span>
             </button>
           `
         )
         .join("")
-    : `<div class="picker-hint">${query ? `No ${field} matches yet.` : `Start typing to filter by ${field}.`}</div>`;
+    : `<div class="picker-hint">No ${field} matches yet.</div>`;
 }
 
 function syncArchiveFiltersToUrl(canEdit) {
@@ -2204,13 +2298,18 @@ function updateArchiveMapPreview(filteredEntries, entries, publicState) {
   if (!(tagsHost instanceof HTMLElement) || !(canvas instanceof HTMLElement)) return;
   const activeEntities = archiveEntitiesForEntries(filteredEntries, publicState);
   const defaultEntities = archiveHasActiveFilters() ? [] : archiveEntitiesForEntries(entries, publicState);
-  const entities = activeEntities.length ? activeEntities : defaultEntities;
+  const fallbackEntities =
+    !archiveHasActiveFilters() && publicStateNeedsRepair(publicState) && state.lastGoodArchiveMapEntities.length
+      ? state.lastGoodArchiveMapEntities
+      : [];
+  const entities = activeEntities.length ? activeEntities : defaultEntities.length ? defaultEntities : fallbackEntities;
   if (!entities.length) {
     tagsHost.innerHTML = "";
     destroyLeafletPreview(canvas);
     canvas.innerHTML = `<div class="map-empty">${archiveHasActiveFilters() ? "No locations tagged in filtered results." : "No locations tagged in the archive yet."}</div>`;
     return;
   }
+  state.lastGoodArchiveMapEntities = entities.map((entity) => ({ ...entity }));
 
   const mappedEntities = entities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng));
   tagsHost.innerHTML = entities
@@ -2241,6 +2340,16 @@ function destroyLeafletPreview(canvas) {
     canvas.__leafletPreviewMap.remove();
     canvas.__leafletPreviewMap = null;
   }
+}
+
+function destroyLeafletMap() {
+  if (state.markers?.remove) state.markers.remove();
+  state.markers = null;
+  state.markerIndex = new Map();
+  if (state.map?.remove) state.map.remove();
+  state.map = null;
+  state.mapCanvas = null;
+  state.pendingMapEntitySlug = "";
 }
 
 function renderLeafletPreviewMap(canvas, entities) {
@@ -3083,15 +3192,20 @@ function renderEntityCard(entity, posts) {
 
 function renderLeafletMap(canvas, entities) {
   if (!window.L) {
+    destroyLeafletMap();
     canvas.innerHTML = `<div class="map-empty">Map library unavailable.</div>`;
     return;
   }
-  canvas.innerHTML = "";
+  if (state.map && state.mapCanvas !== canvas) {
+    destroyLeafletMap();
+  }
   if (!state.map) {
+    canvas.innerHTML = "";
     state.map = window.L.map(canvas, {
       zoomControl: true,
       scrollWheelZoom: false
     }).setView(SITE.map.defaultCenter, SITE.map.defaultZoom);
+    state.mapCanvas = canvas;
     window.L.tileLayer(SITE.map.tileUrl, {
       attribution: SITE.map.tileAttribution,
       minZoom: SITE.map.minZoom
@@ -3136,7 +3250,12 @@ function renderLeafletMap(canvas, entities) {
     state.map.setView(SITE.map.defaultCenter, SITE.map.defaultZoom);
   }
 
-  window.setTimeout(() => state.map?.invalidateSize(), 50);
+  window.setTimeout(() => {
+    state.map?.invalidateSize();
+    if (state.pendingMapEntitySlug) {
+      scheduleMapEntityFocus(state.pendingMapEntitySlug, { scrollCard: false });
+    }
+  }, 50);
 }
 
 function bindMapEntityCards() {
@@ -3146,40 +3265,56 @@ function bindMapEntityCards() {
     card.addEventListener("click", (event) => {
       const target = event.target;
       if (target instanceof Element && target.closest(".entity-card__links a")) return;
-      focusEntityOnMap(card.getAttribute("data-entity-card") || "");
+      scheduleMapEntityFocus(card.getAttribute("data-entity-card") || "");
     });
     card.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       const target = event.target;
       if (target instanceof Element && target.closest(".entity-card__links a")) return;
       event.preventDefault();
-      focusEntityOnMap(card.getAttribute("data-entity-card") || "");
+      scheduleMapEntityFocus(card.getAttribute("data-entity-card") || "");
     });
   }
 }
 
-function focusEntityOnMap(slug) {
+function focusEntityOnMap(slug, options = {}) {
   const clean = cleanSlug(slug || "");
-  if (!clean) return;
+  if (!clean) return false;
   const marker = state.markerIndex?.get(clean);
   const card = document.querySelector(`[data-entity-card="${clean}"]`);
   if (card instanceof HTMLElement) {
     for (const item of document.querySelectorAll(".entity-card--focus")) item.classList.remove("entity-card--focus");
     card.classList.add("entity-card--focus");
+    if (options.scrollCard !== false) {
+      card.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
   }
   if (marker && state.map) {
+    state.pendingMapEntitySlug = "";
     const latLng = marker.getLatLng();
     state.map.flyTo(latLng, Math.max(state.map.getZoom(), 8), { duration: 0.45 });
-    marker.openPopup();
+    window.setTimeout(() => marker.openPopup(), 80);
+    return true;
   }
+  state.pendingMapEntitySlug = clean;
+  return false;
+}
+
+function scheduleMapEntityFocus(slug, options = {}, attempt = 0) {
+  const clean = cleanSlug(slug || "");
+  if (!clean) return;
+  state.pendingMapEntitySlug = clean;
+  const applied = focusEntityOnMap(clean, options);
+  if (applied || attempt >= 10) return;
+  window.setTimeout(() => {
+    scheduleMapEntityFocus(clean, options, attempt + 1);
+  }, 140);
 }
 
 function focusRequestedEntity() {
   const requested = cleanSlug(new URLSearchParams(window.location.search).get("entity") || "");
   if (!requested) return;
-  focusEntityOnMap(requested);
-  const card = document.querySelector(`[data-entity-card="${requested}"]`);
-  if (card instanceof HTMLElement) card.scrollIntoView({ behavior: "smooth", block: "center" });
+  scheduleMapEntityFocus(requested);
 }
 
 async function getPublicState() {
@@ -3309,7 +3444,8 @@ async function applyPublicStateRefresh() {
   }
 
   if (document.querySelector("[data-map-list]") && document.querySelector("[data-map-canvas]")) {
-    if (!mapInteractionActive()) {
+    const nextMapDigest = createMapDataDigest(state.publicState);
+    if (!mapInteractionActive() && (!state.map || nextMapDigest !== state.mapViewDigest)) {
       await initMapPage();
     }
   }
@@ -3359,6 +3495,18 @@ function createPublicStateDigest(publicState) {
     activeSite: publicState?.siteInfo?.activePubkey || ""
   };
   return JSON.stringify(digest);
+}
+
+function createMapDataDigest(publicState) {
+  return JSON.stringify(
+    (publicState?.approvedEntities || []).map((entity) => [
+      entity.slug,
+      entity.status || "",
+      Number.isFinite(entity.lat) ? Number(entity.lat).toFixed(5) : "",
+      Number.isFinite(entity.lng) ? Number(entity.lng).toFixed(5) : "",
+      String(entity.updated_at || entity.created_at || "")
+    ])
+  );
 }
 
 async function getViewer() {
