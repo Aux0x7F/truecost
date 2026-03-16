@@ -1010,6 +1010,14 @@ async function ensureLiveInvestigationOverlay() {
     onRemoteContent: handleLiveInvestigationContent,
     onStatus: handleLiveInvestigationStatus,
   });
+  const initialContent = editorState.liveController?.getContent?.() || {};
+  if (Object.keys(initialContent).length) {
+    handleLiveInvestigationContent(initialContent, {
+      documentId,
+      hasLiveContent: true,
+      origin: "initial"
+    });
+  }
 }
 
 function destroyLiveInvestigationOverlay() {
