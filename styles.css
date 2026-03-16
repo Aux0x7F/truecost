@@ -910,6 +910,10 @@ h3 {
   cursor: pointer;
 }
 
+.archive-filters__clear-button {
+  z-index: 2;
+}
+
 .workspace-search {
   display: grid;
   position: relative;

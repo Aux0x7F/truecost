@@ -160,7 +160,6 @@ function renderEditorShell() {
           <div class="editor-actions__controls">
             <div class="editor-save-state" data-editor-status aria-live="polite">Autosave is on. Snapshot saves the current draft immediately.</div>
             <div class="button-row">
-              <button class="button-ghost" type="button" data-editor-image>Image</button>
               <button class="button-ghost" type="button" data-editor-save>Snapshot</button>
               <button class="button" type="button" data-editor-submit>Send to review</button>
             </div>
@@ -251,6 +250,7 @@ function bindEditorShell() {
   });
   surface.__cmsEditor = editorState.editor;
   decorateToolbar(surface);
+  window.setTimeout(() => decorateToolbar(surface), 120);
 
   const queueSave = () => {
     if (editorState.suppressSyncDepth > 0) return;
@@ -680,6 +680,11 @@ function closeEntityModal() {
 
 function openImageModal() {
   editorState.entityModal = null;
+  try {
+    editorState.editor?.focus?.();
+  } catch {
+    // Ignore focus errors and still let the modal open.
+  }
   editorState.imageModal = {
     alt: "",
     caption: "",
@@ -925,6 +930,11 @@ function applyNewEntityToField(entity, fieldName) {
 
 function insertEditorImageBlock(upload, options = {}) {
   if (!upload?.url) return;
+  try {
+    editorState.editor?.focus?.();
+  } catch {
+    // Keep going even if the editor cannot reclaim focus first.
+  }
   const alt = String(options.alt || "").trim() || "Image";
   const placement = normalizeImagePlacement(options.placement);
   const caption = String(options.caption || "").trim();
@@ -1008,6 +1018,29 @@ function decorateToolbar(surface) {
       button.textContent = label;
     }
   });
+
+  const toolbar = surface.querySelector(".toastui-editor-defaultUI-toolbar");
+  if (!(toolbar instanceof HTMLElement) || toolbar.querySelector("[data-editor-image]")) return;
+  const groups = toolbar.querySelectorAll(".toastui-editor-toolbar-group");
+  const customGroup = document.createElement("div");
+  customGroup.className = "toastui-editor-toolbar-group editor-toolbar-group--custom";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "editor-toolbar-button";
+  button.dataset.editorImage = "";
+  button.setAttribute("aria-label", "Image");
+  button.removeAttribute("title");
+  button.innerHTML = `<span class="toastui-editor-toolbar-icons editor-toolbar-chip" aria-hidden="true">Image</span>`;
+  button.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+  });
+  customGroup.append(button);
+  const insertBeforeTarget = groups.length > 2 ? groups[2] : null;
+  if (insertBeforeTarget?.parentNode) {
+    insertBeforeTarget.parentNode.insertBefore(customGroup, insertBeforeTarget);
+  } else {
+    toolbar.append(customGroup);
+  }
 }
 
 function resolveEntityByNameOrSlug(value) {

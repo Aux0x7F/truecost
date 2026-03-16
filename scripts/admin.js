@@ -54,6 +54,7 @@ const workspaceState = {
   commentMenuId: "",
   ownCommentMenuId: "",
   submissionFilterHighlight: -1,
+  submissionFilterOpen: false,
   userFilters: {
     karma: ""
   },
@@ -173,8 +174,10 @@ function bindWorkspace() {
       workspaceState.submissionFilters.query = applySubmissionFilterSuggestion(
         submissionSuggestion.getAttribute("data-submission-filter-suggestion") || ""
       );
+      workspaceState.submissionFilterOpen = false;
       workspaceState.submissionFilterHighlight = -1;
       renderWorkspace({ soft: true });
+      focusWorkspaceSearchField("[data-submission-filter-input]");
       return;
     }
 
@@ -194,6 +197,7 @@ function bindWorkspace() {
     if (clearUserLookup) {
       clearWorkspaceUserLookup();
       renderWorkspace({ soft: true });
+      focusWorkspaceSearchField("[data-quick-user-input]");
       return;
     }
 
@@ -202,6 +206,7 @@ function bindWorkspace() {
       workspaceState.commentFilters.query = "";
       clearWorkspaceLinkedUser();
       renderWorkspace({ soft: true });
+      focusWorkspaceSearchField("[data-comment-filter-query]");
       return;
     }
 
@@ -209,7 +214,9 @@ function bindWorkspace() {
     if (clearSubmissionFilter) {
       workspaceState.submissionFilters.query = "";
       workspaceState.submissionFilterHighlight = -1;
+      workspaceState.submissionFilterOpen = false;
       renderWorkspace({ soft: true });
+      focusWorkspaceSearchField("[data-submission-filter-input]");
       return;
     }
 
@@ -293,6 +300,30 @@ function bindWorkspace() {
     }
   });
 
+  shell.addEventListener("focusin", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.matches("[data-submission-filter-input]")) {
+      const nextOpen = Boolean(String(target.value || "").trim() && submissionFilterSuggestions().length);
+      if (workspaceState.submissionFilterOpen !== nextOpen) {
+        workspaceState.submissionFilterOpen = nextOpen;
+        renderWorkspace({ soft: true });
+      }
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const activeSearch = document.querySelector("[data-submission-filter-input]")?.closest(".workspace-search");
+    if (activeSearch instanceof HTMLElement && activeSearch.contains(target)) return;
+    if (workspaceState.submissionFilterOpen) {
+      workspaceState.submissionFilterOpen = false;
+      workspaceState.submissionFilterHighlight = -1;
+      renderWorkspace({ soft: true });
+    }
+  });
+
   shell.addEventListener("submit", async (event) => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
@@ -345,6 +376,7 @@ function bindWorkspace() {
     if (target.matches("[data-submission-filter-input]")) {
       workspaceState.submissionFilters.query = String(target.value || "");
       const suggestions = submissionFilterSuggestions();
+      workspaceState.submissionFilterOpen = Boolean(String(target.value || "").trim() && suggestions.length);
       workspaceState.submissionFilterHighlight = suggestions.length ? 0 : -1;
       renderWorkspace({ soft: true });
       return;
@@ -393,6 +425,7 @@ function bindWorkspace() {
       return;
     }
     if (event.key === "Escape") {
+      workspaceState.submissionFilterOpen = false;
       workspaceState.submissionFilterHighlight = -1;
       renderWorkspace({ soft: true });
       return;
@@ -401,6 +434,7 @@ function bindWorkspace() {
       event.preventDefault();
       const selected = suggestions[Math.max(0, workspaceState.submissionFilterHighlight)];
       workspaceState.submissionFilters.query = applySubmissionFilterSuggestion(selected);
+      workspaceState.submissionFilterOpen = false;
       workspaceState.submissionFilterHighlight = -1;
       renderWorkspace({ soft: true });
     }
@@ -846,7 +880,6 @@ function renderUsersPane() {
       </section>
       <aside class="surface-panel workspace-rail-panel">
         <div class="eyebrow">Find user</div>
-        <h2>Lookup by username</h2>
         <label class="workspace-search">
           <span class="sr-only">Username</span>
           <input class="workspace-search__input" data-quick-user-input type="text" maxlength="80" placeholder="username" value="${escapeAttribute(workspaceState.userLookupQuery || "")}" autocomplete="off">
@@ -861,7 +894,11 @@ function renderUsersPane() {
               : ""
           }
         </label>
-        <div class="status-box">${escapeHtml(workspaceState.userDirectStatus || "")}</div>
+        ${
+          workspaceState.userDirectStatus
+            ? `<div class="status-box">${escapeHtml(workspaceState.userDirectStatus)}</div>`
+            : ""
+        }
         ${renderLookupCandidate()}
       </aside>
     </div>
@@ -2185,6 +2222,19 @@ function clearWorkspaceUserLookup() {
   clearWorkspaceLinkedUser();
 }
 
+function focusWorkspaceSearchField(selector) {
+  window.setTimeout(() => {
+    const field = document.querySelector(selector);
+    if (field instanceof HTMLElement) {
+      field.focus({ preventScroll: true });
+      if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
+        const length = field.value.length;
+        field.setSelectionRange(length, length);
+      }
+    }
+  }, 0);
+}
+
 async function performUserAction(targetPubkey, action, mode = "") {
   if (!currentUserIsAdmin() || !targetPubkey) return;
   const user = resolveWorkspaceUser(targetPubkey);
@@ -3022,7 +3072,7 @@ function filterInboxSubmissions(items) {
 
 function renderSubmissionFilterSuggestions() {
   const suggestions = submissionFilterSuggestions();
-  if (!suggestions.length) return "";
+  if (!suggestions.length || !workspaceState.submissionFilterOpen) return "";
   return `
     <div class="picker-results picker-results--dropdown workspace-search__results" data-open="yes">
       ${suggestions
