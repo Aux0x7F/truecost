@@ -21,6 +21,7 @@ import {
   publishTaggedJson,
   requestPublicStateRepair,
   startPublicStateRepairPeer,
+  stopPublicStateRepairPeer,
   warmPublicState
 } from "./core/nostr.js";
 import { clearSession, getOrCreateGuestSession, getStoredGuestSession, getStoredSession } from "./core/session.js";
@@ -110,6 +111,7 @@ document.addEventListener("DOMContentLoaded", () => {
   window.addEventListener("truecost:session-changed", handleSessionChanged);
   document.addEventListener("visibilitychange", handlePublicVisibilityChange);
   window.addEventListener("focus", handlePublicWindowFocus);
+  window.addEventListener("pagehide", handlePublicPageHide);
 });
 
 function bindGlobalSiteInteractions() {
@@ -285,6 +287,15 @@ function handlePublicVisibilityChange() {
 
 function handlePublicWindowFocus() {
   void syncPublicState(true);
+}
+
+function handlePublicPageHide() {
+  if (state.publicStateRefreshTimer) {
+    window.clearTimeout(state.publicStateRefreshTimer);
+    state.publicStateRefreshTimer = 0;
+  }
+  destroyStaticPageOverlay();
+  stopPublicStateRepairPeer();
 }
 
 function startBackgroundPrefetch() {
@@ -549,7 +560,7 @@ async function initStaticPageEditing() {
   const committedContent = collectStaticEditContent(editableElements);
   const publishedDraft = latestApprovedPageDraft(publicState, pageId);
   const publishedContent = publishedDraft?.page_content && typeof publishedDraft.page_content === "object"
-    ? cloneStaticEditContent(publishedDraft.page_content)
+    ? mergeStaticEditContent(publishedDraft.page_content, committedContent)
     : cloneStaticEditContent(committedContent);
   applyStaticEditContent(editableElements, publishedContent, committedContent);
 
@@ -3284,10 +3295,32 @@ function collectStaticEditContent(elements) {
 function applyStaticEditContent(elements, content, fallback = {}) {
   for (const element of Array.isArray(elements) ? elements : []) {
     const key = element.getAttribute("data-static-edit") || "";
-    element.innerHTML = Object.prototype.hasOwnProperty.call(content || {}, key)
-      ? String(content[key] || "")
-      : String(fallback?.[key] || "");
+    const primaryValue = resolveStaticEditValue(content, key);
+    element.innerHTML = primaryValue.length
+      ? primaryValue
+      : resolveStaticEditValue(fallback, key);
   }
+}
+
+function mergeStaticEditContent(content, fallback = {}) {
+  const merged = cloneStaticEditContent(fallback);
+  for (const [key, value] of Object.entries(content && typeof content === "object" ? content : {})) {
+    const resolved = resolveStaticEditValue({ [key]: value }, key);
+    if (resolved.length) {
+      merged[key] = resolved;
+    }
+  }
+  return merged;
+}
+
+function resolveStaticEditValue(content, key) {
+  if (!Object.prototype.hasOwnProperty.call(content || {}, key)) return "";
+  const raw = String(content[key] ?? "");
+  return hasMeaningfulStaticEditValue(raw) ? raw : "";
+}
+
+function hasMeaningfulStaticEditValue(value) {
+  return stripHtml(String(value || "").replace(/&nbsp;/gi, " ").replace(/<br\s*\/?>/gi, " ")).length > 0;
 }
 
 function loadStaticEditSnapshot(pageId) {
