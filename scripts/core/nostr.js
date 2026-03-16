@@ -139,17 +139,21 @@ function applyAuthorCommentModeration(publicState) {
   }
   if (!authorModeration.size) return publicState;
 
-  const nextComments = allComments.map((comment) => {
+  const resolvedComments = allComments.map((comment) => {
     const moderation = authorModeration.get(String(comment.id || "").trim());
-    if (!moderation) return comment;
+    if (!moderation) return { ...comment };
     return {
       ...comment,
       visibility: moderation.action === "hide" ? "hidden" : "visible",
       moderation
     };
   });
-  const visibleComments = nextComments.filter((comment) => comment.visibility !== "hidden");
-  const hiddenComments = nextComments.filter((comment) => comment.visibility === "hidden");
+  const nextCommentsById = new Map(resolvedComments.map((comment) => [String(comment.id || "").trim(), comment]));
+  const visibleComments = resolvedComments.filter((comment) => {
+    const branch = collectCommentAncestors(String(comment.id || "").trim(), nextCommentsById);
+    return branch.every((branchComment) => String(branchComment?.visibility || "visible") !== "hidden");
+  });
+  const hiddenComments = resolvedComments.filter((comment) => !visibleComments.includes(comment));
   const commentsByPost = regroupComments(visibleComments, "post_slug");
   const commentsByAuthor = regroupComments(visibleComments, "author");
   const users = Array.isArray(publicState.users)
@@ -161,7 +165,7 @@ function applyAuthorCommentModeration(publicState) {
   return {
     ...publicState,
     users,
-    allComments: nextComments,
+    allComments: resolvedComments,
     comments: visibleComments,
     hiddenComments,
     commentsByPost,
@@ -336,6 +340,21 @@ function regroupComments(comments, key) {
     buckets.set(bucketKey, bucket);
   }
   return buckets;
+}
+
+function collectCommentAncestors(commentId, commentsById) {
+  const lineage = [];
+  let current = commentsById.get(commentId) || null;
+  const seen = new Set();
+  while (current) {
+    const currentId = String(current.id || "").trim();
+    if (!currentId || seen.has(currentId)) break;
+    seen.add(currentId);
+    lineage.push(current);
+    const parentId = String(current.parent_id || "").trim();
+    current = parentId ? commentsById.get(parentId) || null : null;
+  }
+  return lineage;
 }
 
 function firstTag(event, key) {

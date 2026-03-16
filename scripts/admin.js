@@ -44,12 +44,16 @@ const workspaceState = {
   userDirectStatus: "",
   userLookupQuery: "",
   userLookupResult: null,
+  userLookupLoading: false,
+  userLookupRequestId: 0,
+  userLookupDebounce: 0,
   userModalPubkey: "",
   userActionModal: null,
   commentActionModal: null,
   submissionModal: null,
   commentMenuId: "",
   ownCommentMenuId: "",
+  submissionFilterHighlight: -1,
   commentFilters: {
     query: "",
     role: ""
@@ -162,6 +166,7 @@ function bindWorkspace() {
       workspaceState.submissionFilters.query = applySubmissionFilterSuggestion(
         submissionSuggestion.getAttribute("data-submission-filter-suggestion") || ""
       );
+      workspaceState.submissionFilterHighlight = -1;
       renderWorkspace({ soft: true });
       return;
     }
@@ -175,6 +180,29 @@ function bindWorkspace() {
     const directUserAction = target.closest("[data-quick-user-action]");
     if (directUserAction) {
       await handleDirectUserAction(directUserAction);
+      return;
+    }
+
+    const clearUserLookup = target.closest("[data-clear-user-lookup]");
+    if (clearUserLookup) {
+      clearWorkspaceUserLookup();
+      renderWorkspace({ soft: true });
+      return;
+    }
+
+    const clearCommentFilter = target.closest("[data-clear-comment-filter]");
+    if (clearCommentFilter) {
+      workspaceState.commentFilters.query = "";
+      clearWorkspaceLinkedUser();
+      renderWorkspace({ soft: true });
+      return;
+    }
+
+    const clearSubmissionFilter = target.closest("[data-clear-submission-filter]");
+    if (clearSubmissionFilter) {
+      workspaceState.submissionFilters.query = "";
+      workspaceState.submissionFilterHighlight = -1;
+      renderWorkspace({ soft: true });
       return;
     }
 
@@ -285,6 +313,7 @@ function bindWorkspace() {
     }
     if (target.matches("[data-comment-filter-query]")) {
       workspaceState.commentFilters.query = String(target.value || "");
+      clearWorkspaceLinkedUser();
       renderWorkspace({ soft: true });
       return;
     }
@@ -295,6 +324,59 @@ function bindWorkspace() {
     }
     if (target.matches("[data-submission-filter-input]")) {
       workspaceState.submissionFilters.query = String(target.value || "");
+      const suggestions = submissionFilterSuggestions();
+      workspaceState.submissionFilterHighlight = suggestions.length ? 0 : -1;
+      renderWorkspace({ soft: true });
+      return;
+    }
+    if (target.matches("[data-quick-user-input]")) {
+      workspaceState.userLookupRequestId += 1;
+      workspaceState.userLookupQuery = String(target.value || "");
+      workspaceState.userLookupResult = null;
+      workspaceState.userDirectStatus = "";
+      workspaceState.userLookupLoading = Boolean(workspaceState.userLookupQuery.trim());
+      clearWorkspaceLinkedUser();
+      scheduleUserLookup();
+      renderWorkspace({ soft: true });
+    }
+  });
+
+  shell.addEventListener("keydown", async (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.matches("[data-quick-user-input]") && event.key === "Enter") {
+      event.preventDefault();
+      await handleDirectUserLookup();
+      return;
+    }
+    if (!target.matches("[data-submission-filter-input]")) return;
+    const suggestions = submissionFilterSuggestions();
+    if (event.key === "ArrowDown" && suggestions.length) {
+      event.preventDefault();
+      workspaceState.submissionFilterHighlight = workspaceState.submissionFilterHighlight >= 0
+        ? (workspaceState.submissionFilterHighlight + 1) % suggestions.length
+        : 0;
+      renderWorkspace({ soft: true });
+      return;
+    }
+    if (event.key === "ArrowUp" && suggestions.length) {
+      event.preventDefault();
+      workspaceState.submissionFilterHighlight = workspaceState.submissionFilterHighlight > 0
+        ? workspaceState.submissionFilterHighlight - 1
+        : suggestions.length - 1;
+      renderWorkspace({ soft: true });
+      return;
+    }
+    if (event.key === "Escape") {
+      workspaceState.submissionFilterHighlight = -1;
+      renderWorkspace({ soft: true });
+      return;
+    }
+    if (event.key === "Enter" && suggestions.length) {
+      event.preventDefault();
+      const selected = suggestions[Math.max(0, workspaceState.submissionFilterHighlight)];
+      workspaceState.submissionFilters.query = applySubmissionFilterSuggestion(selected);
+      workspaceState.submissionFilterHighlight = -1;
       renderWorkspace({ soft: true });
     }
   });
@@ -329,6 +411,7 @@ async function refreshWorkspace(force = false) {
   workspaceState.activeTab = chooseInitialTab(workspaceState.activeTab);
   renderWorkspace();
   await maybeResolveUserDeepLink();
+  maybeResolveCommentDeepLink();
   workspaceState.keyRequestState = "";
   void maybeRequestWorkspaceStateRepair(workspaceState.publicState, "workspace-load");
   await maybeAutoRespondToKeyRequests().catch(() => {});
@@ -708,21 +791,7 @@ function renderProfilePane() {
 function renderUsersPane() {
   const visibleUsers = visibleWorkspaceUsers();
   return `
-    <div class="workspace-grid">
-      <section class="surface-panel">
-        <div class="eyebrow">Find user</div>
-        <h2>Lookup by username</h2>
-        <p class="muted-text">Search the shared roster first. If relay state is behind, the direct lookup still checks shared account data in the background.</p>
-        <label class="workspace-search">
-          <span class="sr-only">Username</span>
-          <input class="workspace-search__input" data-quick-user-input type="text" maxlength="80" placeholder="username" value="${escapeAttribute(workspaceState.userLookupQuery || "")}">
-        </label>
-        <div class="button-row button-row--tight">
-          <button class="button" type="button" data-find-user>Find user</button>
-        </div>
-        <div class="status-box">${escapeHtml(workspaceState.userDirectStatus || "Find a user first. Shared site data may take a moment to refresh.")}</div>
-        ${renderLookupCandidate()}
-      </section>
+    <div class="workspace-grid workspace-grid--rail">
       <section class="surface-panel">
         <div class="eyebrow">User Management</div>
         <h2>Shared roster</h2>
@@ -734,6 +803,26 @@ function renderUsersPane() {
           }
         </div>
       </section>
+      <aside class="surface-panel workspace-rail-panel">
+        <div class="eyebrow">Find user</div>
+        <h2>Lookup by username</h2>
+        <label class="workspace-search">
+          <span class="sr-only">Username</span>
+          <input class="workspace-search__input" data-quick-user-input type="text" maxlength="80" placeholder="username" value="${escapeAttribute(workspaceState.userLookupQuery || "")}" autocomplete="off">
+          ${
+            workspaceState.userLookupQuery && !workspaceState.userLookupLoading
+              ? `<button class="workspace-search__clear" type="button" data-clear-user-lookup aria-label="Clear lookup">×</button>`
+              : ""
+          }
+          ${
+            workspaceState.userLookupLoading
+              ? `<span class="workspace-search__spinner" aria-hidden="true"><span class="loading-spinner"></span></span>`
+              : ""
+          }
+        </label>
+        <div class="status-box">${escapeHtml(workspaceState.userDirectStatus || "")}</div>
+        ${renderLookupCandidate()}
+      </aside>
     </div>
   `;
 }
@@ -818,9 +907,7 @@ function renderUserIdentityButton(user, fallbackPubkey = user?.pubkey || "") {
 }
 
 function filterWorkspaceComments(comments) {
-  const params = new URLSearchParams(window.location.search);
-  const deepLinkUser = String(params.get("user") || "").trim().toLowerCase();
-  const query = String(workspaceState.commentFilters.query || deepLinkUser || "").trim().toLowerCase();
+  const query = String(workspaceState.commentFilters.query || "").trim().toLowerCase();
   const role = String(workspaceState.commentFilters.role || "").trim().toLowerCase();
   return (Array.isArray(comments) ? comments : []).filter((comment) => {
     const author = resolveWorkspaceUser(comment.author);
@@ -977,6 +1064,8 @@ function renderCommentActionModal() {
           ${
             modal.mode === "edit"
               ? `<label><span>Comment</span><textarea name="markdown" required>${escapeHtml(comment.markdown || "")}</textarea></label>`
+              : modal.mode === "delete"
+                ? `<p class="muted-text">Deleting your comment also removes its replies from the public thread.</p>`
               : ""
           }
           ${
@@ -1123,10 +1212,14 @@ function renderSubmissionsPane() {
               value="${escapeAttribute(workspaceState.submissionFilters.query || "")}"
               autocomplete="off"
             >
+            ${
+              workspaceState.submissionFilters.query
+                ? `<button class="workspace-search__clear" type="button" data-clear-submission-filter aria-label="Clear submission filters">×</button>`
+                : ""
+            }
             ${filterSuggestions}
           </label>
         </div>
-        <div class="muted-text">Use comma-separated filters like <span class="mono">status:confirmed</span>, <span class="mono">user:username</span>, <span class="mono">type:pdf</span>, <span class="mono">location:phoenix</span>, or <span class="mono">entity:county line</span>.</div>
         <div class="roster-list">
           ${
             workspaceState.inboxLoading
@@ -1453,7 +1546,6 @@ function reviewedDraftAction(draft) {
 
 function renderCommentsPane() {
   const ownComments = workspaceState.publicState?.commentsByAuthor.get(workspaceState.viewer?.pubkey || "") || [];
-  const linkedUser = String(new URLSearchParams(window.location.search).get("user") || "").trim();
   if (currentUserIsAdmin()) {
     const allComments = filterWorkspaceComments((workspaceState.publicState?.allComments || []).slice().reverse());
     const hiddenCount = workspaceState.publicState?.hiddenComments?.length || 0;
@@ -1472,7 +1564,12 @@ function renderCommentsPane() {
         <div class="workspace-filter-bar">
           <label class="workspace-search">
             <span class="sr-only">Search comments</span>
-            <input class="workspace-search__input" data-comment-filter-query type="text" maxlength="120" placeholder="Search comments or users" value="${escapeAttribute(workspaceState.commentFilters.query || linkedUser)}">
+            <input class="workspace-search__input" data-comment-filter-query type="text" maxlength="120" placeholder="Search comments or users" value="${escapeAttribute(workspaceState.commentFilters.query || "")}" autocomplete="off">
+            ${
+              workspaceState.commentFilters.query
+                ? `<button class="workspace-search__clear" type="button" data-clear-comment-filter aria-label="Clear comment search">×</button>`
+                : ""
+            }
           </label>
           <label class="workspace-select">
             <span class="sr-only">Filter by role</span>
@@ -1816,6 +1913,10 @@ async function handleDirectUserAction(button) {
 }
 
 async function handleDirectUserLookup() {
+  if (workspaceState.userLookupDebounce) {
+    window.clearTimeout(workspaceState.userLookupDebounce);
+    workspaceState.userLookupDebounce = 0;
+  }
   const input = document.querySelector("[data-quick-user-input]");
   const rawValue = String(input instanceof HTMLInputElement ? input.value : workspaceState.userLookupQuery || "").trim();
   await resolveUserLookupQuery(rawValue);
@@ -1823,36 +1924,41 @@ async function handleDirectUserLookup() {
 
 async function resolveUserLookupQuery(rawValue, options = {}) {
   const shouldRender = options.render !== false;
-  workspaceState.userLookupQuery = rawValue;
+  const cleanValue = String(rawValue || "").trim();
+  const requestId = workspaceState.userLookupRequestId + 1;
+  workspaceState.userLookupRequestId = requestId;
+  workspaceState.userLookupQuery = cleanValue;
   workspaceState.userLookupResult = null;
-  if (!rawValue) {
-    workspaceState.userDirectStatus = "Enter a username.";
-    if (shouldRender) renderWorkspace();
+  workspaceState.userLookupLoading = false;
+  if (!cleanValue) {
+    workspaceState.userDirectStatus = "";
+    if (shouldRender) renderWorkspace({ soft: true });
     return;
   }
 
-  const localMatch = findLocalUserCandidate(rawValue);
+  const localMatch = findLocalUserCandidate(cleanValue);
   if (localMatch) {
-    workspaceState.userLookupQuery = localMatch.pubkey;
     workspaceState.userLookupResult = localMatch;
     workspaceState.userDirectStatus = `Found ${localMatch.username ? `@${localMatch.username}` : localMatch.displayName || "this user"} in the current roster.`;
-    if (shouldRender) renderWorkspace();
+    if (shouldRender) renderWorkspace({ soft: true });
     return;
   }
 
-  const remoteMatches = await lookupUsers(rawValue).catch(() => []);
+  workspaceState.userLookupLoading = true;
+  if (shouldRender) renderWorkspace({ soft: true });
+  const remoteMatches = await lookupUsers(cleanValue).catch(() => []);
+  if (requestId !== workspaceState.userLookupRequestId) return;
+  workspaceState.userLookupLoading = false;
   if (remoteMatches.length) {
     const match = hydrateLookupCandidate(remoteMatches[0]);
-    workspaceState.userLookupQuery = match.pubkey;
     workspaceState.userLookupResult = match;
     workspaceState.userDirectStatus = `Found ${match.username ? `@${match.username}` : match.displayName || "this user"} from shared site data.`;
-    if (shouldRender) renderWorkspace();
+    if (shouldRender) renderWorkspace({ soft: true });
     return;
   }
 
-  const directPubkey = normalizeDirectPubkey(rawValue);
+  const directPubkey = normalizeDirectPubkey(cleanValue);
   if (directPubkey) {
-    workspaceState.userLookupQuery = directPubkey;
     workspaceState.userLookupResult = hydrateLookupCandidate({
       pubkey: directPubkey,
       username: "",
@@ -1860,12 +1966,41 @@ async function resolveUserLookupQuery(rawValue, options = {}) {
       isAdmin: workspaceState.publicState?.admins?.includes(directPubkey)
     });
     workspaceState.userDirectStatus = "No profile is visible yet, but this account can still be managed directly.";
-    if (shouldRender) renderWorkspace();
+    if (shouldRender) renderWorkspace({ soft: true });
     return;
   }
 
   workspaceState.userDirectStatus = "No matching user found yet.";
-  if (shouldRender) renderWorkspace();
+  if (shouldRender) renderWorkspace({ soft: true });
+}
+
+function scheduleUserLookup() {
+  if (workspaceState.userLookupDebounce) {
+    window.clearTimeout(workspaceState.userLookupDebounce);
+    workspaceState.userLookupDebounce = 0;
+  }
+  const query = String(workspaceState.userLookupQuery || "").trim();
+  if (!query) {
+    workspaceState.userLookupLoading = false;
+    return;
+  }
+  workspaceState.userLookupDebounce = window.setTimeout(() => {
+    workspaceState.userLookupDebounce = 0;
+    void resolveUserLookupQuery(query);
+  }, 260);
+}
+
+function clearWorkspaceUserLookup() {
+  if (workspaceState.userLookupDebounce) {
+    window.clearTimeout(workspaceState.userLookupDebounce);
+    workspaceState.userLookupDebounce = 0;
+  }
+  workspaceState.userLookupRequestId += 1;
+  workspaceState.userLookupQuery = "";
+  workspaceState.userLookupResult = null;
+  workspaceState.userLookupLoading = false;
+  workspaceState.userDirectStatus = "";
+  clearWorkspaceLinkedUser();
 }
 
 async function performUserAction(targetPubkey, action, mode = "") {
@@ -2255,8 +2390,7 @@ async function markSubmissionViewed(submissionId) {
 }
 
 async function maybeResolveUserDeepLink() {
-  const params = new URLSearchParams(window.location.search);
-  const query = String(params.get("user") || "").trim();
+  const query = readWorkspaceLinkedUser();
   if (!query || workspaceState.activeTab !== "users") return;
   if (workspaceState.userLookupQuery !== query || !workspaceState.userLookupResult) {
     await resolveUserLookupQuery(query, { render: false });
@@ -2270,6 +2404,23 @@ async function maybeResolveUserDeepLink() {
     card.classList.add("roster-item--focus");
     window.setTimeout(() => card.classList.remove("roster-item--focus"), 1800);
   }
+}
+
+function maybeResolveCommentDeepLink() {
+  const query = readWorkspaceLinkedUser();
+  if (!query || workspaceState.activeTab !== "comments" || workspaceState.commentFilters.query) return;
+  workspaceState.commentFilters.query = query;
+  renderWorkspace({ soft: true });
+}
+
+function readWorkspaceLinkedUser() {
+  return String(new URLSearchParams(window.location.search).get("user") || "").trim();
+}
+
+function clearWorkspaceLinkedUser() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("user");
+  history.replaceState({}, "", url);
 }
 
 async function handleChatSend(form) {
@@ -2433,6 +2584,9 @@ function setActiveTab(tab) {
   workspaceState.activeTab = normalizeWorkspaceTab(tab);
   const url = new URL(window.location.href);
   url.searchParams.set("tab", workspaceState.activeTab);
+  if (!["users", "comments"].includes(workspaceState.activeTab)) {
+    url.searchParams.delete("user");
+  }
   history.replaceState({}, "", url);
 }
 
@@ -2682,13 +2836,18 @@ function renderSubmissionFilterSuggestions() {
   const suggestions = submissionFilterSuggestions();
   if (!suggestions.length) return "";
   return `
-    <div class="picker-results picker-results--dropdown archive-filters__results" data-open="yes">
+    <div class="picker-results picker-results--dropdown workspace-search__results" data-open="yes">
       ${suggestions
         .map(
-          (token) => `
-            <button class="picker-chip" type="button" data-submission-filter-suggestion="${escapeAttribute(token)}">
+          (token, index) => `
+            <button
+              class="picker-chip${workspaceState.submissionFilterHighlight === index ? " is-highlighted" : ""}"
+              type="button"
+              data-submission-filter-suggestion="${escapeAttribute(token)}"
+              data-submission-filter-index="${index}"
+              aria-selected="${workspaceState.submissionFilterHighlight === index ? "true" : "false"}"
+            >
               <strong>${escapeHtml(token)}</strong>
-              <span>Use filter</span>
             </button>
           `
         )
@@ -2700,6 +2859,7 @@ function renderSubmissionFilterSuggestions() {
 function submissionFilterSuggestions() {
   const raw = String(workspaceState.submissionFilters.query || "");
   const segment = raw.split(",").pop()?.trim().toLowerCase() || "";
+  if (!segment) return [];
   const suggestionPool = [
     "status:confirmed",
     "status:unconfirmed",
@@ -3035,7 +3195,6 @@ function findLocalUserCandidate(value) {
 }
 
 function visibleWorkspaceUsers() {
-  const query = String(workspaceState.userLookupQuery || "").trim().toLowerCase();
   return (workspaceState.publicState?.users || []).filter((user) => {
     const visible =
       user.isAdmin ||
@@ -3047,18 +3206,7 @@ function visibleWorkspaceUsers() {
       (Array.isArray(user.socialLinks) && user.socialLinks.length) ||
       user.avatarUrl ||
       user.avatarBlob;
-    if (!visible) return false;
-    if (!query) return true;
-    const haystacks = [
-      user.pubkey,
-      user.username,
-      user.displayName,
-      user.bio,
-      ...(Array.isArray(user.socialLinks) ? user.socialLinks : [])
-    ]
-      .map((value) => String(value || "").trim().toLowerCase())
-      .filter(Boolean);
-    return haystacks.some((value) => value.includes(query));
+    return visible;
   });
 }
 

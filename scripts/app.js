@@ -104,6 +104,7 @@ const state = {
 document.addEventListener("DOMContentLoaded", () => {
   initExternalLinks();
   initNavigation();
+  initLinkPrefetch();
   bindGlobalSiteInteractions();
   initInvestigationCards();
   void initInvestigationDetail();
@@ -312,20 +313,53 @@ function startBackgroundPrefetch() {
       "./about.html",
       "./guide.html",
       "./submit.html",
+      "./get-involved.html",
+      "./merch.html",
+      "./investigation.html",
+      "./editor.html",
       "./admin.html?tab=login"
     ];
     for (const route of routes) {
       fetch(route, { cache: "force-cache" }).catch(() => null);
     }
     fetch("./content/investigations/index.json", { cache: "force-cache" }).catch(() => null);
+    fetch("./content/pages/guide.md", { cache: "force-cache" }).catch(() => null);
+    fetch("./vendor/leaflet.js", { cache: "force-cache" }).catch(() => null);
+    fetch("./vendor/leaflet.css", { cache: "force-cache" }).catch(() => null);
     void loadPosts().catch(() => []);
     void warmPublicState().catch(() => null);
+    if (state.session?.secretKeyHex) {
+      void loadUserSubmissions(state.session.secretKeyHex).catch(() => []);
+      void loadAdminKeyShare(state.session.secretKeyHex).catch(() => null);
+    }
   };
   if (typeof window.requestIdleCallback === "function") {
     window.requestIdleCallback(task, { timeout: 1800 });
     return;
   }
   window.setTimeout(task, 900);
+}
+
+function initLinkPrefetch() {
+  const prefetched = new Set();
+  const maybePrefetch = (value) => {
+    try {
+      const url = new URL(value, window.location.href);
+      if (url.origin !== window.location.origin || prefetched.has(url.href)) return;
+      prefetched.add(url.href);
+      fetch(url.href, { cache: "force-cache" }).catch(() => null);
+    } catch {
+      return;
+    }
+  };
+  const primeTarget = (target) => {
+    if (!(target instanceof Element)) return;
+    const link = target.closest("a[href]");
+    if (!(link instanceof HTMLAnchorElement)) return;
+    maybePrefetch(link.href);
+  };
+  document.addEventListener("pointerover", (event) => primeTarget(event.target), { passive: true });
+  document.addEventListener("focusin", (event) => primeTarget(event.target));
 }
 
 function handleSessionChanged() {
@@ -1217,6 +1251,34 @@ async function renderComments(postSlug, publicState) {
     });
   }
 
+  for (const button of panel.querySelectorAll("[data-delete-comment]")) {
+    button.addEventListener("click", async () => {
+      if (!state.session?.secretKeyHex || !viewerPubkey) return;
+      const commentId = String(button.getAttribute("data-delete-comment") || "").trim();
+      const targetComment = comments.find((comment) => comment.id === commentId);
+      if (!targetComment || targetComment.author !== viewerPubkey) return;
+      if (!window.confirm("Delete this comment and its replies?")) return;
+      try {
+        button.disabled = true;
+        applyLocalCommentDeletion(commentId, "Deleted by author");
+        await renderComments(postSlug, state.publicState);
+        await publishTaggedJson({
+          kind: SITE.nostr.kinds.commentMod,
+          secretKeyHex: state.session.secretKeyHex,
+          tags: [["e", commentId], ["op", "hide"]],
+          content: {
+            target_id: commentId,
+            action: "hide",
+            note: "Deleted by author"
+          }
+        });
+      } catch {
+        state.publicState = await loadPublicState(true).catch(() => state.publicState);
+        await renderComments(postSlug, state.publicState);
+      }
+    });
+  }
+
   for (const button of panel.querySelectorAll("[data-comment-vote]")) {
     button.addEventListener("click", async () => {
       if (!state.session?.secretKeyHex || !viewerPubkey) return;
@@ -1261,6 +1323,7 @@ function renderComment(comment, publicState, options = {}, depth = 0) {
   const replies = Array.isArray(comment.replies) ? comment.replies : [];
   const voteSummary = resolveCommentVoteSummary(publicState, comment.id);
   const viewerVote = options.viewerPubkey ? resolveCurrentVoteForComment(publicState, comment.id, options.viewerPubkey) : 0;
+  const canDelete = Boolean(options.viewerPubkey) && comment.author === options.viewerPubkey;
   const replyForm = options.canReply && options.replyTargetId === comment.id
     ? renderInlineReplyForm(comment, publicState)
     : "";
@@ -1302,6 +1365,7 @@ function renderComment(comment, publicState, options = {}, depth = 0) {
             </div>
             <div class="comment-card__actions">
               ${options.canReply ? `<button type="button" class="button-ghost" data-reply-comment="${escapeAttribute(comment.id)}">Reply</button>` : ""}
+              ${canDelete ? `<button type="button" class="button-ghost" data-delete-comment="${escapeAttribute(comment.id)}">Delete</button>` : ""}
               ${options.isAdmin ? `<button type="button" class="button-ghost" data-hide-comment="${escapeAttribute(comment.id)}">Hide</button>` : ""}
             </div>
           </div>
@@ -1725,6 +1789,42 @@ function appendLocalComment(postSlug, comment) {
   }
 }
 
+function applyLocalCommentDeletion(commentId, note = "Deleted by author") {
+  if (!state.publicState?.allComments) return;
+  const branchIds = collectCommentBranchIds(state.publicState.allComments, commentId);
+  if (!branchIds.length) return;
+  const branchSet = new Set(branchIds);
+  const moderation = {
+    action: "hide",
+    note: String(note || "").trim(),
+    updated_at: Math.floor(Date.now() / 1000),
+    by: state.viewer?.pubkey || ""
+  };
+  const nextComments = (state.publicState.allComments || []).map((comment) => {
+    if (!branchSet.has(String(comment.id || "").trim())) return comment;
+    return {
+      ...comment,
+      visibility: "hidden",
+      moderation:
+        String(comment.id || "").trim() === String(commentId || "").trim()
+          ? moderation
+          : comment.moderation || moderation
+    };
+  });
+  state.publicState.allComments = nextComments;
+  state.publicState.comments = nextComments.filter((comment) => String(comment.visibility || "visible") !== "hidden");
+  state.publicState.hiddenComments = nextComments.filter((comment) => String(comment.visibility || "visible") === "hidden");
+  state.publicState.commentsByPost = regroupComments(state.publicState.comments, "post_slug");
+  state.publicState.commentsByAuthor = regroupComments(state.publicState.comments, "author");
+  for (const user of state.publicState.users || []) {
+    user.commentCount = (state.publicState.commentsByAuthor.get(user.pubkey) || []).length;
+  }
+  if (state.publicState.metrics) {
+    state.publicState.metrics.commentCount = state.publicState.comments.length;
+    state.publicState.metrics.hiddenCommentCount = state.publicState.hiddenComments.length;
+  }
+}
+
 function dedupeCommentList(comments) {
   const seen = new Set();
   return (Array.isArray(comments) ? comments : []).filter((comment) => {
@@ -1733,6 +1833,41 @@ function dedupeCommentList(comments) {
     seen.add(id);
     return true;
   });
+}
+
+function collectCommentBranchIds(comments, rootId) {
+  const children = new Map();
+  for (const comment of Array.isArray(comments) ? comments : []) {
+    const parentId = String(comment?.parent_id || "").trim();
+    const commentId = String(comment?.id || "").trim();
+    if (!parentId || !commentId) continue;
+    const bucket = children.get(parentId) || [];
+    bucket.push(commentId);
+    children.set(parentId, bucket);
+  }
+  const ids = [];
+  const stack = [String(rootId || "").trim()];
+  const seen = new Set();
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current || seen.has(current)) continue;
+    seen.add(current);
+    ids.push(current);
+    for (const childId of children.get(current) || []) stack.push(childId);
+  }
+  return ids;
+}
+
+function regroupComments(comments, key) {
+  const buckets = new Map();
+  for (const comment of Array.isArray(comments) ? comments : []) {
+    const bucketKey = String(comment?.[key] || "").trim();
+    if (!bucketKey) continue;
+    const bucket = buckets.get(bucketKey) || [];
+    bucket.push(comment);
+    buckets.set(bucketKey, bucket);
+  }
+  return buckets;
 }
 
 function renderArchiveMapPanel() {
@@ -2123,8 +2258,15 @@ function renderLeafletPreviewMap(canvas, entities) {
     }).addTo(markers);
     marker.bindTooltip(escapeHtml(entity.name), { direction: "top", opacity: 0.92 });
   }
-  if (points.length) previewMap.fitBounds(points, { padding: [28, 28] });
-  else previewMap.setView(SITE.map.defaultCenter, SITE.map.defaultZoom);
+  if (points.length) {
+    if (typeof previewMap.flyToBounds === "function") {
+      previewMap.flyToBounds(points, { padding: [28, 28], duration: 0.4 });
+    } else {
+      previewMap.fitBounds(points, { padding: [28, 28] });
+    }
+  } else {
+    previewMap.setView(SITE.map.defaultCenter, SITE.map.defaultZoom);
+  }
   window.setTimeout(() => previewMap.invalidateSize(), 60);
 }
 
@@ -2963,7 +3105,11 @@ function renderLeafletMap(canvas, entities) {
   }
 
   if (points.length) {
-    state.map.fitBounds(points, { padding: [40, 40] });
+    if (typeof state.map.flyToBounds === "function") {
+      state.map.flyToBounds(points, { padding: [40, 40], duration: 0.45 });
+    } else {
+      state.map.fitBounds(points, { padding: [40, 40] });
+    }
   } else {
     state.map.setView(SITE.map.defaultCenter, SITE.map.defaultZoom);
   }
