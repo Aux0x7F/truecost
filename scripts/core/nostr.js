@@ -22,6 +22,10 @@ export const {
   deriveIdentity,
   generateSecretKeyHex,
   resolveSitePubkey,
+  publicStateNeedsRepair,
+  requestPublicStateRepair,
+  startPublicStateRepairPeer,
+  stopPublicStateRepairPeer,
   publishTaggedJson,
   publishEncryptedJson,
   publishSubmission,
@@ -343,5 +347,6 @@ export default {
   ...blobs,
   ...staticPages,
   loadPublicState,
-  warmPublicState
+  warmPublicState,
+  publicStateNeedsRepair
 };

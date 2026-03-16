@@ -17,7 +17,10 @@ import {
   loadPublicState,
   loadSubmissionThread,
   loadUserSubmissions,
+  publicStateNeedsRepair,
   publishTaggedJson,
+  requestPublicStateRepair,
+  startPublicStateRepairPeer,
   warmPublicState
 } from "./core/nostr.js";
 import { clearSession, getOrCreateGuestSession, getStoredGuestSession, getStoredSession } from "./core/session.js";
@@ -71,6 +74,9 @@ const state = {
   publicStateDigest: "",
   publicStateRefreshTimer: 0,
   publicStateRefreshInFlight: false,
+  publicStateRepairPeerStarted: false,
+  publicStateRepairInFlight: false,
+  publicStateRepairRequestedAt: 0,
   postsPromise: null,
   commentReply: null,
   notifications: [],
@@ -252,6 +258,7 @@ async function bootstrapRelayState() {
     if (!state.guestSession) {
       state.guestSession = await getOrCreateGuestSession().catch(() => null);
     }
+    await ensurePublicStateRepairPeer();
     state.publicState = await loadPublicState();
     state.publicStateDigest = createPublicStateDigest(state.publicState);
     if (state.session) {
@@ -261,6 +268,7 @@ async function bootstrapRelayState() {
     state.publicState = null;
   }
   void publishVisitPulse();
+  void maybeRequestPublicStateRepair(state.publicState, "bootstrap");
   void hydrateNotifications();
   renderNavigation();
   schedulePublicStateRefresh();
@@ -2645,11 +2653,13 @@ async function getPublicState() {
     if (!state.guestSession) {
       state.guestSession = await getOrCreateGuestSession().catch(() => null);
     }
+    await ensurePublicStateRepairPeer();
     state.publicState = await loadPublicState();
     state.publicStateDigest = createPublicStateDigest(state.publicState);
     if (state.session && !state.viewer) {
       state.viewer = deriveIdentity(state.session.secretKeyHex);
     }
+    void maybeRequestPublicStateRepair(state.publicState, "get-public-state");
     if (state.session) {
       void hydrateNotifications();
     }
@@ -2702,6 +2712,7 @@ async function syncPublicState(force = true) {
     }
     const nextState = await loadPublicState(force);
     const nextDigest = createPublicStateDigest(nextState);
+    void maybeRequestPublicStateRepair(nextState, "background-sync");
     if (nextDigest !== state.publicStateDigest) {
       state.publicState = nextState;
       state.publicStateDigest = nextDigest;
@@ -2712,6 +2723,40 @@ async function syncPublicState(force = true) {
   } finally {
     state.publicStateRefreshInFlight = false;
     schedulePublicStateRefresh();
+  }
+}
+
+async function ensurePublicStateRepairPeer() {
+  if (state.publicStateRepairPeerStarted || !hasNostrTools()) return;
+  try {
+    await startPublicStateRepairPeer();
+    state.publicStateRepairPeerStarted = true;
+  } catch {
+    return;
+  }
+}
+
+async function maybeRequestPublicStateRepair(publicState, reason = "") {
+  if (!publicStateNeedsRepair(publicState) || state.publicStateRepairInFlight) return;
+  const now = Date.now();
+  if (now - state.publicStateRepairRequestedAt < 45000) return;
+  const secretKeyHex = await getRequestSignerSecretKey().catch(() => "");
+  if (!secretKeyHex) return;
+  state.publicStateRepairInFlight = true;
+  state.publicStateRepairRequestedAt = now;
+  try {
+    await requestPublicStateRepair(secretKeyHex, {
+      reason,
+      page: document.body.dataset.page || "site",
+      knownEventCount: Array.isArray(publicState?.rawEvents) ? publicState.rawEvents.length : 0
+    });
+    window.setTimeout(() => {
+      void syncPublicState(true);
+    }, 2800);
+  } catch {
+    return;
+  } finally {
+    state.publicStateRepairInFlight = false;
   }
 }
 
