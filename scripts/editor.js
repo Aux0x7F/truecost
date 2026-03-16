@@ -2,6 +2,7 @@ import SITE from "./core/site-config.js";
 import { createUniqueSlug, splitTags } from "./core/content-utils.js";
 import {
   cleanSlug,
+  connectStructuredUnitOverlay,
   deriveIdentity,
   ensureEventToolsLoaded,
   loadPublicState,
@@ -32,7 +33,13 @@ const editorState = {
   activePickerField: "",
   entityModal: null,
   modalRoot: null,
-  documentClicksBound: false
+  documentClicksBound: false,
+  liveController: null,
+  liveDocumentId: "",
+  liveStatus: "idle",
+  livePublishTimer: 0,
+  suppressSyncDepth: 0,
+  pagehideBound: false
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -57,6 +64,10 @@ async function initEditorPage(force = false) {
   void maybeRequestEditorStateRepair(editorState.publicState, "editor");
   editorState.staticSlugs = await loadStaticSlugs().catch(() => []);
   renderEditorShell();
+  if (!editorState.pagehideBound) {
+    window.addEventListener("pagehide", destroyLiveInvestigationOverlay);
+    editorState.pagehideBound = true;
+  }
 }
 
 async function ensureEditorRepairPeer() {
@@ -201,6 +212,7 @@ function renderEditorShell() {
   updateMetaPanel();
   updateHistoryPanels();
   hydrateEntityResults();
+  void ensureLiveInvestigationOverlay();
 }
 
 function bindEditorShell() {
@@ -238,9 +250,12 @@ function bindEditorShell() {
   decorateToolbar(surface);
 
   const queueSave = () => {
+    if (editorState.suppressSyncDepth > 0) return;
+    ensureEditorUnitSlug();
     syncSlugPreview();
     scheduleLocalSnapshot();
     scheduleRelaySave();
+    scheduleLivePublish();
     hydrateEntityResults();
   };
 
@@ -465,6 +480,12 @@ async function saveDraftNow(status = "draft", silent = false) {
     history.replaceState({}, "", url);
   }
 
+  await ensureLiveInvestigationOverlay();
+  if (editorState.liveController) {
+    await editorState.liveController.setContent(payload).catch(() => false);
+    await editorState.liveController.flush?.().catch(() => null);
+  }
+
   editorState.draftStatus = status;
   editorState.lastRelayFingerprint = fingerprint;
   editorState.relayVersions.unshift({
@@ -544,17 +565,22 @@ function draftOwnerPubkey() {
 function applyDocument(nextDocument) {
   const form = document.querySelector("[data-editor-form]");
   if (!(form instanceof HTMLFormElement)) return;
-  form.elements.namedItem("title").value = nextDocument.title || "";
-  form.elements.namedItem("date").value = nextDocument.date || new Date().toISOString().slice(0, 10);
-  form.elements.namedItem("summary").value = nextDocument.summary || "";
-  form.elements.namedItem("tags").value = Array.isArray(nextDocument.tags) ? nextDocument.tags.join(", ") : "";
-  form.elements.namedItem("primaryEntity").value = nextDocument.primaryEntity || "";
-  form.elements.namedItem("entityRefs").value = Array.isArray(nextDocument.entityRefs) ? nextDocument.entityRefs.join(", ") : "";
-  if (editorState.editor?.setMarkdown) {
-    editorState.editor.setMarkdown(nextDocument.markdown || "", false);
+  editorState.suppressSyncDepth += 1;
+  try {
+    form.elements.namedItem("title").value = nextDocument.title || "";
+    form.elements.namedItem("date").value = nextDocument.date || new Date().toISOString().slice(0, 10);
+    form.elements.namedItem("summary").value = nextDocument.summary || "";
+    form.elements.namedItem("tags").value = Array.isArray(nextDocument.tags) ? nextDocument.tags.join(", ") : "";
+    form.elements.namedItem("primaryEntity").value = nextDocument.primaryEntity || "";
+    form.elements.namedItem("entityRefs").value = Array.isArray(nextDocument.entityRefs) ? nextDocument.entityRefs.join(", ") : "";
+    if (editorState.editor?.setMarkdown) {
+      editorState.editor.setMarkdown(nextDocument.markdown || "", false);
+    }
+    syncSlugPreview();
+    hydrateEntityResults();
+  } finally {
+    editorState.suppressSyncDepth = Math.max(0, editorState.suppressSyncDepth - 1);
   }
-  syncSlugPreview();
-  hydrateEntityResults();
 }
 
 function hydrateEntityResults() {
@@ -943,6 +969,97 @@ async function loadStaticSlugs() {
 
 function currentUserIsAdmin() {
   return Boolean(editorState.viewer && editorState.publicState?.admins?.includes(editorState.viewer.pubkey));
+}
+
+function trustedAdminPubkeys() {
+  const admins = new Set(Array.isArray(editorState.publicState?.admins) ? editorState.publicState.admins : []);
+  const rootAdminPubkey = String(editorState.publicState?.rootAdminPubkey || SITE.nostr.rootAdminPubkey || "").trim();
+  if (rootAdminPubkey) admins.add(rootAdminPubkey);
+  return [...admins];
+}
+
+function ensureEditorUnitSlug() {
+  if (editorState.currentSlug) return editorState.currentSlug;
+  const title = String(document.querySelector('[name="title"]')?.value || "").trim();
+  if (!title) return "";
+  const nextSlug = createUniqueSlug(title || "untitled", takenSlugs());
+  if (!nextSlug) return "";
+  editorState.currentSlug = nextSlug;
+  moveLocalStorageToSlug(nextSlug);
+  const url = new URL(window.location.href);
+  url.searchParams.set("slug", nextSlug);
+  history.replaceState({}, "", url);
+  void ensureLiveInvestigationOverlay();
+  return nextSlug;
+}
+
+async function ensureLiveInvestigationOverlay() {
+  if (!editorState.session || !currentUserIsAdmin()) return;
+  const slug = editorState.currentSlug || ensureEditorUnitSlug();
+  if (!slug) return;
+  const documentId = investigationDocumentId(slug);
+  if (editorState.liveController && editorState.liveDocumentId === documentId) return;
+  destroyLiveInvestigationOverlay();
+  editorState.liveDocumentId = documentId;
+  editorState.liveController = await connectStructuredUnitOverlay({
+    documentId,
+    secretKeyHex: editorState.session.secretKeyHex,
+    kind: SITE.nostr.kinds.collabDocument,
+    getTrustedPubkeys: trustedAdminPubkeys,
+    canPublish: currentUserIsAdmin,
+    onRemoteContent: handleLiveInvestigationContent,
+    onStatus: handleLiveInvestigationStatus,
+  });
+}
+
+function destroyLiveInvestigationOverlay() {
+  if (editorState.livePublishTimer) {
+    window.clearTimeout(editorState.livePublishTimer);
+    editorState.livePublishTimer = 0;
+  }
+  try {
+    editorState.liveController?.destroy?.();
+  } catch {
+    return;
+  } finally {
+    editorState.liveController = null;
+    editorState.liveDocumentId = "";
+    editorState.liveStatus = "idle";
+  }
+}
+
+function scheduleLivePublish() {
+  if (editorState.livePublishTimer) window.clearTimeout(editorState.livePublishTimer);
+  editorState.livePublishTimer = window.setTimeout(async () => {
+    editorState.livePublishTimer = 0;
+    if (!editorState.session || !currentUserIsAdmin()) return;
+    await ensureLiveInvestigationOverlay().catch(() => null);
+    if (!editorState.liveController) return;
+    const payload = buildDraftPayload(editorState.draftStatus || "draft");
+    if (!payload.title.trim() && !payload.markdown.trim()) return;
+    await editorState.liveController.setContent(payload).catch(() => false);
+    await editorState.liveController.flush?.().catch(() => null);
+  }, 260);
+}
+
+function handleLiveInvestigationStatus(detail) {
+  if (detail?.documentId !== editorState.liveDocumentId) return;
+  editorState.liveStatus = String(detail?.state || "idle");
+}
+
+function handleLiveInvestigationContent(content, detail) {
+  if (detail?.documentId !== editorState.liveDocumentId || !detail?.hasLiveContent) return;
+  const nextDocument = draftToDocument(content);
+  if (fingerprintDocument(nextDocument, editorState.draftStatus || "draft") === fingerprintDocument(collectDocumentFromForm(), editorState.draftStatus || "draft")) {
+    return;
+  }
+  applyDocument(nextDocument);
+  updateMetaPanel("Applied live updates from another admin.");
+}
+
+function investigationDocumentId(slug) {
+  const clean = cleanSlug(slug || "");
+  return clean ? `investigation:${clean}` : "";
 }
 
 function loadLocalDocument(slug) {
