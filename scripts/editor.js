@@ -892,15 +892,19 @@ async function handleImageInsert(form) {
   const alt = String(formData.get("alt") || "").trim() || cleanFileStem(file.name);
   const caption = String(formData.get("caption") || "").trim();
   setEditorStatus("Uploading image...", "pending");
-  const upload = await uploadPublicBlob(editorState.session.secretKeyHex, file, {
-    purpose: "investigation-image"
-  });
-  insertEditorImageBlock(upload, { alt, caption, placement });
-  closeImageModal();
-  scheduleLocalSnapshot();
-  scheduleRelaySave();
-  scheduleLivePublish();
-  setEditorStatus("Image inserted.", "success");
+  try {
+    const upload = await uploadPublicBlob(editorState.session.secretKeyHex, file, {
+      purpose: "investigation-image"
+    });
+    insertEditorImageBlock(upload, { alt, caption, placement });
+    closeImageModal();
+    scheduleLocalSnapshot();
+    scheduleRelaySave();
+    scheduleLivePublish();
+    setEditorStatus("Image inserted.", "success");
+  } catch (error) {
+    setEditorStatus(String(error?.message || error || "Image upload failed."), "error");
+  }
 }
 
 function mergeEntityIntoState(entity) {

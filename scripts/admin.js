@@ -6,6 +6,7 @@ import {
   deriveIdentity,
   ensureEventToolsLoaded,
   generateSecretKeyHex,
+  getCachedPublicState,
   loadAdminKeyShare,
   loadAdminKeyShares,
   loadInboxSubmissions,
@@ -31,7 +32,7 @@ import { getStoredSession, rebroadcastAccount, signInWithCredentials } from "./c
 const workspaceState = {
   session: getStoredSession(),
   viewer: null,
-  publicState: null,
+  publicState: getCachedPublicState(),
   siteKeyShares: [],
   siteKeyShare: null,
   inboxSubmissions: [],
@@ -65,6 +66,12 @@ const workspaceState = {
   },
   submissionFilters: {
     query: ""
+  },
+  entityFilters: {
+    query: "",
+    status: "",
+    location: "",
+    author: ""
   },
   keyRequestState: "",
   keyRequestTimer: 0,
@@ -217,6 +224,24 @@ function bindWorkspace() {
       workspaceState.submissionFilterOpen = false;
       renderWorkspace({ soft: true });
       focusWorkspaceSearchField("[data-submission-filter-input]");
+      return;
+    }
+
+    const clearEntityFilter = target.closest("[data-clear-entity-filter]");
+    if (clearEntityFilter) {
+      const field = clearEntityFilter.getAttribute("data-clear-entity-filter") || "";
+      if (field && Object.prototype.hasOwnProperty.call(workspaceState.entityFilters, field)) {
+        workspaceState.entityFilters[field] = "";
+        renderWorkspace({ soft: true });
+        focusWorkspaceSearchField(`[data-entity-filter-${field}]`);
+      }
+      return;
+    }
+
+    const userStatsFilter = target.closest("[data-user-stats-filter]");
+    if (userStatsFilter) {
+      workspaceState.userFilters.karma = String(userStatsFilter.getAttribute("data-user-stats-filter") || "").trim().toLowerCase();
+      renderWorkspace({ soft: true });
       return;
     }
 
@@ -386,6 +411,26 @@ function bindWorkspace() {
       renderWorkspace({ soft: true });
       return;
     }
+    if (target.matches("[data-entity-filter-query]")) {
+      workspaceState.entityFilters.query = String(target.value || "");
+      renderWorkspace({ soft: true });
+      return;
+    }
+    if (target.matches("[data-entity-filter-status]")) {
+      workspaceState.entityFilters.status = String(target.value || "").trim().toLowerCase();
+      renderWorkspace({ soft: true });
+      return;
+    }
+    if (target.matches("[data-entity-filter-location]")) {
+      workspaceState.entityFilters.location = String(target.value || "");
+      renderWorkspace({ soft: true });
+      return;
+    }
+    if (target.matches("[data-entity-filter-author]")) {
+      workspaceState.entityFilters.author = String(target.value || "");
+      renderWorkspace({ soft: true });
+      return;
+    }
     if (target.matches("[data-quick-user-input]")) {
       workspaceState.userLookupRequestId += 1;
       workspaceState.userLookupQuery = String(target.value || "");
@@ -462,7 +507,12 @@ async function refreshWorkspace(force = false) {
     return;
   }
 
-  renderWorkspaceLoading("Looking up workspace...");
+  if (workspaceState.publicState) {
+    workspaceState.activeTab = chooseInitialTab(workspaceState.activeTab);
+    renderWorkspace({ soft: true });
+  } else {
+    renderWorkspaceLoading("Looking up workspace...");
+  }
   await ensureEventToolsLoaded();
   await ensureWorkspaceRepairPeer();
   await hydrateWorkspaceState(force);
@@ -714,8 +764,16 @@ function captureWorkspaceFocusState() {
         ? "[data-comment-filter-role]"
         : active.matches("[data-comment-filter-karma]")
           ? "[data-comment-filter-karma]"
-          : active.matches("[data-user-filter-karma]")
-            ? "[data-user-filter-karma]"
+        : active.matches("[data-user-filter-karma]")
+          ? "[data-user-filter-karma]"
+          : active.matches("[data-entity-filter-query]")
+            ? "[data-entity-filter-query]"
+            : active.matches("[data-entity-filter-status]")
+              ? "[data-entity-filter-status]"
+              : active.matches("[data-entity-filter-location]")
+                ? "[data-entity-filter-location]"
+                : active.matches("[data-entity-filter-author]")
+                  ? "[data-entity-filter-author]"
         : active.matches("[data-submission-filter-input]")
           ? "[data-submission-filter-input]"
           : active.matches("[data-quick-user-input]")
@@ -862,14 +920,6 @@ function renderUsersPane() {
       <section class="surface-panel">
         <div class="eyebrow">User Management</div>
         <h2>Shared roster</h2>
-        <div class="workspace-filter-bar workspace-filter-bar--stacked">
-          <label class="workspace-select">
-            <span class="sr-only">Filter users by karma</span>
-            <select data-user-filter-karma>
-              ${renderKarmaSelectOptions(workspaceState.userFilters.karma)}
-            </select>
-          </label>
-        </div>
         <div class="roster-list">
           ${
             visibleUsers
@@ -878,8 +928,19 @@ function renderUsersPane() {
           }
         </div>
       </section>
-      <aside class="surface-panel workspace-rail-panel">
-        <div class="eyebrow">Find user</div>
+      <aside class="workspace-rail-stack">
+        <section class="surface-panel workspace-rail-panel">
+          <label class="workspace-select">
+            <span class="sr-only">Filter users by karma</span>
+            <select data-user-filter-karma>
+              ${renderKarmaSelectOptions(workspaceState.userFilters.karma)}
+            </select>
+          </label>
+        </section>
+        <section class="surface-panel workspace-rail-panel">
+          ${renderUserStatsCard()}
+        </section>
+        <section class="surface-panel workspace-rail-panel">
         <label class="workspace-search">
           <span class="sr-only">Username</span>
           <input class="workspace-search__input" data-quick-user-input type="text" maxlength="80" placeholder="username" value="${escapeAttribute(workspaceState.userLookupQuery || "")}" autocomplete="off">
@@ -895,12 +956,49 @@ function renderUsersPane() {
           }
         </label>
         ${
-          workspaceState.userDirectStatus
-            ? `<div class="status-box">${escapeHtml(workspaceState.userDirectStatus)}</div>`
-            : ""
+            workspaceState.userDirectStatus
+              ? `<div class="status-box">${escapeHtml(workspaceState.userDirectStatus)}</div>`
+              : ""
         }
         ${renderLookupCandidate()}
+        </section>
       </aside>
+    </div>
+  `;
+}
+
+function renderUserStatsCard() {
+  const stats = workspaceUserStats();
+  const buckets = [
+    { label: "Below zero", value: "lt0", count: stats.karmaBuckets.lt0 || 0 },
+    { label: "0 to 5", value: "0-5", count: stats.karmaBuckets["0-5"] || 0 },
+    { label: "6 to 50", value: "6-50", count: stats.karmaBuckets["6-50"] || 0 },
+    { label: "51 to 500", value: "51-500", count: stats.karmaBuckets["51-500"] || 0 },
+    { label: "Above 500", value: "gt500", count: stats.karmaBuckets.gt500 || 0 }
+  ];
+  return `
+    <div class="eyebrow">User stats</div>
+    <div class="workspace-stats-card">
+      <button class="workspace-stats-card__item" type="button" data-user-stats-filter="">
+        <strong>${stats.total}</strong>
+        <span>Users</span>
+      </button>
+      <button class="workspace-stats-card__item" type="button" data-user-stats-filter="">
+        <strong>${stats.active}</strong>
+        <span>Active</span>
+      </button>
+      <div class="workspace-stats-card__grid">
+        ${buckets
+          .map(
+            (bucket) => `
+              <button class="workspace-stats-card__item${workspaceState.userFilters.karma === bucket.value ? " is-active" : ""}" type="button" data-user-stats-filter="${bucket.value}">
+                <strong>${bucket.count}</strong>
+                <span>${escapeHtml(bucket.label)}</span>
+              </button>
+            `
+          )
+          .join("")}
+      </div>
     </div>
   `;
 }
@@ -1051,6 +1149,15 @@ function karmaBucketMatches(score, bucket) {
   if (cleanBucket === "51-500") return numeric >= 51 && numeric <= 500;
   if (cleanBucket === "gt500") return numeric > 500;
   return true;
+}
+
+function karmaBucketForScore(score) {
+  const numeric = Number(score || 0) || 0;
+  if (numeric < 0) return "lt0";
+  if (numeric <= 5) return "0-5";
+  if (numeric <= 50) return "6-50";
+  if (numeric <= 500) return "51-500";
+  return "gt500";
 }
 
 function renderKarmaSelectOptions(selectedValue) {
@@ -1547,55 +1654,63 @@ function renderSubmissionCard(item) {
 }
 
 function renderEntitiesPane() {
+  const visibleEntities = visibleWorkspaceEntities();
   return `
-    <section class="surface-panel">
-      <div class="workspace-list__row">
-        <div>
-          <div class="eyebrow">Entities</div>
-          <h2>Locations and targets</h2>
+    <div class="workspace-grid workspace-grid--rail">
+      <section class="surface-panel">
+        <div class="workspace-list__row">
+          <div>
+            <div class="eyebrow">Entities</div>
+            <h2>Locations and targets</h2>
+          </div>
+          <button class="button" type="button" data-open-entity-modal>Add entity</button>
         </div>
-        <button class="button" type="button" data-open-entity-modal>Add entity</button>
-      </div>
-      <div class="roster-list">
-        ${
-          (workspaceState.publicState?.entities || [])
-            .map(
-              (entity) => `
-                <article class="roster-item">
-                  <div class="workspace-list__row">
-                    <div>
-                      <strong>${escapeHtml(entity.name)}</strong>
-                      <span>${escapeHtml(entity.location)} • ${escapeHtml(entity.type)}</span>
+        <div class="roster-list">
+          ${
+            visibleEntities
+              .map(
+                (entity) => `
+                  <article class="roster-item">
+                    <div class="workspace-list__row">
+                      <div>
+                        <strong>${escapeHtml(entity.name)}</strong>
+                        <span>${escapeHtml(entity.location)} • ${escapeHtml(entity.type)}</span>
+                      </div>
+                      <div class="tag-row">
+                        <span class="tag">${escapeHtml(entity.status)}</span>
+                      </div>
                     </div>
-                    <div class="tag-row">
-                      <span class="tag">${escapeHtml(entity.status)}</span>
-                    </div>
-                  </div>
-                  <span>${escapeHtml(entity.notes || "No public note yet.")}</span>
-                  ${
-                    currentUserIsAdmin()
-                      ? `
-                        <div class="button-row button-row--tight">
-                          ${entity.status !== "deleted" ? `<button class="button-ghost" type="button" data-edit-entity="${entity.slug}">Edit</button>` : ""}
-                          ${
-                            entity.status === "pending"
-                              ? `
-                                <button class="button-ghost" type="button" data-entity-action="approve" data-entity-slug="${entity.slug}">Approve</button>
-                                <button class="button-ghost" type="button" data-entity-action="deny" data-entity-slug="${entity.slug}">Deny</button>
-                              `
-                              : `<button class="button-ghost" type="button" data-entity-action="delete" data-entity-slug="${entity.slug}">Delete</button>`
-                          }
-                        </div>
-                      `
-                      : ""
-                  }
-                </article>
-              `
-            )
-            .join("") || `<div class="empty-state">No entities published yet.</div>`
-        }
-      </div>
-    </section>
+                    <span>${escapeHtml(entity.notes || "No public note yet.")}</span>
+                    ${
+                      currentUserIsAdmin()
+                        ? `
+                          <div class="button-row button-row--tight">
+                            ${entity.status !== "deleted" ? `<button class="button-ghost" type="button" data-edit-entity="${entity.slug}">Edit</button>` : ""}
+                            ${
+                              entity.status === "pending"
+                                ? `
+                                  <button class="button-ghost" type="button" data-entity-action="approve" data-entity-slug="${entity.slug}">Approve</button>
+                                  <button class="button-ghost" type="button" data-entity-action="deny" data-entity-slug="${entity.slug}">Deny</button>
+                                `
+                                : `<button class="button-ghost" type="button" data-entity-action="delete" data-entity-slug="${entity.slug}">Delete</button>`
+                            }
+                          </div>
+                        `
+                        : ""
+                    }
+                  </article>
+                `
+              )
+              .join("") || `<div class="empty-state">No entities match these filters yet.</div>`
+          }
+        </div>
+      </section>
+      <aside class="workspace-rail-stack">
+        <section class="surface-panel workspace-rail-panel">
+          ${renderEntityManagementRail()}
+        </section>
+      </aside>
+    </div>
   `;
 }
 
@@ -3349,6 +3464,7 @@ async function maybeEnsureCurrentKeyRequest() {
 
 function shouldSoftRefreshWorkspace() {
   if (workspaceState.entityModal || workspaceState.chatModal) return false;
+  if (workspaceState.activeTab === "submissions" || workspaceState.submissionModal) return false;
   const active = document.activeElement;
   return !(
     active instanceof HTMLElement &&
@@ -3474,6 +3590,119 @@ function visibleWorkspaceUsers() {
       user.avatarBlob;
     return visible && karmaBucketMatches(resolveWorkspaceUserKarma(user.pubkey), karmaBucket);
   });
+}
+
+function workspaceUserStats() {
+  const users = visibleWorkspaceUsers();
+  const activePubkeys = new Set();
+  for (const comment of workspaceState.publicState?.allComments || []) {
+    if (comment?.author) activePubkeys.add(String(comment.author).trim().toLowerCase());
+  }
+  for (const event of workspaceState.publicState?.rawEvents || []) {
+    if (Number(event?.kind) === Number(SITE.nostr.kinds.commentVote) && event?.pubkey) {
+      activePubkeys.add(String(event.pubkey).trim().toLowerCase());
+    }
+  }
+  const karmaBuckets = {
+    lt0: 0,
+    "0-5": 0,
+    "6-50": 0,
+    "51-500": 0,
+    gt500: 0
+  };
+  for (const user of users) {
+    const bucket = karmaBucketForScore(resolveWorkspaceUserKarma(user.pubkey));
+    if (bucket) karmaBuckets[bucket] += 1;
+  }
+  return {
+    total: users.length,
+    active: users.filter((user) => activePubkeys.has(String(user.pubkey || "").trim().toLowerCase())).length,
+    karmaBuckets
+  };
+}
+
+function visibleWorkspaceEntities() {
+  const filters = workspaceState.entityFilters || {};
+  const query = String(filters.query || "").trim().toLowerCase();
+  const status = String(filters.status || "").trim().toLowerCase();
+  const location = String(filters.location || "").trim().toLowerCase();
+  const authorQuery = String(filters.author || "").trim().toLowerCase();
+  return (workspaceState.publicState?.entities || []).filter((entity) => {
+    if (status && String(entity?.status || "").trim().toLowerCase() !== status) return false;
+    if (query) {
+      const haystack = [
+        entity?.name,
+        entity?.slug,
+        entity?.type,
+        ...(Array.isArray(entity?.aliases) ? entity.aliases : [])
+      ]
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter(Boolean);
+      if (!haystack.some((value) => value.includes(query))) return false;
+    }
+    if (location) {
+      const locationValue = String(entity?.location || "").trim().toLowerCase();
+      if (!locationValue.includes(location)) return false;
+    }
+    if (authorQuery) {
+      const author = resolveWorkspaceUser(entity?.author || "");
+      const authorValues = [
+        author?.displayName,
+        author?.username,
+        entity?.author
+      ]
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter(Boolean);
+      if (!authorValues.some((value) => value.includes(authorQuery))) return false;
+    }
+    return true;
+  });
+}
+
+function renderEntityManagementRail() {
+  return `
+    <div class="workspace-rail-copy">
+      <div class="eyebrow">Filter entities</div>
+      <p>Search by name or alias, then narrow by status, place, or submitting user.</p>
+    </div>
+    <label class="workspace-search">
+      <span class="sr-only">Search entities</span>
+      <input class="workspace-search__input" data-entity-filter-query type="text" maxlength="120" placeholder="Search entities" value="${escapeAttribute(workspaceState.entityFilters.query || "")}" autocomplete="off">
+      ${
+        workspaceState.entityFilters.query
+          ? `<button class="workspace-search__clear" type="button" data-clear-entity-filter="query" aria-label="Clear entity search">×</button>`
+          : ""
+      }
+    </label>
+    <label class="workspace-select">
+      <span class="sr-only">Filter by entity status</span>
+      <select data-entity-filter-status>
+        <option value="">All statuses</option>
+        <option value="approved" ${workspaceState.entityFilters.status === "approved" ? "selected" : ""}>Approved</option>
+        <option value="pending" ${workspaceState.entityFilters.status === "pending" ? "selected" : ""}>Pending</option>
+        <option value="denied" ${workspaceState.entityFilters.status === "denied" ? "selected" : ""}>Denied</option>
+        <option value="deleted" ${workspaceState.entityFilters.status === "deleted" ? "selected" : ""}>Deleted</option>
+      </select>
+    </label>
+    <label class="workspace-search">
+      <span class="sr-only">Filter by state or country</span>
+      <input class="workspace-search__input" data-entity-filter-location type="text" maxlength="120" placeholder="State or country" value="${escapeAttribute(workspaceState.entityFilters.location || "")}" autocomplete="off">
+      ${
+        workspaceState.entityFilters.location
+          ? `<button class="workspace-search__clear" type="button" data-clear-entity-filter="location" aria-label="Clear location filter">×</button>`
+          : ""
+      }
+    </label>
+    <label class="workspace-search">
+      <span class="sr-only">Filter by submitting user</span>
+      <input class="workspace-search__input" data-entity-filter-author type="text" maxlength="120" placeholder="Submitted by" value="${escapeAttribute(workspaceState.entityFilters.author || "")}" autocomplete="off">
+      ${
+        workspaceState.entityFilters.author
+          ? `<button class="workspace-search__clear" type="button" data-clear-entity-filter="author" aria-label="Clear submitter filter">×</button>`
+          : ""
+      }
+    </label>
+  `;
 }
 
 function hydrateLookupCandidate(user) {
