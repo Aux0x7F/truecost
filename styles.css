@@ -2584,6 +2584,47 @@ h3 {
   gap: 0.75rem;
 }
 
+.comment-card__body {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.comment-card__body > * {
+  margin: 0;
+}
+
+.comment-card__body ul,
+.comment-card__body ol {
+  padding-left: 1.2rem;
+}
+
+.comment-card__body code {
+  padding: 0.12rem 0.34rem;
+  border-radius: 8px;
+  background: rgba(18, 18, 18, 0.07);
+  font-size: 0.92em;
+}
+
+.comment-card__body pre {
+  margin: 0;
+  padding: 0.85rem 0.95rem;
+  border-radius: 14px;
+  background: rgba(18, 18, 18, 0.07);
+  overflow-x: auto;
+}
+
+.comment-card__body pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.comment-card__body blockquote {
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  border-left: 3px solid rgba(156, 29, 24, 0.4);
+  background: rgba(156, 29, 24, 0.06);
+}
+
 .comment-card__meta div {
   display: grid;
   gap: 0.2rem;
@@ -2602,6 +2643,63 @@ h3 {
   display: flex;
   flex-wrap: wrap;
   gap: 0.65rem;
+}
+
+.comment-card__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.comment-card__votes {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.35rem;
+  border-radius: 999px;
+  background: rgba(18, 18, 18, 0.05);
+}
+
+.comment-card__score {
+  min-width: 1.6rem;
+  text-align: center;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.9rem;
+  color: var(--ink-soft);
+}
+
+.comment-vote {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.comment-vote:hover:not(:disabled),
+.comment-vote:focus-visible {
+  background: rgba(18, 18, 18, 0.08);
+  color: var(--ink);
+  outline: 0;
+}
+
+.comment-vote:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.comment-vote.is-active {
+  color: var(--accent);
+  background: rgba(156, 29, 24, 0.09);
 }
 
 .comment-card__children {

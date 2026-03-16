@@ -21,6 +21,7 @@ import {
   publishTaggedJson,
   requestPublicStateRepair,
   resolveSitePubkey,
+  sanitizeUrl,
   startPublicStateRepairPeer,
   shortKey,
   uploadPublicBlob
@@ -804,8 +805,9 @@ function renderLookupCandidate() {
 function renderUserIdentityButton(user, fallbackPubkey = user?.pubkey || "") {
   const cleanPubkey = String(fallbackPubkey || user?.pubkey || "").trim().toLowerCase();
   const displayName = user?.displayName || user?.username || shortKey(cleanPubkey);
-  const avatar = user?.avatarUrl
-    ? `<span class="workspace-user__avatar workspace-user__avatar--image"><img src="${escapeAttribute(user.avatarUrl)}" alt="${escapeAttribute(displayName)}"></span>`
+  const avatarUrl = safeWorkspaceAvatarUrl(user?.avatarUrl || "");
+  const avatar = avatarUrl
+    ? `<span class="workspace-user__avatar workspace-user__avatar--image"><img src="${escapeAttribute(avatarUrl)}" alt="${escapeAttribute(displayName)}"></span>`
     : `<span class="workspace-user__avatar">${escapeHtml(profileInitials(displayName))}</span>`;
   return `
     <button class="user-link workspace-user-link" type="button" data-open-user-modal="${escapeAttribute(cleanPubkey)}">
@@ -855,6 +857,8 @@ function renderUserProfileModal() {
   const user = resolveWorkspaceUser(workspaceState.userModalPubkey);
   if (!user) return "";
   const displayName = user.displayName || user.username || shortKey(user.pubkey);
+  const avatarUrl = safeWorkspaceAvatarUrl(user.avatarUrl || "");
+  const socialLinks = safeWorkspaceSocialLinks(user);
   return `
     <div class="modal-backdrop">
       <section class="modal-card user-profile-modal">
@@ -868,8 +872,8 @@ function renderUserProfileModal() {
         <div class="user-profile-modal__hero">
           <div class="user-profile-modal__avatar-wrap">
             ${
-              user.avatarUrl
-                ? `<span class="user-profile-modal__avatar user-profile-modal__avatar--image"><img src="${escapeAttribute(user.avatarUrl)}" alt="${escapeAttribute(displayName)}"></span>`
+              avatarUrl
+                ? `<span class="user-profile-modal__avatar user-profile-modal__avatar--image"><img src="${escapeAttribute(avatarUrl)}" alt="${escapeAttribute(displayName)}"></span>`
                 : `<span class="user-profile-modal__avatar">${escapeHtml(profileInitials(displayName))}</span>`
             }
           </div>
@@ -879,13 +883,23 @@ function renderUserProfileModal() {
           </div>
         </div>
         ${
-          Array.isArray(user.socialLinks) && user.socialLinks.length
-            ? `<div class="user-profile-modal__links">${user.socialLinks.map((link) => `<a class="text-link" href="${escapeAttribute(link)}" target="_blank" rel="noreferrer">${escapeHtml(link)}</a>`).join("")}</div>`
+          socialLinks.length
+            ? `<div class="user-profile-modal__links">${socialLinks.map((link) => `<a class="text-link" href="${escapeAttribute(link)}" target="_blank" rel="noreferrer">${escapeHtml(link)}</a>`).join("")}</div>`
             : ""
         }
       </section>
     </div>
   `;
+}
+
+function safeWorkspaceAvatarUrl(value) {
+  return sanitizeUrl(value, "src");
+}
+
+function safeWorkspaceSocialLinks(user) {
+  return (Array.isArray(user?.socialLinks) ? user.socialLinks : [])
+    .map((link) => sanitizeUrl(link, "href"))
+    .filter(Boolean);
 }
 
 function renderUserActionModal() {
