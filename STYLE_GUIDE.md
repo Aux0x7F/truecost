@@ -1,0 +1,78 @@
+# Style Guide
+
+## Purpose
+This file is the UI contract for `truecost`.
+
+It exists to keep the public site coherent while the codebase continues to grow:
+- one visual language
+- one interaction language
+- one set of component expectations
+- less page-by-page drift
+
+## Product Shape
+- Static baseline first. Every public page should render useful content before live data arrives.
+- Live overlay second. New relay data should enrich or update the current view without blanking the baseline.
+- Public pages stay crawlable and readable without client-side authoring state.
+- Interactive behavior should feel like a web app without becoming a full SPA.
+
+## Layout Rules
+- The main content column is primary.
+- Side rails are support surfaces, not the main story.
+- Side rails should align to the top of the content card they support.
+- Sticky rails must scroll internally when their content exceeds the viewport.
+- On mobile, filter/control rails should move above results when they drive the result list.
+
+## Core Primitives
+- `surface-panel`: the default card shell
+- `button` / `button-ghost`: primary and secondary actions
+- `tag-row` / `tag`: compact metadata and states
+- `workspace-search`: attached search/autocomplete field
+- `workspace-select`: full-width select control
+- `picker-results--dropdown`: attached pseudo-dropdown, always anchored to its field
+- `modal-card`: focused tasks, not long-form page replacement
+
+Do not create a new card/button/search pattern when one of these can be extended.
+
+## Interaction Rules
+- Search suggestions open from the field itself and overlay content below them.
+- `x` inside a search field must clear both the field and the active filter state.
+- Keyboard support is required for attached dropdowns:
+  - `ArrowDown`
+  - `ArrowUp`
+  - `Enter`
+  - `Escape`
+- Spinners belong inside the control or component that is loading.
+- Loading should preserve expected layout space; do not collapse sections while data is pending.
+- Background refreshes should update data in place, not rebuild whole panels unless structure truly changed.
+
+## Content Rules
+- User-facing text should be plain and direct.
+- Avoid implementation language in the interface.
+- Titles and body copy should not inherit decorative styling intended for labels or badges.
+- Calls to action should point people toward action, not explain implementation details.
+
+## Comment and Thread Rules
+- Top-level comments may be ranked.
+- Replies stay structurally attached to their parent thread.
+- Replies should not be re-ranked in a way that breaks conversation flow.
+- Optimistic comment updates should resolve in place instead of replacing the whole comment surface.
+
+## Editor Rules
+- The editor is the primary authoring surface, not a form with extras.
+- Toolbar actions belong in the toolbar, at cursor, with predictable results.
+- Metadata and collaboration controls belong in a right rail, not above the writing surface.
+- The editor shell must remain mounted during background state repair.
+
+## State and Rendering Rules
+- Separate long-lived state from DOM rendering concerns.
+- Cached state should render immediately when trustworthy.
+- Live updates should patch the current surface instead of tearing it down.
+- Partial relay reads should not erase richer cached state.
+- Any reusable state/render pattern should be moved toward a shared helper before duplicating it again.
+
+## Next Convergence Targets
+- reusable filter/search rail components
+- reusable modal/action-sheet patterns
+- reusable card families
+- reusable live list/thread rendering helpers
+- reusable editor-side rails and collaboration UI

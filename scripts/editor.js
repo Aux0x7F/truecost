@@ -5,6 +5,7 @@ import {
   connectStructuredUnitOverlay,
   deriveIdentity,
   ensureEventToolsLoaded,
+  getCachedPublicState,
   loadPublicState,
   publicStateNeedsRepair,
   publishTaggedJson,
@@ -58,10 +59,16 @@ async function initEditorPage(force = false) {
     renderEditorShell();
     return;
   }
-  renderEditorLoading("Looking up editor...");
   await ensureEventToolsLoaded();
   await ensureEditorRepairPeer();
   editorState.viewer = deriveIdentity(editorState.session.secretKeyHex);
+  const cachedPublicState = !force ? getCachedPublicState() : null;
+  if (cachedPublicState && editorUserIsAdmin(cachedPublicState, editorState.viewer?.pubkey)) {
+    editorState.publicState = cachedPublicState;
+    renderEditorShell();
+  } else {
+    renderEditorLoading("Looking up editor...");
+  }
   editorState.publicState = await loadPublicState(force);
   void maybeRequestEditorStateRepair(editorState.publicState, "editor");
   editorState.staticSlugs = await loadStaticSlugs().catch(() => []);
@@ -95,13 +102,33 @@ async function maybeRequestEditorStateRepair(publicState, reason = "") {
       knownEventCount: Array.isArray(publicState?.rawEvents) ? publicState.rawEvents.length : 0
     });
     window.setTimeout(() => {
-      void initEditorPage(true);
+      void refreshEditorPublicStateAfterRepair();
     }, 2800);
   } catch {
     return;
   } finally {
     editorState.publicStateRepairInFlight = false;
   }
+}
+
+async function refreshEditorPublicStateAfterRepair() {
+  if (!editorState.session || !editorState.viewer) return;
+  const nextPublicState = await loadPublicState(true).catch(() => null);
+  if (!nextPublicState) return;
+  const priorPublicState = editorState.publicState;
+  const hadLiveEditor = document.querySelector("[data-editor-form]") instanceof HTMLFormElement;
+  const previousWasAdmin = editorUserIsAdmin(priorPublicState, editorState.viewer.pubkey);
+  const nextIsAdmin = editorUserIsAdmin(nextPublicState, editorState.viewer.pubkey);
+  const nextLooksReliable = Boolean(nextPublicState?.connected || (Array.isArray(nextPublicState?.admins) && nextPublicState.admins.length));
+  if (hadLiveEditor && previousWasAdmin && !nextIsAdmin && !nextLooksReliable) return;
+  editorState.publicState = nextPublicState;
+  editorState.staticSlugs = await loadStaticSlugs().catch(() => editorState.staticSlugs);
+  if (hadLiveEditor && nextIsAdmin) {
+    hydrateEntityResults();
+    void ensureLiveInvestigationOverlay();
+    return;
+  }
+  renderEditorShell();
 }
 
 function renderEditorLoading(message) {
@@ -1088,7 +1115,15 @@ async function loadStaticSlugs() {
 }
 
 function currentUserIsAdmin() {
-  return Boolean(editorState.viewer && editorState.publicState?.admins?.includes(editorState.viewer.pubkey));
+  return editorUserIsAdmin(editorState.publicState, editorState.viewer?.pubkey);
+}
+
+function editorUserIsAdmin(publicState, pubkey = "") {
+  const cleanPubkey = String(pubkey || "").trim().toLowerCase();
+  if (!cleanPubkey) return false;
+  const admins = new Set(Array.isArray(publicState?.admins) ? publicState.admins : []);
+  const rootAdminPubkey = String(publicState?.rootAdminPubkey || SITE.nostr.rootAdminPubkey || "").trim().toLowerCase();
+  return admins.has(cleanPubkey) || (rootAdminPubkey && rootAdminPubkey === cleanPubkey);
 }
 
 function trustedAdminPubkeys() {
