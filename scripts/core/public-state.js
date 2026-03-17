@@ -1,4 +1,5 @@
 import SITE from "./site-config.js";
+import { buildCommentThreadState } from "../../vendor/nostr-site-support.esm.js";
 import { regroupRecordsByKey as regroupComments } from "./comment-utils.js";
 import { safeJson } from "./text-utils.js";
 
@@ -36,6 +37,45 @@ export function normalizePublicState(publicState, previousPublicState) {
   return applyAuthorCommentModeration(merged);
 }
 
+export function applyDerivedCommentState(publicState, nextAllComments = null) {
+  const source = publicState && typeof publicState === "object" ? publicState : {};
+  const rawComments = Array.isArray(nextAllComments)
+    ? nextAllComments
+    : Array.isArray(source.allComments)
+      ? source.allComments
+      : [];
+  const allComments = rawComments.map((comment) => enrichCommentVoteState(comment, source.commentVotes));
+  const visibleComments = allComments.filter((comment) => String(comment?.visibility || "visible").trim().toLowerCase() !== "hidden");
+  const hiddenComments = allComments.filter((comment) => String(comment?.visibility || "").trim().toLowerCase() === "hidden");
+  const commentsByPost = regroupComments(visibleComments, "post_slug");
+  const commentsByAuthor = regroupComments(visibleComments, "author");
+  const commentThreadState = buildCommentThreadState(visibleComments);
+  const users = Array.isArray(source.users)
+    ? source.users.map((user) => ({
+        ...user,
+        commentCount: (commentsByAuthor.get(user.pubkey) || []).length
+      }))
+    : [];
+  return {
+    ...source,
+    users,
+    allComments,
+    comments: visibleComments,
+    hiddenComments,
+    commentsByPost,
+    commentsByAuthor,
+    commentIndex: commentThreadState.commentsById,
+    commentChildrenByParent: commentThreadState.childrenByParent,
+    commentThreadsByPost: commentThreadState.threadsByPost,
+    commentOrphansByPost: commentThreadState.orphansByPost,
+    metrics: {
+      ...(source.metrics || {}),
+      commentCount: visibleComments.length,
+      hiddenCommentCount: hiddenComments.length
+    }
+  };
+}
+
 function applyAuthorCommentModeration(publicState) {
   const rawEvents = Array.isArray(publicState?.rawEvents) ? publicState.rawEvents : [];
   const allComments = Array.isArray(publicState?.allComments) ? publicState.allComments : [];
@@ -71,34 +111,18 @@ function applyAuthorCommentModeration(publicState) {
       moderation
     };
   });
-  const nextCommentsById = new Map(resolvedComments.map((comment) => [String(comment.id || "").trim(), comment]));
-  const visibleComments = resolvedComments.filter((comment) => {
-    const branch = collectCommentAncestors(String(comment.id || "").trim(), nextCommentsById);
-    return branch.every((branchComment) => String(branchComment?.visibility || "visible") !== "hidden");
-  });
-  const hiddenComments = resolvedComments.filter((comment) => !visibleComments.includes(comment));
-  const commentsByPost = regroupComments(visibleComments, "post_slug");
-  const commentsByAuthor = regroupComments(visibleComments, "author");
-  const users = Array.isArray(publicState.users)
-    ? publicState.users.map((user) => ({
-        ...user,
-        commentCount: (commentsByAuthor.get(user.pubkey) || []).length
-      }))
-    : [];
-  return {
-    ...publicState,
-    users,
-    allComments: resolvedComments,
-    comments: visibleComments,
-    hiddenComments,
-    commentsByPost,
-    commentsByAuthor,
-    metrics: {
-      ...(publicState.metrics || {}),
-      commentCount: visibleComments.length,
-      hiddenCommentCount: hiddenComments.length
+  const resolvedById = new Map(resolvedComments.map((comment) => [String(comment.id || "").trim(), comment]));
+  const cascadedComments = resolvedComments.map((comment) => {
+    const branch = collectCommentAncestors(String(comment.id || "").trim(), resolvedById);
+    if (branch.every((branchComment) => String(branchComment?.visibility || "visible") !== "hidden")) {
+      return comment;
     }
-  };
+    return {
+      ...comment,
+      visibility: "hidden"
+    };
+  });
+  return applyDerivedCommentState(publicState, cascadedComments);
 }
 
 function mergePublicState(nextState, previousState) {
@@ -151,13 +175,7 @@ function mergePublicState(nextState, previousState) {
   if (!merged.approvedEntities.length && merged.entities.length) {
     merged.approvedEntities = merged.entities.filter((entity) => String(entity?.status || "").trim().toLowerCase() === "approved");
   }
-  const visibleComments = merged.allComments.filter((comment) => String(comment?.visibility || "visible").trim().toLowerCase() !== "hidden");
-  const hiddenComments = merged.allComments.filter((comment) => String(comment?.visibility || "").trim().toLowerCase() === "hidden");
-  merged.comments = visibleComments;
-  merged.hiddenComments = hiddenComments;
-  merged.commentsByPost = regroupComments(visibleComments, "post_slug");
-  merged.commentsByAuthor = regroupComments(visibleComments, "author");
-  return merged;
+  return applyDerivedCommentState(merged);
 }
 
 function mergeRecordsByKey(previousValues, nextValues, keyResolver, sortComparer) {
@@ -252,6 +270,26 @@ function collectCommentAncestors(commentId, commentsById) {
     current = parentId ? commentsById.get(parentId) || null : null;
   }
   return lineage;
+}
+
+function enrichCommentVoteState(comment, commentVotes) {
+  const summary = resolveStoredCommentVoteSummary(commentVotes, comment?.id);
+  return {
+    ...comment,
+    score: summary.score,
+    upvoteCount: summary.upvoteCount,
+    downvoteCount: summary.downvoteCount
+  };
+}
+
+function resolveStoredCommentVoteSummary(commentVotes, commentId) {
+  const key = String(commentId || "").trim();
+  const summary = commentVotes instanceof Map ? commentVotes.get(key) : null;
+  return summary || {
+    score: 0,
+    upvoteCount: 0,
+    downvoteCount: 0
+  };
 }
 
 function firstTag(event, key) {

@@ -30,9 +30,9 @@ import {
 } from "./core/nostr.js";
 import {
   collectRecordBranchIds as collectCommentBranchIds,
-  dedupeRecordsById as dedupeCommentList,
-  regroupRecordsByKey as regroupComments
+  dedupeRecordsById as dedupeCommentList
 } from "./core/comment-utils.js";
+import { applyDerivedCommentState } from "./core/public-state.js";
 import {
   cycleHighlightIndex,
   renderSearchField,
@@ -783,7 +783,13 @@ async function initInvestigationDetail() {
         recordsShell,
         mapShell,
         mapCanvas,
-        publicState: cachedPublicState || { approvedEntities: [], commentsByPost: new Map(), users: [] },
+        publicState: cachedPublicState || {
+          approvedEntities: [],
+          commentsByPost: new Map(),
+          commentIndex: new Map(),
+          commentThreadsByPost: new Map(),
+          users: []
+        },
         posts: cachedPosts,
         isDraftPreview: false,
         draft: null
@@ -1159,18 +1165,18 @@ async function renderComments(postSlug, publicState) {
   const panel = document.querySelector("[data-comment-panel]");
   if (!panel) return;
 
-  const comments = publicState.commentsByPost.get(postSlug) || [];
   const isLoggedIn = Boolean(state.session);
   const isAdmin = Boolean(state.viewer && trustedAdminPubkeys(publicState).includes(state.viewer.pubkey));
   const viewerPubkey = sessionViewerPubkey();
-  const threadedComments = buildCommentTree(comments, publicState, viewerPubkey);
+  const threadedComments = rankVisibleCommentThreads(publicState.commentThreadsByPost?.get(postSlug) || [], publicState, viewerPubkey);
+  const renderedCount = countRenderedCommentNodes(threadedComments);
   const currentUser = isLoggedIn && viewerPubkey
     ? publicState.users.find((user) => user.pubkey === viewerPubkey) || null
     : null;
   const replyTargetId = state.commentReply?.postSlug === postSlug
     ? state.commentReply.commentId
     : "";
-  if (replyTargetId && !comments.find((comment) => comment.id === replyTargetId)) {
+  if (replyTargetId && !publicState.commentIndex?.get(replyTargetId)) {
     state.commentReply = null;
   }
 
@@ -1180,7 +1186,7 @@ async function renderComments(postSlug, publicState) {
         <div class="eyebrow">Discussion</div>
         <h2>Comments</h2>
       </div>
-      <p>${renderCommentCountLabel(comments.length)}</p>
+      <p>${renderCommentCountLabel(renderedCount)}</p>
     </div>
     ${
       isLoggedIn
@@ -1242,7 +1248,7 @@ async function renderComments(postSlug, publicState) {
           }
         });
         rootForm.reset();
-        appendLocalComment(postSlug, {
+        appendLocalComment({
           id: result.event.id,
           post_slug: postSlug,
           markdown,
@@ -1289,7 +1295,7 @@ async function renderComments(postSlug, publicState) {
       const form = event.currentTarget;
       if (!(form instanceof HTMLFormElement)) return;
       const parentId = form.getAttribute("data-parent-id") || "";
-      const replyTarget = comments.find((comment) => comment.id === parentId) || null;
+      const replyTarget = publicState.commentIndex?.get(parentId) || null;
       const textarea = form.elements.namedItem("markdown");
       const submitButton = form.querySelector('button[type="submit"]');
       const status = form.querySelector("[data-comment-status]");
@@ -1320,7 +1326,7 @@ async function renderComments(postSlug, publicState) {
             root_id: rootId
           }
         });
-        appendLocalComment(postSlug, {
+        appendLocalComment({
           id: result.event.id,
           post_slug: postSlug,
           markdown,
@@ -1367,7 +1373,7 @@ async function renderComments(postSlug, publicState) {
     button.addEventListener("click", async () => {
       if (!state.session?.secretKeyHex || !viewerPubkey) return;
       const commentId = String(button.getAttribute("data-delete-comment") || "").trim();
-      const targetComment = comments.find((comment) => comment.id === commentId);
+      const targetComment = publicState.commentIndex?.get(commentId) || null;
       if (!targetComment || targetComment.author !== viewerPubkey) return;
       if (!window.confirm("Delete this comment and its replies?")) return;
       try {
@@ -1493,48 +1499,10 @@ function renderComment(comment, publicState, options = {}, depth = 0) {
   `;
 }
 
-function buildCommentTree(comments, publicState, viewerPubkey = "") {
-  const nodes = new Map(
-    (Array.isArray(comments) ? comments : []).map((comment) => [
-      comment.id,
-      {
-        ...comment,
-        replies: []
-      }
-    ])
-  );
-  const roots = [];
-  for (const node of nodes.values()) {
-    const parentId = String(node.parent_id || "").trim();
-    if (!parentId) {
-      roots.push(node);
-      continue;
-    }
-    const parent = nodes.get(parentId);
-    if (isCommentThreadAnchor(parent, node)) {
-      if (!node.root_id) node.root_id = parent.root_id || parent.id;
-      parent.replies.push(node);
-      continue;
-    }
-    const rootId = String(node.root_id || "").trim();
-    const threadRoot = rootId ? nodes.get(rootId) : null;
-    if (isCommentThreadAnchor(threadRoot, node)) {
-      node.root_id = threadRoot.id;
-      threadRoot.replies.push(node);
-      continue;
-    }
-  }
-  sortRootCommentNodes(roots, publicState, viewerPubkey);
-  return roots;
-}
-
-function isCommentThreadAnchor(anchor, node) {
-  return Boolean(
-    anchor &&
-    node &&
-    anchor.id !== node.id &&
-    String(anchor.post_slug || "").trim() &&
-    String(anchor.post_slug || "").trim() === String(node.post_slug || "").trim()
+function countRenderedCommentNodes(nodes) {
+  return (Array.isArray(nodes) ? nodes : []).reduce(
+    (total, node) => total + 1 + countRenderedCommentNodes(node?.replies || []),
+    0
   );
 }
 
@@ -1603,8 +1571,8 @@ function closeUserProfileModal() {
   document.querySelector("[data-user-modal]")?.remove();
 }
 
-function sortRootCommentNodes(nodes, publicState, viewerPubkey = "") {
-  nodes.sort((left, right) => {
+function rankVisibleCommentThreads(nodes, publicState, viewerPubkey = "") {
+  return (Array.isArray(nodes) ? nodes : []).slice().sort((left, right) => {
     const leftOwn = Boolean(viewerPubkey) && left?.author === viewerPubkey;
     const rightOwn = Boolean(viewerPubkey) && right?.author === viewerPubkey;
     if (leftOwn !== rightOwn) return leftOwn ? -1 : 1;
@@ -1617,21 +1585,6 @@ function sortRootCommentNodes(nodes, publicState, viewerPubkey = "") {
     if (leftTime !== rightTime) return rightTime - leftTime;
     return String(left?.id || "").localeCompare(String(right?.id || ""));
   });
-  for (const node of nodes) {
-    if (Array.isArray(node.replies) && node.replies.length) sortReplyCommentNodes(node.replies);
-  }
-}
-
-function sortReplyCommentNodes(nodes) {
-  nodes.sort((left, right) => {
-    const leftTime = Number(left?.created_at || 0);
-    const rightTime = Number(right?.created_at || 0);
-    if (leftTime !== rightTime) return leftTime - rightTime;
-    return String(left?.id || "").localeCompare(String(right?.id || ""));
-  });
-  for (const node of nodes) {
-    if (Array.isArray(node.replies) && node.replies.length) sortReplyCommentNodes(node.replies);
-  }
 }
 
 function renderCommentCountLabel(count) {
@@ -1974,19 +1927,10 @@ function renderInlineReplyForm(comment, publicState) {
   `;
 }
 
-function appendLocalComment(postSlug, comment) {
-  if (!state.publicState?.commentsByPost) return;
-  const current = state.publicState.commentsByPost.get(postSlug) || [];
-  const nextByPost = dedupeCommentList([...current, comment]);
-  state.publicState.commentsByPost.set(postSlug, nextByPost);
-  state.publicState.allComments = dedupeCommentList([...(state.publicState.allComments || []), comment]);
-  state.publicState.comments = dedupeCommentList([...(state.publicState.comments || []), comment]);
-  const authorBucket = state.publicState.commentsByAuthor?.get(comment.author) || [];
-  state.publicState.commentsByAuthor?.set(comment.author, dedupeCommentList([...authorBucket, comment]));
-  const user = (state.publicState.users || []).find((entry) => entry.pubkey === comment.author);
-  if (user) {
-    user.commentCount = (state.publicState.commentsByAuthor?.get(comment.author) || []).length;
-  }
+function appendLocalComment(comment) {
+  if (!state.publicState) return;
+  const nextAllComments = dedupeCommentList([...(state.publicState.allComments || []), comment]);
+  state.publicState = applyDerivedCommentState(state.publicState, nextAllComments);
 }
 
 function applyLocalCommentDeletion(commentId, note = "Deleted by author") {
@@ -2011,18 +1955,7 @@ function applyLocalCommentDeletion(commentId, note = "Deleted by author") {
           : comment.moderation || moderation
     };
   });
-  state.publicState.allComments = nextComments;
-  state.publicState.comments = nextComments.filter((comment) => String(comment.visibility || "visible") !== "hidden");
-  state.publicState.hiddenComments = nextComments.filter((comment) => String(comment.visibility || "visible") === "hidden");
-  state.publicState.commentsByPost = regroupComments(state.publicState.comments, "post_slug");
-  state.publicState.commentsByAuthor = regroupComments(state.publicState.comments, "author");
-  for (const user of state.publicState.users || []) {
-    user.commentCount = (state.publicState.commentsByAuthor.get(user.pubkey) || []).length;
-  }
-  if (state.publicState.metrics) {
-    state.publicState.metrics.commentCount = state.publicState.comments.length;
-    state.publicState.metrics.hiddenCommentCount = state.publicState.hiddenComments.length;
-  }
+  state.publicState = applyDerivedCommentState(state.publicState, nextComments);
 }
 
 function renderArchiveMapPanel() {
@@ -3512,6 +3445,8 @@ async function getPublicState() {
       connected: false,
       approvedEntities: [],
       commentsByPost: new Map(),
+      commentIndex: new Map(),
+      commentThreadsByPost: new Map(),
       admins: []
     };
     return state.publicState;

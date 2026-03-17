@@ -1,5 +1,6 @@
 import SITE from "./site-config.js";
 import {
+  buildCommentThreadState,
   createBlobStoreApi,
   createDeterministicSessionApi,
   createNostrCmsClient,
@@ -61,7 +62,7 @@ export const {
 } = blobs;
 
 export { createDeterministicSessionApi };
-export { sanitizeTrustedHtml, sanitizeUrl };
+export { buildCommentThreadState, sanitizeTrustedHtml, sanitizeUrl };
 export const {
   connectPage: connectStaticPageOverlay,
   createRoomId: createStaticPageRoomId,
