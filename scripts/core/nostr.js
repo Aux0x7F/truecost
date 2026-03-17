@@ -108,12 +108,21 @@ export function getCachedPublicState() {
   return next;
 }
 
+export function rememberPublicState(publicState) {
+  const normalized = normalizePublicState(publicState, lastGoodPublicState);
+  if (isUsablePublicState(normalized)) {
+    lastGoodPublicState = clonePublicState(normalized);
+  }
+  return clonePublicState(normalized);
+}
+
 export default {
   ...client,
   ...blobs,
   ...staticPages,
   ...structuredUnits,
   loadPublicState,
+  rememberPublicState,
   warmPublicState,
   publicStateNeedsRepair
 };

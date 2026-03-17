@@ -21,6 +21,7 @@ import {
   loadUserSubmissions,
   publicStateNeedsRepair,
   publishTaggedJson,
+  rememberPublicState,
   requestPublicStateRepair,
   sanitizeTrustedHtml,
   sanitizeUrl,
@@ -1642,6 +1643,12 @@ function emptyCommentVoteSummary() {
   };
 }
 
+function commitLocalPublicState(nextPublicState) {
+  state.publicState = rememberPublicState(nextPublicState);
+  state.publicStateDigest = createPublicStateDigest(state.publicState);
+  return state.publicState;
+}
+
 function applyLocalCommentVote(commentId, viewerPubkey, nextValue) {
   const cleanId = String(commentId || "").trim();
   const cleanViewer = String(viewerPubkey || "").trim().toLowerCase();
@@ -1680,6 +1687,7 @@ function applyLocalCommentVote(commentId, viewerPubkey, nextValue) {
   }
 
   state.publicState.commentVotes.set(cleanId, summary);
+  commitLocalPublicState(applyDerivedCommentState(state.publicState));
 }
 
 function updateRenderedCommentVoteState(scope, commentId, publicState, viewerPubkey = "") {
@@ -1930,7 +1938,7 @@ function renderInlineReplyForm(comment, publicState) {
 function appendLocalComment(comment) {
   if (!state.publicState) return;
   const nextAllComments = dedupeCommentList([...(state.publicState.allComments || []), comment]);
-  state.publicState = applyDerivedCommentState(state.publicState, nextAllComments);
+  commitLocalPublicState(applyDerivedCommentState(state.publicState, nextAllComments));
 }
 
 function applyLocalCommentDeletion(commentId, note = "Deleted by author") {
@@ -1955,7 +1963,7 @@ function applyLocalCommentDeletion(commentId, note = "Deleted by author") {
           : comment.moderation || moderation
     };
   });
-  state.publicState = applyDerivedCommentState(state.publicState, nextComments);
+  commitLocalPublicState(applyDerivedCommentState(state.publicState, nextComments));
 }
 
 function renderArchiveMapPanel() {
