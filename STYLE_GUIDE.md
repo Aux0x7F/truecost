@@ -33,6 +33,12 @@ It exists to keep the public site coherent while the codebase continues to grow:
 
 Do not create a new card/button/search pattern when one of these can be extended.
 
+The shared JS entry points for these primitives belong in `scripts/core`:
+- `text-utils.js`
+- `comment-utils.js`
+- `search-controls.js`
+- `public-state.js`
+
 ## Interaction Rules
 - Search suggestions open from the field itself and overlay content below them.
 - `x` inside a search field must clear both the field and the active filter state.

@@ -25,6 +25,26 @@ The intended publishing model is:
 
 This means the public site should feel static-first, but still allow live admin-authored updates between bakedowns.
 
+## Code layering
+
+The implementation should converge on three layers:
+
+- `scripts/core`
+  - transport wrappers
+  - cache and public-state normalization
+  - reusable rendering helpers for shared controls
+- page surfaces
+  - archive
+  - comments
+  - map
+  - workspace
+  - editor
+- HTML documents
+  - static baseline markup
+  - mount points for live surfaces
+
+Page files should compose shared surfaces and helpers. They should not reintroduce duplicate escaping, duplicate comment threading, or duplicate attached-search behavior.
+
 ## Trust model
 
 For now, an admin is an admin.
