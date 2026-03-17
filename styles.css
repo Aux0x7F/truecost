@@ -923,6 +923,10 @@ h3 {
   isolation: isolate;
 }
 
+.workspace-search:focus-within {
+  z-index: 42;
+}
+
 .archive-filters__field input,
 .workspace-search__input {
   width: 100%;
