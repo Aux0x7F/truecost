@@ -8,6 +8,8 @@ import {
   sanitizeTrustedHtml,
   sanitizeUrl
 } from "../../vendor/nostr-site-support.esm.js";
+import { regroupRecordsByKey as regroupComments } from "./comment-utils.js";
+import { safeJson } from "./text-utils.js";
 
 const client = createNostrCmsClient(SITE);
 const blobs = createBlobStoreApi(SITE, client);
@@ -353,18 +355,6 @@ function recordTimestamp(record) {
   return 0;
 }
 
-function regroupComments(comments, key) {
-  const buckets = new Map();
-  for (const comment of Array.isArray(comments) ? comments : []) {
-    const bucketKey = String(comment?.[key] || "").trim();
-    if (!bucketKey) continue;
-    const bucket = buckets.get(bucketKey) || [];
-    bucket.push(comment);
-    buckets.set(bucketKey, bucket);
-  }
-  return buckets;
-}
-
 function collectCommentAncestors(commentId, commentsById) {
   const lineage = [];
   let current = commentsById.get(commentId) || null;
@@ -383,15 +373,6 @@ function collectCommentAncestors(commentId, commentsById) {
 function firstTag(event, key) {
   const tag = (event?.tags || []).find((item) => Array.isArray(item) && item[0] === key);
   return String(tag?.[1] || "");
-}
-
-function safeJson(value) {
-  try {
-    const parsed = JSON.parse(String(value || ""));
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
 }
 
 export default {

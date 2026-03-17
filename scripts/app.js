@@ -28,6 +28,21 @@ import {
   stopPublicStateRepairPeer,
   warmPublicState
 } from "./core/nostr.js";
+import {
+  collectRecordBranchIds as collectCommentBranchIds,
+  dedupeRecordsById as dedupeCommentList,
+  regroupRecordsByKey as regroupComments
+} from "./core/comment-utils.js";
+import {
+  cycleHighlightIndex,
+  renderSearchField,
+  renderSearchSuggestions
+} from "./core/search-controls.js";
+import {
+  dedupeStrings as dedupe,
+  escapeAttribute,
+  escapeHtml
+} from "./core/text-utils.js";
 import { clearSession, getOrCreateGuestSession, getStoredGuestSession, getStoredSession } from "./core/session.js";
 
 const NAV_KEYS = {
@@ -1895,24 +1910,48 @@ function renderArchiveFiltersPanel(entries, publicState, filters, canEdit) {
             `
             : ""
         }
-        <label class="archive-filters__field" data-filter-field="tag">
-          <input name="tag" type="text" placeholder="Search tags" value="${escapeAttribute(filters.tag)}" autocomplete="off" data-filter-input="tag">
-          ${
-            filters.tag
-              ? `<button class="workspace-search__clear archive-filters__clear-button" type="button" data-clear-archive-field="tag" aria-label="Clear tag filter">×</button>`
-              : ""
-          }
-          <div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="tag"></div>
-        </label>
-        <label class="archive-filters__field" data-filter-field="entity">
-          <input name="entity" type="text" placeholder="Search entities" value="${escapeAttribute(filters.entity)}" autocomplete="off" data-filter-input="entity">
-          ${
-            filters.entity
-              ? `<button class="workspace-search__clear archive-filters__clear-button" type="button" data-clear-archive-field="entity" aria-label="Clear entity filter">×</button>`
-              : ""
-          }
-          <div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="entity"></div>
-        </label>
+        ${renderSearchField({
+          wrapperClass: "archive-filters__field",
+          wrapperAttributes: { "data-filter-field": "tag" },
+          srLabel: "Search tags",
+          inputAttributes: {
+            name: "tag",
+            type: "text",
+            placeholder: "Search tags",
+            value: filters.tag,
+            autocomplete: "off",
+            "data-filter-input": "tag"
+          },
+          clearButton: filters.tag
+            ? {
+                className: "workspace-search__clear archive-filters__clear-button",
+                attributes: { "data-clear-archive-field": "tag" },
+                ariaLabel: "Clear tag filter"
+              }
+            : null,
+          resultsHtml: `<div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="tag"></div>`
+        })}
+        ${renderSearchField({
+          wrapperClass: "archive-filters__field",
+          wrapperAttributes: { "data-filter-field": "entity" },
+          srLabel: "Search entities",
+          inputAttributes: {
+            name: "entity",
+            type: "text",
+            placeholder: "Search entities",
+            value: filters.entity,
+            autocomplete: "off",
+            "data-filter-input": "entity"
+          },
+          clearButton: filters.entity
+            ? {
+                className: "workspace-search__clear archive-filters__clear-button",
+                attributes: { "data-clear-archive-field": "entity" },
+                ariaLabel: "Clear entity filter"
+              }
+            : null,
+          resultsHtml: `<div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="entity"></div>`
+        })}
       </div>
     </section>
   `;
@@ -1984,51 +2023,6 @@ function applyLocalCommentDeletion(commentId, note = "Deleted by author") {
     state.publicState.metrics.commentCount = state.publicState.comments.length;
     state.publicState.metrics.hiddenCommentCount = state.publicState.hiddenComments.length;
   }
-}
-
-function dedupeCommentList(comments) {
-  const seen = new Set();
-  return (Array.isArray(comments) ? comments : []).filter((comment) => {
-    const id = String(comment?.id || "").trim();
-    if (!id || seen.has(id)) return false;
-    seen.add(id);
-    return true;
-  });
-}
-
-function collectCommentBranchIds(comments, rootId) {
-  const children = new Map();
-  for (const comment of Array.isArray(comments) ? comments : []) {
-    const parentId = String(comment?.parent_id || "").trim();
-    const commentId = String(comment?.id || "").trim();
-    if (!parentId || !commentId) continue;
-    const bucket = children.get(parentId) || [];
-    bucket.push(commentId);
-    children.set(parentId, bucket);
-  }
-  const ids = [];
-  const stack = [String(rootId || "").trim()];
-  const seen = new Set();
-  while (stack.length) {
-    const current = stack.pop();
-    if (!current || seen.has(current)) continue;
-    seen.add(current);
-    ids.push(current);
-    for (const childId of children.get(current) || []) stack.push(childId);
-  }
-  return ids;
-}
-
-function regroupComments(comments, key) {
-  const buckets = new Map();
-  for (const comment of Array.isArray(comments) ? comments : []) {
-    const bucketKey = String(comment?.[key] || "").trim();
-    if (!bucketKey) continue;
-    const bucket = buckets.get(bucketKey) || [];
-    bucket.push(comment);
-    buckets.set(bucketKey, bucket);
-  }
-  return buckets;
 }
 
 function renderArchiveMapPanel() {
@@ -2165,17 +2159,13 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
     const descriptor = archiveFilterSuggestions(field, entries, publicState);
     if (event.key === "ArrowDown" && descriptor.matching.length) {
       event.preventDefault();
-      state.archiveFilterHighlight = state.archiveFilterHighlight >= 0
-        ? (state.archiveFilterHighlight + 1) % descriptor.matching.length
-        : 0;
+      state.archiveFilterHighlight = cycleHighlightIndex(state.archiveFilterHighlight, descriptor.matching.length, 1);
       updateArchiveFilterPanels(entries, publicState);
       return;
     }
     if (event.key === "ArrowUp" && descriptor.matching.length) {
       event.preventDefault();
-      state.archiveFilterHighlight = state.archiveFilterHighlight > 0
-        ? state.archiveFilterHighlight - 1
-        : descriptor.matching.length - 1;
+      state.archiveFilterHighlight = cycleHighlightIndex(state.archiveFilterHighlight, descriptor.matching.length, -1);
       updateArchiveFilterPanels(entries, publicState);
       return;
     }
@@ -2359,27 +2349,20 @@ function archiveFilterSuggestions(field, entries, publicState) {
 function renderArchiveSuggestionPanel(field, descriptor) {
   const host = document.querySelector(`[data-filter-results="${field}"]`);
   if (!(host instanceof HTMLElement)) return;
-  const isOpen = state.archiveFilterOpenField === field;
-  const query = String(descriptor?.query || "").trim();
-  const matching = Array.isArray(descriptor?.matching) ? descriptor.matching : [];
-  if (!isOpen || !query) {
-    host.removeAttribute("data-open");
-    host.innerHTML = "";
-    return;
-  }
-  host.setAttribute("data-open", "yes");
-  host.innerHTML = matching.length
-    ? matching
-        .map(
-          (value, index) => `
-            <button class="picker-chip${state.archiveFilterHighlight === index ? " is-highlighted" : ""}" type="button" data-filter-suggestion="${escapeAttribute(field)}" data-filter-value="${escapeAttribute(value)}" aria-selected="${state.archiveFilterHighlight === index ? "true" : "false"}">
-              <strong>${escapeHtml(value)}</strong>
-              <span>Use ${field}</span>
-            </button>
-          `
-        )
-        .join("")
-    : `<div class="picker-hint">No ${field} matches yet.</div>`;
+  host.innerHTML = renderSearchSuggestions({
+    isOpen: state.archiveFilterOpenField === field,
+    query: descriptor?.query,
+    items: Array.isArray(descriptor?.matching) ? descriptor.matching : [],
+    highlightedIndex: state.archiveFilterHighlight,
+    emptyMessage: `No ${field} matches yet.`,
+    listClassName: "picker-results picker-results--dropdown archive-filters__results",
+    itemAttributes: (value) => ({
+      "data-filter-suggestion": field,
+      "data-filter-value": value
+    }),
+    renderPrimary: (value) => `<strong>${escapeHtml(value)}</strong>`,
+    renderSecondary: () => `<span>Use ${escapeHtml(field)}</span>`
+  });
 }
 
 function syncArchiveFiltersToUrl(canEdit) {
@@ -4387,21 +4370,4 @@ function sortDateValue(item) {
 function trimmed(value, length) {
   const text = String(value || "").trim();
   return text.length > length ? `${text.slice(0, Math.max(0, length - 1))}...` : text;
-}
-
-function dedupe(values) {
-  return [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || "").trim()).filter(Boolean))];
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function escapeAttribute(value) {
-  return escapeHtml(value).replace(/`/g, "");
 }

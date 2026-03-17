@@ -13,6 +13,12 @@ import {
   startPublicStateRepairPeer,
   uploadPublicBlob
 } from "./core/nostr.js";
+import {
+  dedupeStrings as dedupe,
+  escapeAttribute,
+  escapeHtml,
+  lastCommaValue
+} from "./core/text-utils.js";
 import { getStoredSession } from "./core/session.js";
 
 const editorState = {
@@ -1284,17 +1290,9 @@ function fingerprintDocument(document, status = "draft") {
   });
 }
 
-function lastCommaValue(value) {
-  return String(value || "").split(",").pop().trim();
-}
-
 function parseMaybeNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
-}
-
-function dedupe(values) {
-  return [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
 function formatTime(value) {
@@ -1323,17 +1321,4 @@ function renderLoadingState(message) {
       </div>
     </div>
   `;
-}
-
-function escapeHtml(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function escapeAttribute(value) {
-  return escapeHtml(value);
 }

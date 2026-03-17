@@ -27,6 +27,22 @@ import {
   shortKey,
   uploadPublicBlob
 } from "./core/nostr.js";
+import {
+  collectRecordBranchIds as collectWorkspaceCommentBranchIds,
+  regroupRecordsByKey as regroupComments
+} from "./core/comment-utils.js";
+import {
+  cycleHighlightIndex,
+  renderSearchField,
+  renderSearchSuggestions
+} from "./core/search-controls.js";
+import {
+  dedupeStrings as dedupe,
+  escapeAttribute,
+  escapeHtml,
+  lastCommaValue,
+  safeJson
+} from "./core/text-utils.js";
 import { getStoredSession, rebroadcastAccount, signInWithCredentials } from "./core/session.js";
 
 const workspaceState = {
@@ -491,18 +507,14 @@ function bindWorkspace() {
       if (event.key === "ArrowDown" && suggestions.length) {
         event.preventDefault();
         workspaceState.entityLocationFilterOpen = true;
-        workspaceState.entityLocationFilterHighlight = workspaceState.entityLocationFilterHighlight >= 0
-          ? (workspaceState.entityLocationFilterHighlight + 1) % suggestions.length
-          : 0;
+        workspaceState.entityLocationFilterHighlight = cycleHighlightIndex(workspaceState.entityLocationFilterHighlight, suggestions.length, 1);
         renderWorkspace({ soft: true });
         return;
       }
       if (event.key === "ArrowUp" && suggestions.length) {
         event.preventDefault();
         workspaceState.entityLocationFilterOpen = true;
-        workspaceState.entityLocationFilterHighlight = workspaceState.entityLocationFilterHighlight > 0
-          ? workspaceState.entityLocationFilterHighlight - 1
-          : suggestions.length - 1;
+        workspaceState.entityLocationFilterHighlight = cycleHighlightIndex(workspaceState.entityLocationFilterHighlight, suggestions.length, -1);
         renderWorkspace({ soft: true });
         return;
       }
@@ -524,17 +536,13 @@ function bindWorkspace() {
     const suggestions = submissionFilterSuggestions();
     if (event.key === "ArrowDown" && suggestions.length) {
       event.preventDefault();
-      workspaceState.submissionFilterHighlight = workspaceState.submissionFilterHighlight >= 0
-        ? (workspaceState.submissionFilterHighlight + 1) % suggestions.length
-        : 0;
+      workspaceState.submissionFilterHighlight = cycleHighlightIndex(workspaceState.submissionFilterHighlight, suggestions.length, 1);
       renderWorkspace({ soft: true });
       return;
     }
     if (event.key === "ArrowUp" && suggestions.length) {
       event.preventDefault();
-      workspaceState.submissionFilterHighlight = workspaceState.submissionFilterHighlight > 0
-        ? workspaceState.submissionFilterHighlight - 1
-        : suggestions.length - 1;
+      workspaceState.submissionFilterHighlight = cycleHighlightIndex(workspaceState.submissionFilterHighlight, suggestions.length, -1);
       renderWorkspace({ soft: true });
       return;
     }
@@ -999,20 +1007,25 @@ function renderUsersPane() {
       </section>
       <aside class="workspace-rail-stack">
         <section class="surface-panel workspace-rail-panel">
-          <label class="workspace-search">
-            <span class="sr-only">Username</span>
-            <input class="workspace-search__input" data-quick-user-input type="text" maxlength="80" placeholder="username" value="${escapeAttribute(workspaceState.userLookupQuery || "")}" autocomplete="off">
-            ${
-              workspaceState.userLookupQuery && !workspaceState.userLookupLoading
-                ? `<button class="workspace-search__clear" type="button" data-clear-user-lookup aria-label="Clear lookup">×</button>`
-                : ""
-            }
-            ${
-              workspaceState.userLookupLoading
-                ? `<span class="workspace-search__spinner" aria-hidden="true"><span class="loading-spinner"></span></span>`
-                : ""
-            }
-          </label>
+          ${renderSearchField({
+            srLabel: "Username",
+            inputAttributes: {
+              class: "workspace-search__input",
+              "data-quick-user-input": true,
+              type: "text",
+              maxlength: "80",
+              placeholder: "username",
+              value: workspaceState.userLookupQuery || "",
+              autocomplete: "off"
+            },
+            clearButton: workspaceState.userLookupQuery && !workspaceState.userLookupLoading
+              ? {
+                  attributes: { "data-clear-user-lookup": true },
+                  ariaLabel: "Clear lookup"
+                }
+              : null,
+            loading: workspaceState.userLookupLoading
+          })}
           <label class="workspace-select">
             <span class="sr-only">Filter users by karma</span>
             <select data-user-filter-karma>
@@ -1579,24 +1592,25 @@ function renderSubmissionsPane() {
         <div class="eyebrow">Encrypted submissions</div>
         <h2>Shared inbox</h2>
         <div class="workspace-filter-bar">
-          <label class="workspace-search">
-            <span class="sr-only">Filter submissions</span>
-            <input
-              class="workspace-search__input"
-              data-submission-filter-input
-              type="text"
-              maxlength="240"
-              placeholder="Filter by status, user, type, location, or entity"
-              value="${escapeAttribute(workspaceState.submissionFilters.query || "")}"
-              autocomplete="off"
-            >
-            ${
-              workspaceState.submissionFilters.query
-                ? `<button class="workspace-search__clear" type="button" data-clear-submission-filter aria-label="Clear submission filters">×</button>`
-                : ""
-            }
-            ${filterSuggestions}
-          </label>
+          ${renderSearchField({
+            srLabel: "Filter submissions",
+            inputAttributes: {
+              class: "workspace-search__input",
+              "data-submission-filter-input": true,
+              type: "text",
+              maxlength: "240",
+              placeholder: "Filter by status, user, type, location, or entity",
+              value: workspaceState.submissionFilters.query || "",
+              autocomplete: "off"
+            },
+            clearButton: workspaceState.submissionFilters.query
+              ? {
+                  attributes: { "data-clear-submission-filter": true },
+                  ariaLabel: "Clear submission filters"
+                }
+              : null,
+            resultsHtml: filterSuggestions
+          })}
         </div>
         <div class="roster-list">
           ${
@@ -1948,15 +1962,24 @@ function renderCommentsPane() {
             </div>
           </div>
         <div class="workspace-filter-bar">
-          <label class="workspace-search">
-            <span class="sr-only">Search comments</span>
-            <input class="workspace-search__input" data-comment-filter-query type="text" maxlength="120" placeholder="Search comments or users" value="${escapeAttribute(workspaceState.commentFilters.query || "")}" autocomplete="off">
-            ${
-              workspaceState.commentFilters.query
-                ? `<button class="workspace-search__clear" type="button" data-clear-comment-filter aria-label="Clear comment search">×</button>`
-                : ""
-            }
-          </label>
+          ${renderSearchField({
+            srLabel: "Search comments",
+            inputAttributes: {
+              class: "workspace-search__input",
+              "data-comment-filter-query": true,
+              type: "text",
+              maxlength: "120",
+              placeholder: "Search comments or users",
+              value: workspaceState.commentFilters.query || "",
+              autocomplete: "off"
+            },
+            clearButton: workspaceState.commentFilters.query
+              ? {
+                  attributes: { "data-clear-comment-filter": true },
+                  ariaLabel: "Clear comment search"
+                }
+              : null
+          })}
           <label class="workspace-select">
             <span class="sr-only">Filter by role</span>
             <select data-comment-filter-role>
@@ -2991,10 +3014,6 @@ function resolveEntityDisplayValue(value) {
   return entity?.name || String(value || "");
 }
 
-function lastCommaValue(value) {
-  return String(value || "").split(",").pop().trim();
-}
-
 function chooseInitialTab(current) {
   const requested = cleanSlug(new URLSearchParams(window.location.search).get("tab") || "");
   return normalizeWorkspaceTab(requested || current);
@@ -3253,27 +3272,17 @@ function filterInboxSubmissions(items) {
 }
 
 function renderSubmissionFilterSuggestions() {
-  const suggestions = submissionFilterSuggestions();
-  if (!suggestions.length || !workspaceState.submissionFilterOpen) return "";
-  return `
-    <div class="picker-results picker-results--dropdown workspace-search__results" data-open="yes">
-      ${suggestions
-        .map(
-          (token, index) => `
-            <button
-              class="picker-chip${workspaceState.submissionFilterHighlight === index ? " is-highlighted" : ""}"
-              type="button"
-              data-submission-filter-suggestion="${escapeAttribute(token)}"
-              data-submission-filter-index="${index}"
-              aria-selected="${workspaceState.submissionFilterHighlight === index ? "true" : "false"}"
-            >
-              <strong>${escapeHtml(token)}</strong>
-            </button>
-          `
-        )
-        .join("")}
-    </div>
-  `;
+  return renderSearchSuggestions({
+    isOpen: workspaceState.submissionFilterOpen,
+    query: workspaceState.submissionFilters.query,
+    items: submissionFilterSuggestions(),
+    highlightedIndex: workspaceState.submissionFilterHighlight,
+    itemAttributes: (token, index) => ({
+      "data-submission-filter-suggestion": token,
+      "data-submission-filter-index": index
+    }),
+    renderPrimary: (token) => `<strong>${escapeHtml(token)}</strong>`
+  });
 }
 
 function submissionFilterSuggestions() {
@@ -3342,15 +3351,6 @@ function firstTag(event, key) {
   return hit ? String(hit[1] || "") : "";
 }
 
-function safeJson(value) {
-  try {
-    const parsed = JSON.parse(String(value || ""));
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
 function activeSitePubkey() {
   return resolveSitePubkey(workspaceState.publicState);
 }
@@ -3409,41 +3409,6 @@ function applyLocalCommentModeration(commentId, action, note) {
   for (const user of publicState.users || []) {
     user.commentCount = (publicState.commentsByAuthor.get(user.pubkey) || []).length;
   }
-}
-
-function collectWorkspaceCommentBranchIds(commentId, comments) {
-  const cleanCommentId = String(commentId || "").trim();
-  if (!cleanCommentId) return [];
-  const byParent = new Map();
-  for (const comment of Array.isArray(comments) ? comments : []) {
-    const parentId = String(comment?.parent_id || "").trim();
-    if (!parentId) continue;
-    const bucket = byParent.get(parentId) || [];
-    bucket.push(String(comment.id || "").trim());
-    byParent.set(parentId, bucket);
-  }
-  const seen = new Set();
-  const stack = [cleanCommentId];
-  while (stack.length) {
-    const current = stack.pop();
-    if (!current || seen.has(current)) continue;
-    seen.add(current);
-    const children = byParent.get(current) || [];
-    for (const childId of children) stack.push(childId);
-  }
-  return [...seen];
-}
-
-function regroupComments(comments, key) {
-  const buckets = new Map();
-  for (const comment of Array.isArray(comments) ? comments : []) {
-    const bucketKey = String(comment?.[key] || "").trim();
-    if (!bucketKey) continue;
-    const bucket = buckets.get(bucketKey) || [];
-    bucket.push(comment);
-    buckets.set(bucketKey, bucket);
-  }
-  return buckets;
 }
 
 async function rotateSiteInboxKey(excludedPubkeys = [], reason = "rotation") {
@@ -3545,10 +3510,6 @@ async function loadStaticSlugs() {
   if (!response.ok) return [];
   const data = await response.json();
   return (Array.isArray(data.files) ? data.files : []).map((file) => cleanSlug(String(file).replace(/\.md$/i, "")));
-}
-
-function dedupe(values) {
-  return [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
 function siteKeyShareCacheKey(pubkey = workspaceState.viewer?.pubkey || "") {
@@ -3743,15 +3704,24 @@ function renderEntityManagementRail() {
       <div class="eyebrow">Filter entities</div>
       <p>Search by name or alias, then narrow by status, place, or submitting user.</p>
     </div>
-    <label class="workspace-search">
-      <span class="sr-only">Search entities</span>
-      <input class="workspace-search__input" data-entity-filter-query type="text" maxlength="120" placeholder="Search entities" value="${escapeAttribute(workspaceState.entityFilters.query || "")}" autocomplete="off">
-      ${
-        workspaceState.entityFilters.query
-          ? `<button class="workspace-search__clear" type="button" data-clear-entity-filter="query" aria-label="Clear entity search">×</button>`
-          : ""
-      }
-    </label>
+    ${renderSearchField({
+      srLabel: "Search entities",
+      inputAttributes: {
+        class: "workspace-search__input",
+        "data-entity-filter-query": true,
+        type: "text",
+        maxlength: "120",
+        placeholder: "Search entities",
+        value: workspaceState.entityFilters.query || "",
+        autocomplete: "off"
+      },
+      clearButton: workspaceState.entityFilters.query
+        ? {
+            attributes: { "data-clear-entity-filter": "query" },
+            ariaLabel: "Clear entity search"
+          }
+        : null
+    })}
     <label class="workspace-select">
       <span class="sr-only">Filter by entity status</span>
       <select data-entity-filter-status>
@@ -3762,50 +3732,58 @@ function renderEntityManagementRail() {
         <option value="deleted" ${workspaceState.entityFilters.status === "deleted" ? "selected" : ""}>Deleted</option>
       </select>
     </label>
-    <label class="workspace-search">
-      <span class="sr-only">Filter by state or country</span>
-      <input class="workspace-search__input" data-entity-filter-location type="text" maxlength="120" placeholder="State or county" value="${escapeAttribute(workspaceState.entityFilters.location || "")}" autocomplete="off">
-      ${
-        workspaceState.entityFilters.location
-          ? `<button class="workspace-search__clear" type="button" data-clear-entity-filter="location" aria-label="Clear location filter">×</button>`
-          : ""
-      }
-      ${renderEntityLocationFilterSuggestions()}
-    </label>
-    <label class="workspace-search">
-      <span class="sr-only">Filter by submitting user</span>
-      <input class="workspace-search__input" data-entity-filter-author type="text" maxlength="120" placeholder="Submitted by" value="${escapeAttribute(workspaceState.entityFilters.author || "")}" autocomplete="off">
-      ${
-        workspaceState.entityFilters.author
-          ? `<button class="workspace-search__clear" type="button" data-clear-entity-filter="author" aria-label="Clear submitter filter">×</button>`
-          : ""
-      }
-    </label>
+    ${renderSearchField({
+      srLabel: "Filter by state or country",
+      inputAttributes: {
+        class: "workspace-search__input",
+        "data-entity-filter-location": true,
+        type: "text",
+        maxlength: "120",
+        placeholder: "State or county",
+        value: workspaceState.entityFilters.location || "",
+        autocomplete: "off"
+      },
+      clearButton: workspaceState.entityFilters.location
+        ? {
+            attributes: { "data-clear-entity-filter": "location" },
+            ariaLabel: "Clear location filter"
+          }
+        : null,
+      resultsHtml: renderEntityLocationFilterSuggestions()
+    })}
+    ${renderSearchField({
+      srLabel: "Filter by submitting user",
+      inputAttributes: {
+        class: "workspace-search__input",
+        "data-entity-filter-author": true,
+        type: "text",
+        maxlength: "120",
+        placeholder: "Submitted by",
+        value: workspaceState.entityFilters.author || "",
+        autocomplete: "off"
+      },
+      clearButton: workspaceState.entityFilters.author
+        ? {
+            attributes: { "data-clear-entity-filter": "author" },
+            ariaLabel: "Clear submitter filter"
+          }
+        : null
+    })}
   `;
 }
 
 function renderEntityLocationFilterSuggestions() {
-  const suggestions = entityLocationFilterSuggestions();
-  if (!suggestions.length || !workspaceState.entityLocationFilterOpen) return "";
-  return `
-    <div class="picker-results picker-results--dropdown workspace-search__results" data-open="yes">
-      ${suggestions
-        .map(
-          (value, index) => `
-            <button
-              class="picker-chip${workspaceState.entityLocationFilterHighlight === index ? " is-highlighted" : ""}"
-              type="button"
-              data-entity-location-suggestion="${escapeAttribute(value)}"
-              data-entity-location-index="${index}"
-              aria-selected="${workspaceState.entityLocationFilterHighlight === index ? "true" : "false"}"
-            >
-              <strong>${escapeHtml(value)}</strong>
-            </button>
-          `
-        )
-        .join("")}
-    </div>
-  `;
+  return renderSearchSuggestions({
+    isOpen: workspaceState.entityLocationFilterOpen,
+    query: workspaceState.entityFilters.location,
+    items: entityLocationFilterSuggestions(),
+    highlightedIndex: workspaceState.entityLocationFilterHighlight,
+    itemAttributes: (value, index) => ({
+      "data-entity-location-suggestion": value,
+      "data-entity-location-index": index
+    }),
+    renderPrimary: (value) => `<strong>${escapeHtml(value)}</strong>`
+  });
 }
 
 function entityLocationFilterSuggestions() {
@@ -3890,17 +3868,4 @@ function profileInitials(value) {
   if (!parts.length) return "Me";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return `${parts[0].slice(0, 1)}${parts[1].slice(0, 1)}`.toUpperCase();
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function escapeAttribute(value) {
-  return escapeHtml(value).replace(/`/g, "");
 }
