@@ -22,6 +22,7 @@ Where applicable, cover:
 - visible control effect after local mutation
 - ranking and ordering rules when local mutation changes score or status
 - manual verification for motion where visual continuity is part of the interaction contract
+- if motion ends with viewport repositioning, verify that the resulting scroll is smooth and lands on the acted-on item
 
 ## Current commands
 

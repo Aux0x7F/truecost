@@ -1419,7 +1419,7 @@ async function renderComments(postSlug, publicState) {
         commitLocalPublicState(applyCommentVoteToPublicState(state.publicState, commentId, viewerPubkey, nextValue));
         if (reranksRoots) {
           await renderComments(postSlug, state.publicState);
-          animateRootCommentReorder(panel, rootPositions);
+          animateRootCommentReorder(panel, rootPositions, commentId);
         } else {
           updateRenderedCommentVoteState(panel, commentId, state.publicState, viewerPubkey);
         }
@@ -1441,7 +1441,7 @@ async function renderComments(postSlug, publicState) {
         commitLocalPublicState(applyCommentVoteToPublicState(state.publicState, commentId, viewerPubkey, currentValue));
         if (reranksRoots) {
           await renderComments(postSlug, state.publicState);
-          animateRootCommentReorder(panel, rootPositions);
+          animateRootCommentReorder(panel, rootPositions, commentId);
         } else {
           updateRenderedCommentVoteState(panel, commentId, state.publicState, viewerPubkey);
         }
@@ -1467,9 +1467,10 @@ function captureRootCommentPositions(panel) {
   return positions;
 }
 
-function animateRootCommentReorder(panel, previousPositions) {
+function animateRootCommentReorder(panel, previousPositions, anchorCommentId = "") {
   if (!(panel instanceof HTMLElement) || !(previousPositions instanceof Map) || !previousPositions.size) return;
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
+  const anchorId = String(anchorCommentId || "").trim();
   const moved = [];
   for (const card of panel.querySelectorAll('.comment-list > .comment-card[data-comment-root="true"]')) {
     if (!(card instanceof HTMLElement)) continue;
@@ -1485,6 +1486,7 @@ function animateRootCommentReorder(panel, previousPositions) {
   if (!moved.length) return;
   for (const item of moved) {
     item.card.classList.add("comment-card--reordering");
+    item.card.classList.toggle("comment-card--reordering-target", item.card.getAttribute("data-comment-id") === anchorId);
     item.card.getAnimations?.().forEach((animation) => animation.cancel());
     item.card.style.transform = "";
   }
@@ -1512,8 +1514,15 @@ function animateRootCommentReorder(panel, previousPositions) {
   window.setTimeout(() => {
     for (const item of moved) {
       item.card.classList.remove("comment-card--reordering");
+      item.card.classList.remove("comment-card--reordering-target");
       item.card.style.transition = "";
       item.card.style.transform = "";
+    }
+    if (anchorId) {
+      const anchor = panel.querySelector(`[data-comment-id="${CSS.escape(anchorId)}"]`);
+      if (anchor instanceof HTMLElement) {
+        anchor.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
     }
   }, 760);
 }

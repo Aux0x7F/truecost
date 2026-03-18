@@ -68,6 +68,8 @@ The shared JS entry points for these primitives belong in `scripts/core`:
 - Root comment vote changes may rerank the root list.
 - Reply vote changes must not reorder the thread.
 - If a root comment reranks, the card should translate smoothly into place so the movement is readable as layout change instead of a random jump.
+- During that motion, the voted root card should stay visually above neighboring cards and remain opaque enough that cards do not appear to move through each other.
+- When the motion completes, the viewport should ease back to the voted root card rather than snapping.
 
 ## Editor Rules
 - The editor is the primary authoring surface, not a form with extras.

@@ -2818,7 +2818,16 @@ h3 {
 }
 
 .comment-card--reordering {
+  position: relative;
+  z-index: 3;
   will-change: transform;
+  background: #fffdfb;
+  opacity: 1;
+}
+
+.comment-card--reordering-target {
+  z-index: 5;
+  box-shadow: 0 18px 40px rgba(18, 18, 18, 0.14);
 }
 
 .comment-card__shell {
