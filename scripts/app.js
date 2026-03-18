@@ -13,22 +13,87 @@ import {
   hasNostrTools,
   connectStaticPageOverlay,
   connectStructuredUnitOverlay,
-  getCachedPublicState,
   loadAdminKeyShare,
   loadInboxSubmissions,
-  loadPublicState,
   loadSubmissionThread,
   loadUserSubmissions,
   publicStateNeedsRepair,
   publishTaggedJson,
-  requestPublicStateRepair,
   sanitizeTrustedHtml,
   sanitizeUrl,
-  startPublicStateRepairPeer,
-  stopPublicStateRepairPeer,
-  warmPublicState
+  stopPublicStateRepairPeer
 } from "./core/nostr.js";
+import {
+  createPublicStateStore
+} from "./core/public-state-store.js";
+import {
+  clampNotificationsPanel,
+  closeProfileMenu,
+  createNavigationUiState,
+  keepProfileMenuOpen,
+  toggleNotificationsPanel,
+  toggleProfileMenu
+} from "./core/navigation-state.js";
+import {
+  countNotificationItems,
+  createNotificationState
+} from "./core/notification-state.js";
+import {
+  applyCommentVoteToPublicState,
+  commentAffectsThreadRanking,
+  rankVisibleCommentThreads,
+  resolveCommentVoteSummary,
+  resolveCurrentVoteForComment
+} from "./core/comment-ranking.js";
+import {
+  collectRecordBranchIds as collectCommentBranchIds,
+  dedupeRecordsById as dedupeCommentList
+} from "./core/comment-utils.js";
+import { applyDerivedCommentState } from "./core/public-state.js";
+import { cycleHighlightIndex } from "./core/search-controls.js";
+import {
+  dedupeStrings as dedupe,
+  escapeAttribute,
+  escapeHtml
+} from "./core/text-utils.js";
 import { clearSession, getOrCreateGuestSession, getStoredGuestSession, getStoredSession } from "./core/session.js";
+import {
+  animateRootCommentReorder,
+  captureRootCommentPositions,
+  renderComment,
+  renderCommentCountLabel,
+  updateRenderedCommentVoteState
+} from "./surfaces/comments.js";
+import {
+  renderNavigationMarkup,
+  profileInitials
+} from "./surfaces/navigation.js";
+import { renderPublicUserProfileModal } from "./surfaces/profile-overlays.js";
+import {
+  archiveEntitiesForEntries,
+  archiveEntryEntityOptions,
+  archiveFilterSuggestions,
+  archiveHasActiveFilters,
+  archiveStatusLabel,
+  destroyLeafletPreview,
+  filterArchiveEntries,
+  getCurrentArchiveFilters,
+  renderArchiveFiltersPanel,
+  renderArchiveMapPanel,
+  renderArchiveSuggestionPanel,
+  renderAuthoringLeadCard,
+  renderLeafletPreviewMap
+} from "./surfaces/archive.js";
+import {
+  bindMapEntityCards as bindMapSurfaceEntityCards,
+  destroyLeafletMap as destroySurfaceLeafletMap,
+  focusEntityOnRenderedMap,
+  queueLeafletBoundsFit,
+  renderLeafletMapSurface,
+  renderMapPageSurface,
+  requestedMapEntity,
+  scheduleMapEntityFocus as scheduleSurfaceMapEntityFocus
+} from "./surfaces/map.js";
 
 const NAV_KEYS = {
   home: ["home"],
@@ -48,14 +113,6 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", {
   year: "numeric"
 });
 
-const ARCHIVE_STATUS_OPTIONS = [
-  { value: "", label: "All statuses" },
-  { value: "draft", label: "Draft" },
-  { value: "submitted", label: "In review" },
-  { value: "approved", label: "Approved" },
-  { value: "posted", label: "Posted" }
-];
-
 const STATIC_PAGE_META = Object.freeze({
   home: { title: "Home page", path: "./index.html" },
   investigations: { title: "Investigations page", path: "./investigations.html" },
@@ -70,27 +127,27 @@ const STATIC_PAGE_META = Object.freeze({
   editor: { title: "Editor page", path: "./editor.html" }
 });
 const STATIC_EDITABLE_PAGES = new Set(Object.keys(STATIC_PAGE_META));
-const initialPublicState = getCachedPublicState();
+const publicStateStore = createPublicStateStore({
+  getSessionSecretKey: getRequestSignerSecretKey,
+  page: () => document.body.dataset.page || "site",
+  refreshDelayMs: publicStateRefreshDelayMs,
+  shouldRefresh: shouldRefreshPublicState
+});
+const initialPublicState = publicStateStore.value;
 const initialPosts = loadCachedPosts();
+const navigationUi = createNavigationUiState();
 
 const state = {
   session: getStoredSession(),
   guestSession: getStoredGuestSession(),
   viewer: null,
   publicState: initialPublicState,
-  publicStateDigest: createPublicStateDigest(initialPublicState),
-  publicStateRefreshTimer: 0,
-  publicStateRefreshInFlight: false,
-  publicStateRepairPeerStarted: false,
-  publicStateRepairInFlight: false,
-  publicStateRepairRequestedAt: 0,
+  publicStateDigest: publicStateStore.digest,
   posts: initialPosts,
   postsPromise: null,
   commentReply: null,
-  notifications: [],
-  notificationsLoading: false,
-  profileMenuOpen: false,
-  notificationsExpanded: false,
+  navigationUi,
+  userProfileModalPubkey: "",
   archiveFilters: null,
   archiveFilterOpenField: "",
   archiveFilterHighlight: -1,
@@ -110,6 +167,20 @@ const state = {
   mapViewDigest: "",
   highlightedCommentId: ""
 };
+
+const notificationState = createNotificationState({
+  storageNamespace: SITE.nostr.storageNamespace,
+  onChange: () => renderNavigation(),
+  getSession: () => state.session,
+  getViewerPubkey: () => state.viewer?.pubkey || "",
+  getPublicState: (force) => getPublicState(force),
+  buildNotifications: ({ publicState, force }) => buildNotifications(publicState, force)
+});
+
+publicStateStore.subscribe((snapshot) => {
+  state.publicState = snapshot.value;
+  state.publicStateDigest = snapshot.digest;
+});
 
 document.addEventListener("DOMContentLoaded", () => {
   initExternalLinks();
@@ -137,11 +208,11 @@ function bindGlobalSiteInteractions() {
     const userTrigger = target.closest("[data-open-user]");
     if (userTrigger instanceof HTMLElement) {
       event.preventDefault();
-      await openUserProfileModal(userTrigger.getAttribute("data-open-user") || "");
+      openUserProfileModal(userTrigger.getAttribute("data-open-user") || "");
       return;
     }
 
-    if (target.closest("[data-close-user-modal]")) {
+    if (target.matches("[data-user-modal]") || target.closest("[data-close-user-modal]")) {
       event.preventDefault();
       closeUserProfileModal();
     }
@@ -159,6 +230,8 @@ function initNavigation() {
     if (toggle) {
       toggle.classList.toggle("is-open", open);
       toggle.setAttribute("aria-expanded", String(open));
+      toggle.setAttribute("aria-label", open ? "Close navigation" : "Open navigation");
+      toggle.setAttribute("title", open ? "Close navigation" : "Open navigation");
     }
   };
 
@@ -201,37 +274,37 @@ function initNavigation() {
 
     const profileToggle = target.closest("[data-profile-toggle]");
     if (profileToggle) {
-      state.profileMenuOpen = !state.profileMenuOpen;
-      if (!state.profileMenuOpen) state.notificationsExpanded = false;
+      toggleProfileMenu(state.navigationUi);
       renderNavigation();
       return;
     }
 
     if (target.closest("[data-notification-toggle]")) {
       event.preventDefault();
-      state.profileMenuOpen = true;
-      if (!state.notifications.length && !state.notificationsLoading) {
-        state.notificationsExpanded = false;
-      } else {
-        state.notificationsExpanded = !state.notificationsExpanded;
-      }
+      toggleNotificationsPanel(state.navigationUi, {
+        count: countNotificationItems(notificationState.items),
+        loading: notificationState.loading
+      });
       renderNavigation();
       return;
     }
 
     if (target.closest("[data-clear-notifications]")) {
       event.preventDefault();
-      clearNotifications();
-      state.notificationsExpanded = false;
-      state.profileMenuOpen = true;
+      notificationState.clear();
+      keepProfileMenuOpen(state.navigationUi);
+      clampNotificationsPanel(state.navigationUi, { count: 0, loading: false });
       renderNavigation();
       return;
     }
 
     const notificationLink = target.closest("[data-notification-link]");
     if (notificationLink) {
-      dismissNotification(notificationLink.getAttribute("data-notification-link") || "");
-      if (!state.notifications.length) state.notificationsExpanded = false;
+      notificationState.dismiss(notificationLink.getAttribute("data-notification-link") || "");
+      clampNotificationsPanel(state.navigationUi, {
+        count: countNotificationItems(notificationState.items),
+        loading: notificationState.loading
+      });
       return;
     }
 
@@ -248,8 +321,7 @@ function initNavigation() {
 
     for (const menu of document.querySelectorAll("[data-profile-menu].is-open")) {
       if (!menu.contains(target)) {
-        state.profileMenuOpen = false;
-        state.notificationsExpanded = false;
+        closeProfileMenu(state.navigationUi);
         renderNavigation();
       }
     }
@@ -275,15 +347,14 @@ async function bootstrapRelayState() {
     if (!state.guestSession) {
       state.guestSession = await getOrCreateGuestSession().catch(() => null);
     }
-    await ensurePublicStateRepairPeer();
-    state.publicState = await loadPublicState();
-    state.publicStateDigest = createPublicStateDigest(state.publicState);
+    const result = await publicStateStore.hydrate({ force: false, reason: "bootstrap" });
+    state.publicState = result.value;
+    state.publicStateDigest = result.digest;
     primeViewerFromSession(true);
   } catch {
-    state.publicState = state.publicState || getCachedPublicState();
+    state.publicState = state.publicState || publicStateStore.value;
   }
   void publishVisitPulse();
-  void maybeRequestPublicStateRepair(state.publicState, "bootstrap");
   void hydrateNotifications();
   renderNavigation();
   schedulePublicStateRefresh();
@@ -292,9 +363,8 @@ async function bootstrapRelayState() {
 function handlePublicVisibilityChange() {
   if (document.visibilityState === "visible") {
     void syncPublicState(true);
-  } else if (state.publicStateRefreshTimer) {
-    window.clearTimeout(state.publicStateRefreshTimer);
-    state.publicStateRefreshTimer = 0;
+  } else {
+    publicStateStore.clearRefresh();
   }
 }
 
@@ -303,10 +373,7 @@ function handlePublicWindowFocus() {
 }
 
 function handlePublicPageHide() {
-  if (state.publicStateRefreshTimer) {
-    window.clearTimeout(state.publicStateRefreshTimer);
-    state.publicStateRefreshTimer = 0;
-  }
+  publicStateStore.clearRefresh();
   destroyStaticPageOverlay();
   destroyLiveInvestigationOverlay();
   stopPublicStateRepairPeer();
@@ -335,7 +402,7 @@ function startBackgroundPrefetch() {
     fetch("./vendor/leaflet.js", { cache: "force-cache" }).catch(() => null);
     fetch("./vendor/leaflet.css", { cache: "force-cache" }).catch(() => null);
     void refreshPosts().catch(() => []);
-    void warmPublicState().catch(() => null);
+    void publicStateStore.hydrate({ force: false, reason: "prefetch", requestRepair: false }).catch(() => null);
     if (state.session?.secretKeyHex) {
       void loadUserSubmissions(state.session.secretKeyHex).catch(() => []);
       void loadAdminKeyShare(state.session.secretKeyHex).catch(() => null);
@@ -373,12 +440,12 @@ function initLinkPrefetch() {
 function handleSessionChanged() {
   state.session = getStoredSession();
   state.viewer = null;
-  state.notifications = [];
-  state.notificationsLoading = false;
-  state.profileMenuOpen = false;
-  state.notificationsExpanded = false;
+  state.userProfileModalPubkey = "";
+  notificationState.reset();
+  closeProfileMenu(state.navigationUi);
   primeViewerFromSession(hasNostrTools());
   renderNavigation();
+  renderGlobalOverlays();
   destroyStaticPageOverlay();
   state.staticEdit = null;
   if (state.session) {
@@ -402,127 +469,37 @@ function renderNavigation() {
       viewerPubkey &&
       trustedAdminPubkeys(state.publicState).includes(viewerPubkey)
   );
-  const notifications = isLoggedIn ? state.notifications.slice(0, 8) : [];
-  const unreadCount = isLoggedIn ? notifications.length : 0;
-  const notificationsExpanded = unreadCount || state.notificationsLoading
-    ? state.notificationsExpanded
-    : false;
+  const notifications = isLoggedIn ? notificationState.items.slice(0, 8) : [];
+  const unreadCount = isLoggedIn ? countNotificationItems(notifications) : 0;
+  const notificationsExpanded = clampNotificationsPanel(state.navigationUi, {
+    count: unreadCount,
+    loading: notificationState.loading
+  });
   const mapEnabled = Boolean(state.publicState?.connected);
-  const mapCurrent = NAV_KEYS.map.includes(page);
-  const profileMarkup = isLoggedIn
-    ? `
-      <div class="profile-menu ${NAV_KEYS.workspace.includes(page) ? "is-current" : ""} ${state.profileMenuOpen ? "is-open" : ""}" data-profile-menu>
-        <button class="profile-menu__toggle ${safeAvatarUrl(currentUser?.avatarUrl || "") ? "has-avatar" : ""}" type="button" data-profile-toggle aria-label="${isAdmin ? "Admin" : "Profile"}">
-          <span class="profile-menu__badge ${safeAvatarUrl(currentUser?.avatarUrl || "") ? "has-avatar" : ""}">${profileBadgeMarkup(currentUser)}</span>
-          ${unreadCount ? `<span class="profile-menu__notice">${Math.min(unreadCount, 9)}${unreadCount > 9 ? "+" : ""}</span>` : ""}
-        </button>
-        <div class="profile-menu__panel">
-          <div class="profile-menu__section">
-            <button class="profile-menu__notification-toggle ${notificationsExpanded ? "is-open" : ""}" type="button" data-notification-toggle>
-              <span class="profile-menu__notification-toggle-copy">
-                <strong>Notifications</strong>
-                <span>${
-                  state.notificationsLoading
-                    ? "Looking up updates"
-                    : unreadCount
-                      ? `${unreadCount} item${unreadCount === 1 ? "" : "s"} waiting`
-                      : "No new updates"
-                }</span>
-              </span>
-              ${unreadCount ? `<span class="profile-menu__inline-badge">${Math.min(unreadCount, 9)}${unreadCount > 9 ? "+" : ""}</span>` : `<span class="profile-menu__inline-badge is-muted">0</span>`}
-            </button>
-            ${
-              notificationsExpanded
-                ? `
-                  <div class="profile-menu__notification-shell">
-                    ${
-                      state.notificationsLoading
-                        ? `<div class="loading-state" role="status" aria-live="polite"><span class="loading-spinner" aria-hidden="true"></span><span>Looking up notifications...</span></div>`
-                        : notifications.length
-                          ? `
-                            <div class="profile-menu__notifications">
-                              ${notifications.map((item) => renderNotificationItem(item)).join("")}
-                            </div>
-                            <button class="profile-menu__clear" type="button" data-clear-notifications>Clear notifications</button>
-                          `
-                          : `<div class="profile-menu__notification-empty">No notifications right now.</div>`
-                    }
-                  </div>
-                `
-                : ""
-            }
-          </div>
-          <a href="./admin.html?tab=${isAdmin ? "dashboard" : "profile"}">${isAdmin ? "Admin" : "Profile"}</a>
-          <button type="button" data-signout>Sign out</button>
-        </div>
-      </div>
-    `
-    : `<a class="profile-cta" href="./admin.html?tab=login" aria-label="Create or log in">Create/Login</a>`;
-
-  nav.innerHTML = `
-    <a class="${navLinkClass(page, "home")}" href="./index.html">Home</a>
-    ${
-      isAdmin
-        ? `
-          <div class="nav-group ${NAV_KEYS.investigations.includes(page) ? "is-current" : ""}" data-nav-group>
-            <button class="nav-group__toggle" type="button" data-submenu-toggle>
-              Investigations
-            </button>
-            <div class="nav-group__panel">
-              <a class="${navLinkClass(page, "investigations")}" href="./investigations.html">View Investigations</a>
-              <a href="./editor.html">Create Investigation</a>
-            </div>
-          </div>
-        `
-        : `<a class="${navLinkClass(page, "investigations")}" href="./investigations.html">Investigations</a>`
+  nav.innerHTML = renderNavigationMarkup({
+    page,
+    navKeys: NAV_KEYS,
+    isLoggedIn,
+    isAdmin,
+    currentUser,
+    sessionUsername: state.session?.username || "",
+    notifications,
+    notificationsLoading: notificationState.loading,
+    profileMenuOpen: state.navigationUi.profileMenuOpen,
+    notificationsExpanded,
+    mapEnabled,
+    deps: {
+      countUnreadNotifications: countNotificationItems,
+      escapeAttribute,
+      escapeHtml,
+      safeAvatarUrl
     }
-    <a class="${navLinkClass(page, "map", !mapEnabled && !mapCurrent)}" href="./map.html" ${!mapEnabled && !mapCurrent ? 'aria-disabled="true"' : ""}>Map</a>
-    <div class="nav-group ${NAV_KEYS["get-involved"].includes(page) ? "is-current" : ""}" data-nav-group>
-      <button class="nav-group__toggle" type="button" data-submenu-toggle>
-        Get Involved
-      </button>
-      <div class="nav-group__panel">
-        <a class="${navLinkClass(page, "get-involved")}" href="./get-involved.html">Get Involved</a>
-        <a class="${navLinkClass(page, "guide")}" href="./guide.html">Guide</a>
-        <a class="${navLinkClass(page, "submit")}" href="./submit.html">Submit</a>
-      </div>
-    </div>
-    <a class="${navLinkClass(page, "about")}" href="./about.html">About</a>
-    <a class="${navLinkClass(page, "merch")}" href="./merch.html">Merch</a>
-    ${profileMarkup}
-  `;
+  });
+  renderGlobalOverlays();
 
   for (const disabled of nav.querySelectorAll('[aria-disabled="true"]')) {
     disabled.addEventListener("click", (event) => event.preventDefault(), { once: false });
   }
-}
-
-function profileBadgeMarkup(user) {
-  const avatarUrl = safeAvatarUrl(user?.avatarUrl || "");
-  if (avatarUrl) {
-    const label = user.displayName || user.username || "Profile";
-    const blob = user.avatarBlob;
-    const blobAttrs = blob?.sha256
-      ? ` data-avatar-sha="${escapeAttribute(blob.sha256)}" data-avatar-url="${escapeAttribute(blob.url || avatarUrl)}" data-avatar-type="${escapeAttribute(blob.type || "")}" data-avatar-name="${escapeAttribute(blob.name || "")}"`
-      : "";
-    return `<img src="${escapeAttribute(avatarUrl)}" alt="${escapeAttribute(label)}"${blobAttrs}>`;
-  }
-  if (!state.session?.username) return "Create/Login";
-  return escapeHtml(profileInitials(user?.displayName || state.session.username));
-}
-
-function profileInitials(value) {
-  const parts = String(value || "").trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return "Me";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0].slice(0, 1)}${parts[1].slice(0, 1)}`.toUpperCase();
-}
-
-function navLinkClass(page, key, disabled = false) {
-  const parts = ["nav-link"];
-  if (NAV_KEYS[key]?.includes(page)) parts.push("is-current");
-  if (disabled) parts.push("is-disabled");
-  return parts.join(" ");
 }
 
 function initExternalLinks() {
@@ -768,7 +745,13 @@ async function initInvestigationDetail() {
         recordsShell,
         mapShell,
         mapCanvas,
-        publicState: cachedPublicState || { approvedEntities: [], commentsByPost: new Map(), users: [] },
+        publicState: cachedPublicState || {
+          approvedEntities: [],
+          commentsByPost: new Map(),
+          commentIndex: new Map(),
+          commentThreadsByPost: new Map(),
+          users: []
+        },
         posts: cachedPosts,
         isDraftPreview: false,
         draft: null
@@ -911,7 +894,7 @@ async function renderInvestigationDetailState(overlayState, post, options = {}) 
     const mappedEntities = detailEntities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng));
     if (mappedEntities.length) {
       mapShell.hidden = false;
-      renderLeafletPreviewMap(mapCanvas, mappedEntities);
+      renderLeafletPreviewMap(mapCanvas, mappedEntities, queueLeafletBoundsFit);
     } else {
       mapShell.hidden = true;
       destroyLeafletPreview(mapCanvas);
@@ -1084,7 +1067,7 @@ async function initMapPage() {
   const cachedEntities = visibleMapEntities(state.publicState);
   const renderedCachedMap = Boolean(cachedEntities.length);
   if (cachedEntities.length) {
-    renderMapPageState(list, canvas, cachedEntities);
+    renderMapPageSurface(list, canvas, cachedEntities, null, mapSurfaceDeps());
   } else {
     const hasStableMapData = Array.isArray(state.lastGoodMapEntities) && state.lastGoodMapEntities.length;
     if (!hasStableMapData) {
@@ -1109,7 +1092,7 @@ async function initMapPage() {
 
     const posts = await loadPosts().catch(() => []);
     const entityUsage = buildEntityUsage(posts, entities);
-    renderMapPageState(list, canvas, entities, entityUsage);
+    renderMapPageSurface(list, canvas, entities, entityUsage, mapSurfaceDeps());
     state.mapViewDigest = createMapDataDigest({
       approvedEntities: entities
     });
@@ -1130,32 +1113,22 @@ function visibleMapEntities(publicState) {
   return [];
 }
 
-function renderMapPageState(list, canvas, entities, entityUsage = null) {
-  const posts = entityUsage || buildEntityUsage(clonePosts(state.posts), entities);
-  list.innerHTML = entities
-    .map((entity) => renderEntityCard(entity, posts.get(entity.slug) || []))
-    .join("");
-  renderLeafletMap(canvas, entities);
-  bindMapEntityCards();
-  focusRequestedEntity();
-}
-
 async function renderComments(postSlug, publicState) {
   const panel = document.querySelector("[data-comment-panel]");
   if (!panel) return;
 
-  const comments = publicState.commentsByPost.get(postSlug) || [];
   const isLoggedIn = Boolean(state.session);
   const isAdmin = Boolean(state.viewer && trustedAdminPubkeys(publicState).includes(state.viewer.pubkey));
   const viewerPubkey = sessionViewerPubkey();
-  const threadedComments = buildCommentTree(comments, publicState, viewerPubkey);
+  const threadedComments = rankVisibleCommentThreads(publicState.commentThreadsByPost?.get(postSlug) || [], publicState, viewerPubkey);
+  const renderedCount = countRenderedCommentNodes(threadedComments);
   const currentUser = isLoggedIn && viewerPubkey
     ? publicState.users.find((user) => user.pubkey === viewerPubkey) || null
     : null;
   const replyTargetId = state.commentReply?.postSlug === postSlug
     ? state.commentReply.commentId
     : "";
-  if (replyTargetId && !comments.find((comment) => comment.id === replyTargetId)) {
+  if (replyTargetId && !publicState.commentIndex?.get(replyTargetId)) {
     state.commentReply = null;
   }
 
@@ -1165,7 +1138,7 @@ async function renderComments(postSlug, publicState) {
         <div class="eyebrow">Discussion</div>
         <h2>Comments</h2>
       </div>
-      <p>${renderCommentCountLabel(comments.length)}</p>
+      <p>${renderCommentCountLabel(renderedCount)}</p>
     </div>
     ${
       isLoggedIn
@@ -1191,7 +1164,16 @@ async function renderComments(postSlug, publicState) {
     }
     ${
       threadedComments.length
-        ? `<div class="comment-list">${threadedComments.map((comment) => renderComment(comment, publicState, { isAdmin, canReply: isLoggedIn, canVote: isLoggedIn, replyTargetId, viewerPubkey })).join("")}</div>`
+        ? `<div class="comment-list">${threadedComments
+            .map((comment) =>
+              renderComment(
+                comment,
+                publicState,
+                { isAdmin, canReply: isLoggedIn, canVote: isLoggedIn, replyTargetId, viewerPubkey },
+                { formatDateTime, renderAvatarBadge, renderInlineReplyForm, renderMiniMarkdown }
+              )
+            )
+            .join("")}</div>`
         : isLoggedIn
           ? `<div class="comment-list"><div class="empty-state">No comments yet. Start the discussion.</div></div>`
           : ""
@@ -1218,7 +1200,7 @@ async function renderComments(postSlug, publicState) {
         const result = await publishTaggedJson({
           kind: SITE.nostr.kinds.comment,
           secretKeyHex: state.session.secretKeyHex,
-          tags: [["d", createCommentDraftKey()], ["a", postSlug]],
+          tags: [["a", postSlug]],
           content: {
             post_slug: postSlug,
             markdown,
@@ -1227,7 +1209,7 @@ async function renderComments(postSlug, publicState) {
           }
         });
         rootForm.reset();
-        appendLocalComment(postSlug, {
+        appendLocalComment({
           id: result.event.id,
           post_slug: postSlug,
           markdown,
@@ -1274,7 +1256,7 @@ async function renderComments(postSlug, publicState) {
       const form = event.currentTarget;
       if (!(form instanceof HTMLFormElement)) return;
       const parentId = form.getAttribute("data-parent-id") || "";
-      const replyTarget = comments.find((comment) => comment.id === parentId) || null;
+      const replyTarget = publicState.commentIndex?.get(parentId) || null;
       const textarea = form.elements.namedItem("markdown");
       const submitButton = form.querySelector('button[type="submit"]');
       const status = form.querySelector("[data-comment-status]");
@@ -1292,7 +1274,6 @@ async function renderComments(postSlug, publicState) {
           kind: SITE.nostr.kinds.comment,
           secretKeyHex: state.session.secretKeyHex,
           tags: [
-            ["d", createCommentDraftKey()],
             ["a", postSlug],
             ["e", parentId],
             ["parent", parentId],
@@ -1305,7 +1286,7 @@ async function renderComments(postSlug, publicState) {
             root_id: rootId
           }
         });
-        appendLocalComment(postSlug, {
+        appendLocalComment({
           id: result.event.id,
           post_slug: postSlug,
           markdown,
@@ -1340,7 +1321,7 @@ async function renderComments(postSlug, publicState) {
             action: "hide"
           }
         });
-        state.publicState = await loadPublicState(true);
+        state.publicState = (await publicStateStore.hydrate({ force: true, reason: "comment-hide" })).value;
         await renderComments(postSlug, state.publicState);
       } catch {
         return;
@@ -1352,7 +1333,7 @@ async function renderComments(postSlug, publicState) {
     button.addEventListener("click", async () => {
       if (!state.session?.secretKeyHex || !viewerPubkey) return;
       const commentId = String(button.getAttribute("data-delete-comment") || "").trim();
-      const targetComment = comments.find((comment) => comment.id === commentId);
+      const targetComment = publicState.commentIndex?.get(commentId) || null;
       if (!targetComment || targetComment.author !== viewerPubkey) return;
       if (!window.confirm("Delete this comment and its replies?")) return;
       try {
@@ -1370,7 +1351,10 @@ async function renderComments(postSlug, publicState) {
           }
         });
       } catch {
-        state.publicState = await loadPublicState(true).catch(() => state.publicState);
+        state.publicState = await publicStateStore
+          .hydrate({ force: true, reason: "comment-delete-recover" })
+          .then((result) => result.value)
+          .catch(() => state.publicState);
         await renderComments(postSlug, state.publicState);
       }
     });
@@ -1384,10 +1368,17 @@ async function renderComments(postSlug, publicState) {
       if (!commentId || !Number.isFinite(requestedValue) || ![1, -1].includes(requestedValue)) return;
       const currentValue = resolveCurrentVoteForComment(publicState, commentId, viewerPubkey);
       const nextValue = currentValue === requestedValue ? 0 : requestedValue;
+      const reranksRoots = commentAffectsThreadRanking(state.publicState, commentId);
+      const rootPositions = reranksRoots ? captureRootCommentPositions(panel) : null;
       try {
         button.disabled = true;
-        applyLocalCommentVote(commentId, viewerPubkey, nextValue);
-        updateRenderedCommentVoteState(panel, commentId, publicState, viewerPubkey);
+        commitLocalPublicState(applyCommentVoteToPublicState(state.publicState, commentId, viewerPubkey, nextValue));
+        if (reranksRoots) {
+          await renderComments(postSlug, state.publicState);
+          animateRootCommentReorder(panel, rootPositions, commentId);
+        } else {
+          updateRenderedCommentVoteState(panel, commentId, state.publicState, viewerPubkey);
+        }
         await publishTaggedJson({
           kind: SITE.nostr.kinds.commentVote,
           secretKeyHex: state.session.secretKeyHex,
@@ -1403,8 +1394,13 @@ async function renderComments(postSlug, publicState) {
           }
         });
       } catch {
-        applyLocalCommentVote(commentId, viewerPubkey, currentValue);
-        updateRenderedCommentVoteState(panel, commentId, publicState, viewerPubkey);
+        commitLocalPublicState(applyCommentVoteToPublicState(state.publicState, commentId, viewerPubkey, currentValue));
+        if (reranksRoots) {
+          await renderComments(postSlug, state.publicState);
+          animateRootCommentReorder(panel, rootPositions, commentId);
+        } else {
+          updateRenderedCommentVoteState(panel, commentId, state.publicState, viewerPubkey);
+        }
       } finally {
         button.disabled = false;
       }
@@ -1414,112 +1410,10 @@ async function renderComments(postSlug, publicState) {
   focusRequestedComment(postSlug);
 }
 
-function renderComment(comment, publicState, options = {}, depth = 0) {
-  const author = publicState.users.find((user) => user.pubkey === comment.author);
-  const authorLabel = author?.displayName || author?.username || "User";
-  const replies = Array.isArray(comment.replies) ? comment.replies : [];
-  const voteSummary = resolveCommentVoteSummary(publicState, comment.id);
-  const viewerVote = options.viewerPubkey ? resolveCurrentVoteForComment(publicState, comment.id, options.viewerPubkey) : 0;
-  const canDelete = Boolean(options.viewerPubkey) && comment.author === options.viewerPubkey;
-  const replyForm = options.canReply && options.replyTargetId === comment.id
-    ? renderInlineReplyForm(comment, publicState)
-    : "";
-  return `
-    <article class="comment-card ${depth ? "comment-card--reply" : ""}" id="comment-${escapeAttribute(comment.id)}" data-comment-id="${escapeAttribute(comment.id)}">
-      <div class="comment-card__shell">
-        <button class="comment-card__avatar-button" type="button" data-open-user="${escapeAttribute(comment.author)}" aria-label="Open ${escapeAttribute(authorLabel)}">
-          ${renderAvatarBadge(author, authorLabel, "comment-card__avatar")}
-        </button>
-        <div class="comment-card__main">
-          <div class="comment-card__meta">
-            <div>
-              <button class="comment-card__author-button" type="button" data-open-user="${escapeAttribute(comment.author)}">${escapeHtml(authorLabel)}</button>
-              <span>${formatDateTime(comment.created_at)}</span>
-            </div>
-          </div>
-          <div class="comment-card__body">${renderMiniMarkdown(comment.markdown)}</div>
-          <div class="comment-card__toolbar">
-            <div class="comment-card__votes" aria-label="Comment score">
-              <button
-                type="button"
-                class="comment-vote ${viewerVote > 0 ? "is-active" : ""}"
-                data-comment-vote="${escapeAttribute(comment.id)}"
-                data-comment-vote-value="1"
-                aria-label="Upvote comment"
-                aria-pressed="${viewerVote > 0 ? "true" : "false"}"
-                ${options.canVote ? "" : "disabled"}
-              >▲</button>
-              <span class="comment-card__score" data-comment-score-value="${escapeAttribute(comment.id)}">${voteSummary.score}</span>
-              <button
-                type="button"
-                class="comment-vote ${viewerVote < 0 ? "is-active" : ""}"
-                data-comment-vote="${escapeAttribute(comment.id)}"
-                data-comment-vote-value="-1"
-                aria-label="Downvote comment"
-                aria-pressed="${viewerVote < 0 ? "true" : "false"}"
-                ${options.canVote ? "" : "disabled"}
-              >▼</button>
-            </div>
-            <div class="comment-card__actions">
-              ${options.canReply ? `<button type="button" class="button-ghost" data-reply-comment="${escapeAttribute(comment.id)}">Reply</button>` : ""}
-              ${canDelete ? `<button type="button" class="button-ghost" data-delete-comment="${escapeAttribute(comment.id)}">Delete</button>` : ""}
-              ${options.isAdmin ? `<button type="button" class="button-ghost" data-hide-comment="${escapeAttribute(comment.id)}">Hide</button>` : ""}
-            </div>
-          </div>
-          ${replyForm}
-          ${
-            replies.length
-              ? `<div class="comment-card__children">${replies.map((reply) => renderComment(reply, publicState, options, depth + 1)).join("")}</div>`
-              : ""
-          }
-        </div>
-      </div>
-    </article>
-  `;
-}
-
-function buildCommentTree(comments, publicState, viewerPubkey = "") {
-  const nodes = new Map(
-    (Array.isArray(comments) ? comments : []).map((comment) => [
-      comment.id,
-      {
-        ...comment,
-        replies: []
-      }
-    ])
-  );
-  const roots = [];
-  for (const node of nodes.values()) {
-    const parentId = String(node.parent_id || "").trim();
-    if (!parentId) {
-      roots.push(node);
-      continue;
-    }
-    const parent = nodes.get(parentId);
-    if (isCommentThreadAnchor(parent, node)) {
-      if (!node.root_id) node.root_id = parent.root_id || parent.id;
-      parent.replies.push(node);
-      continue;
-    }
-    const rootId = String(node.root_id || "").trim();
-    const threadRoot = rootId ? nodes.get(rootId) : null;
-    if (isCommentThreadAnchor(threadRoot, node)) {
-      node.root_id = threadRoot.id;
-      threadRoot.replies.push(node);
-      continue;
-    }
-  }
-  sortRootCommentNodes(roots, publicState, viewerPubkey);
-  return roots;
-}
-
-function isCommentThreadAnchor(anchor, node) {
-  return Boolean(
-    anchor &&
-    node &&
-    anchor.id !== node.id &&
-    String(anchor.post_slug || "").trim() &&
-    String(anchor.post_slug || "").trim() === String(node.post_slug || "").trim()
+function countRenderedCommentNodes(nodes) {
+  return (Array.isArray(nodes) ? nodes : []).reduce(
+    (total, node) => total + 1 + countRenderedCommentNodes(node?.replies || []),
+    0
   );
 }
 
@@ -1540,99 +1434,48 @@ function focusRequestedComment(postSlug, attempt = 0) {
   window.setTimeout(() => target.classList.remove("comment-card--focus"), 1800);
 }
 
-async function openUserProfileModal(pubkey) {
+function openUserProfileModal(pubkey) {
   const cleanPubkey = String(pubkey || "").trim().toLowerCase();
   if (!cleanPubkey) return;
-  const publicState = state.publicState || await getPublicState();
-  const user = (publicState?.users || []).find((item) => item.pubkey === cleanPubkey);
-  if (!user) return;
-  closeUserProfileModal();
-  const modal = document.createElement("div");
-  modal.className = "modal-backdrop";
-  modal.setAttribute("data-user-modal", "");
-  const displayName = user.displayName || user.username || "User";
-  modal.innerHTML = `
-    <section class="modal-card user-profile-modal">
-      <div class="workspace-list__row">
-        <div>
-          <div class="eyebrow">Profile</div>
-          <h2>${escapeHtml(displayName)}</h2>
-        </div>
-        <button class="button-ghost" type="button" data-close-user-modal>Close</button>
-      </div>
-      <div class="user-profile-modal__hero">
-        <div class="user-profile-modal__avatar-wrap">
-          ${renderAvatarBadge(user, displayName, "user-profile-modal__avatar")}
-        </div>
-        <div class="user-profile-modal__copy">
-          ${user.username ? `<strong>@${escapeHtml(user.username)}</strong>` : ""}
-          <span class="muted-text">Karma ${formatKarma(resolveUserKarma(publicState, cleanPubkey))}</span>
-          <p>${escapeHtml(user.bio || "No bio added yet.")}</p>
-        </div>
-      </div>
-      ${
-        safeUserSocialLinks(user).length
-          ? `
-            <div class="user-profile-modal__links">
-              ${safeUserSocialLinks(user).map((link) => `<a class="text-link" href="${escapeAttribute(link)}" target="_blank" rel="noreferrer">${escapeHtml(link)}</a>`).join("")}
-            </div>
-          `
-          : ""
-      }
-    </section>
-  `;
-  document.body.append(modal);
+  state.userProfileModalPubkey = cleanPubkey;
+  renderGlobalOverlays();
+  if (!(state.publicState?.users || []).some((item) => item.pubkey === cleanPubkey)) {
+    void getPublicState().then(() => renderGlobalOverlays()).catch(() => null);
+  }
 }
 
 function closeUserProfileModal() {
-  document.querySelector("[data-user-modal]")?.remove();
+  state.userProfileModalPubkey = "";
+  renderGlobalOverlays();
 }
 
-function sortRootCommentNodes(nodes, publicState, viewerPubkey = "") {
-  nodes.sort((left, right) => {
-    const leftOwn = Boolean(viewerPubkey) && left?.author === viewerPubkey;
-    const rightOwn = Boolean(viewerPubkey) && right?.author === viewerPubkey;
-    if (leftOwn !== rightOwn) return leftOwn ? -1 : 1;
-    const leftVotes = resolveCommentVoteSummary(publicState, left?.id);
-    const rightVotes = resolveCommentVoteSummary(publicState, right?.id);
-    if (leftVotes.score !== rightVotes.score) return rightVotes.score - leftVotes.score;
-    if (leftVotes.upvoteCount !== rightVotes.upvoteCount) return rightVotes.upvoteCount - leftVotes.upvoteCount;
-    const leftTime = Number(left?.created_at || 0);
-    const rightTime = Number(right?.created_at || 0);
-    if (leftTime !== rightTime) return rightTime - leftTime;
-    return String(left?.id || "").localeCompare(String(right?.id || ""));
+function ensureGlobalOverlayRoot() {
+  let root = document.querySelector("[data-global-overlay-root]");
+  if (root instanceof HTMLElement) return root;
+  root = document.createElement("div");
+  root.setAttribute("data-global-overlay-root", "");
+  document.body.append(root);
+  return root;
+}
+
+function renderGlobalOverlays() {
+  const root = ensureGlobalOverlayRoot();
+  const user = state.userProfileModalPubkey
+    ? (state.publicState?.users || []).find((item) => item.pubkey === state.userProfileModalPubkey) || null
+    : null;
+  root.innerHTML = renderPublicUserProfileModal(user, {
+    escapeAttribute,
+    escapeHtml,
+    profileInitials,
+    safeAvatarUrl,
+    safeSocialLinks: safeUserSocialLinks,
+    shortKey: (value) => String(value || "").trim().slice(0, 12)
   });
-  for (const node of nodes) {
-    if (Array.isArray(node.replies) && node.replies.length) sortReplyCommentNodes(node.replies);
-  }
-}
-
-function sortReplyCommentNodes(nodes) {
-  nodes.sort((left, right) => {
-    const leftTime = Number(left?.created_at || 0);
-    const rightTime = Number(right?.created_at || 0);
-    if (leftTime !== rightTime) return leftTime - rightTime;
-    return String(left?.id || "").localeCompare(String(right?.id || ""));
-  });
-  for (const node of nodes) {
-    if (Array.isArray(node.replies) && node.replies.length) sortReplyCommentNodes(node.replies);
-  }
-}
-
-function renderCommentCountLabel(count) {
-  return `${count} visible comment${count === 1 ? "" : "s"}`;
 }
 
 function commentAuthorLabel(comment, publicState) {
   const author = publicState.users.find((user) => user.pubkey === comment.author);
   return author?.displayName || author?.username || "User";
-}
-
-function resolveCommentVoteSummary(publicState, commentId) {
-  const summary = publicState?.commentVotes instanceof Map
-    ? publicState.commentVotes.get(String(commentId || "").trim())
-    : null;
-  return summary || emptyCommentVoteSummary();
 }
 
 function resolveUserKarma(publicState, pubkey) {
@@ -1649,86 +1492,10 @@ function formatKarma(value) {
   return score > 0 ? `+${score}` : String(score);
 }
 
-function createCommentDraftKey() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `comment-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-  }
-  return `comment-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function resolveCurrentVoteForComment(publicState, commentId, viewerPubkey) {
-  const cleanViewer = String(viewerPubkey || "").trim().toLowerCase();
-  if (!cleanViewer) return 0;
-  const summary = resolveCommentVoteSummary(publicState, commentId);
-  return summary.byPubkey instanceof Map
-    ? Number(summary.byPubkey.get(cleanViewer) || 0) || 0
-    : 0;
-}
-
-function emptyCommentVoteSummary() {
-  return {
-    score: 0,
-    upvoteCount: 0,
-    downvoteCount: 0,
-    byPubkey: new Map()
-  };
-}
-
-function applyLocalCommentVote(commentId, viewerPubkey, nextValue) {
-  const cleanId = String(commentId || "").trim();
-  const cleanViewer = String(viewerPubkey || "").trim().toLowerCase();
-  if (!cleanId || !cleanViewer || !state.publicState) return;
-  if (!(state.publicState.commentVotes instanceof Map)) {
-    state.publicState.commentVotes = new Map();
-  }
-  const existing = resolveCommentVoteSummary(state.publicState, cleanId);
-  const byPubkey = new Map(existing.byPubkey instanceof Map ? existing.byPubkey : []);
-  const currentValue = Number(byPubkey.get(cleanViewer) || 0) || 0;
-  const summary = {
-    score: Number(existing.score || 0) || 0,
-    upvoteCount: Number(existing.upvoteCount || 0) || 0,
-    downvoteCount: Number(existing.downvoteCount || 0) || 0,
-    byPubkey
-  };
-
-  if (currentValue > 0) {
-    summary.score -= 1;
-    summary.upvoteCount = Math.max(0, summary.upvoteCount - 1);
-  } else if (currentValue < 0) {
-    summary.score += 1;
-    summary.downvoteCount = Math.max(0, summary.downvoteCount - 1);
-  }
-
-  if (nextValue > 0) {
-    summary.score += 1;
-    summary.upvoteCount += 1;
-    byPubkey.set(cleanViewer, 1);
-  } else if (nextValue < 0) {
-    summary.score -= 1;
-    summary.downvoteCount += 1;
-    byPubkey.set(cleanViewer, -1);
-  } else {
-    byPubkey.delete(cleanViewer);
-  }
-
-  state.publicState.commentVotes.set(cleanId, summary);
-}
-
-function updateRenderedCommentVoteState(scope, commentId, publicState, viewerPubkey = "") {
-  const container = scope instanceof HTMLElement
-    ? scope.querySelector(`[data-comment-id="${CSS.escape(String(commentId || "").trim())}"]`)
-    : null;
-  if (!(container instanceof HTMLElement)) return;
-  const summary = resolveCommentVoteSummary(publicState, commentId);
-  const currentVote = resolveCurrentVoteForComment(publicState, commentId, viewerPubkey);
-  const score = container.querySelector(`[data-comment-score-value="${CSS.escape(String(commentId || "").trim())}"]`);
-  if (score instanceof HTMLElement) score.textContent = String(summary.score);
-  for (const button of container.querySelectorAll(`[data-comment-vote="${CSS.escape(String(commentId || "").trim())}"]`)) {
-    const value = Number(button.getAttribute("data-comment-vote-value") || 0);
-    const active = currentVote === value && value !== 0;
-    button.classList.toggle("is-active", active);
-    button.setAttribute("aria-pressed", active ? "true" : "false");
-  }
+function commitLocalPublicState(nextPublicState) {
+  state.publicState = publicStateStore.remember(nextPublicState);
+  state.publicStateDigest = publicStateStore.digest;
+  return state.publicState;
 }
 
 function safeAvatarUrl(value) {
@@ -1839,83 +1606,8 @@ function buildInvestigationArchiveEntries(posts, drafts) {
     });
 }
 
-function renderAuthoringLeadCard() {
-  return `
-    <article class="surface-panel authoring-card">
-      <div class="eyebrow">For editors</div>
-      <h3>Write in the full editor</h3>
-      <p>Drafts save as you work, submitted investigations open in review preview, and approved posts roll into the next bakedown.</p>
-      <div class="button-row"><a class="button" href="./editor.html">Create investigation</a></div>
-    </article>
-  `;
-}
-
-function currentArchiveFilters(canEdit = false) {
-  const params = new URLSearchParams(window.location.search);
-  return {
-    tag: String(params.get("tag") || "").trim(),
-    entity: String(params.get("entity") || "").trim(),
-    status: canEdit ? String(params.get("status") || "").trim().toLowerCase() : "",
-    author: String(params.get("author") || "").trim().toLowerCase()
-  };
-}
-
 function activeArchiveFilters() {
   return state.archiveFilters || { tag: "", entity: "", status: "", author: "" };
-}
-
-function archiveHasActiveFilters(filters = activeArchiveFilters()) {
-  return Boolean(filters.tag || filters.entity || filters.status || filters.author);
-}
-
-function renderArchiveFiltersPanel(entries, publicState, filters, canEdit) {
-  return `
-    <section class="surface-panel archive-filters">
-      <div class="archive-filters__head">
-        <button class="text-link archive-filters__clear" type="button" data-clear-investigation-filters ${archiveHasActiveFilters(filters) ? "" : "hidden"}>Clear</button>
-      </div>
-      <div class="archive-filters__form" data-investigation-filters>
-        ${
-          canEdit
-            ? `
-              <div class="archive-status-menu${state.archiveStatusMenuOpen ? " is-open" : ""}" data-status-menu>
-                <button
-                  class="archive-status-menu__toggle"
-                  type="button"
-                  data-status-toggle
-                  aria-expanded="${state.archiveStatusMenuOpen ? "true" : "false"}"
-                  aria-haspopup="listbox"
-                >
-                  <span data-status-current>${escapeHtml(archiveStatusLabel(filters.status))}</span>
-                </button>
-                <div class="archive-status-menu__panel" data-status-panel role="listbox" ${state.archiveStatusMenuOpen ? "" : "hidden"}>
-                  ${ARCHIVE_STATUS_OPTIONS.map((option) => renderArchiveStatusOption(option, filters.status)).join("")}
-                </div>
-              </div>
-            `
-            : ""
-        }
-        <label class="archive-filters__field" data-filter-field="tag">
-          <input name="tag" type="text" placeholder="Search tags" value="${escapeAttribute(filters.tag)}" autocomplete="off" data-filter-input="tag">
-          ${
-            filters.tag
-              ? `<button class="workspace-search__clear archive-filters__clear-button" type="button" data-clear-archive-field="tag" aria-label="Clear tag filter">×</button>`
-              : ""
-          }
-          <div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="tag"></div>
-        </label>
-        <label class="archive-filters__field" data-filter-field="entity">
-          <input name="entity" type="text" placeholder="Search entities" value="${escapeAttribute(filters.entity)}" autocomplete="off" data-filter-input="entity">
-          ${
-            filters.entity
-              ? `<button class="workspace-search__clear archive-filters__clear-button" type="button" data-clear-archive-field="entity" aria-label="Clear entity filter">×</button>`
-              : ""
-          }
-          <div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="entity"></div>
-        </label>
-      </div>
-    </section>
-  `;
 }
 
 function renderInlineReplyForm(comment, publicState) {
@@ -1935,19 +1627,10 @@ function renderInlineReplyForm(comment, publicState) {
   `;
 }
 
-function appendLocalComment(postSlug, comment) {
-  if (!state.publicState?.commentsByPost) return;
-  const current = state.publicState.commentsByPost.get(postSlug) || [];
-  const nextByPost = dedupeCommentList([...current, comment]);
-  state.publicState.commentsByPost.set(postSlug, nextByPost);
-  state.publicState.allComments = dedupeCommentList([...(state.publicState.allComments || []), comment]);
-  state.publicState.comments = dedupeCommentList([...(state.publicState.comments || []), comment]);
-  const authorBucket = state.publicState.commentsByAuthor?.get(comment.author) || [];
-  state.publicState.commentsByAuthor?.set(comment.author, dedupeCommentList([...authorBucket, comment]));
-  const user = (state.publicState.users || []).find((entry) => entry.pubkey === comment.author);
-  if (user) {
-    user.commentCount = (state.publicState.commentsByAuthor?.get(comment.author) || []).length;
-  }
+function appendLocalComment(comment) {
+  if (!state.publicState) return;
+  const nextAllComments = dedupeCommentList([...(state.publicState.allComments || []), comment]);
+  commitLocalPublicState(applyDerivedCommentState(state.publicState, nextAllComments));
 }
 
 function applyLocalCommentDeletion(commentId, note = "Deleted by author") {
@@ -1972,95 +1655,7 @@ function applyLocalCommentDeletion(commentId, note = "Deleted by author") {
           : comment.moderation || moderation
     };
   });
-  state.publicState.allComments = nextComments;
-  state.publicState.comments = nextComments.filter((comment) => String(comment.visibility || "visible") !== "hidden");
-  state.publicState.hiddenComments = nextComments.filter((comment) => String(comment.visibility || "visible") === "hidden");
-  state.publicState.commentsByPost = regroupComments(state.publicState.comments, "post_slug");
-  state.publicState.commentsByAuthor = regroupComments(state.publicState.comments, "author");
-  for (const user of state.publicState.users || []) {
-    user.commentCount = (state.publicState.commentsByAuthor.get(user.pubkey) || []).length;
-  }
-  if (state.publicState.metrics) {
-    state.publicState.metrics.commentCount = state.publicState.comments.length;
-    state.publicState.metrics.hiddenCommentCount = state.publicState.hiddenComments.length;
-  }
-}
-
-function dedupeCommentList(comments) {
-  const seen = new Set();
-  return (Array.isArray(comments) ? comments : []).filter((comment) => {
-    const id = String(comment?.id || "").trim();
-    if (!id || seen.has(id)) return false;
-    seen.add(id);
-    return true;
-  });
-}
-
-function collectCommentBranchIds(comments, rootId) {
-  const children = new Map();
-  for (const comment of Array.isArray(comments) ? comments : []) {
-    const parentId = String(comment?.parent_id || "").trim();
-    const commentId = String(comment?.id || "").trim();
-    if (!parentId || !commentId) continue;
-    const bucket = children.get(parentId) || [];
-    bucket.push(commentId);
-    children.set(parentId, bucket);
-  }
-  const ids = [];
-  const stack = [String(rootId || "").trim()];
-  const seen = new Set();
-  while (stack.length) {
-    const current = stack.pop();
-    if (!current || seen.has(current)) continue;
-    seen.add(current);
-    ids.push(current);
-    for (const childId of children.get(current) || []) stack.push(childId);
-  }
-  return ids;
-}
-
-function regroupComments(comments, key) {
-  const buckets = new Map();
-  for (const comment of Array.isArray(comments) ? comments : []) {
-    const bucketKey = String(comment?.[key] || "").trim();
-    if (!bucketKey) continue;
-    const bucket = buckets.get(bucketKey) || [];
-    bucket.push(comment);
-    buckets.set(bucketKey, bucket);
-  }
-  return buckets;
-}
-
-function renderArchiveMapPanel() {
-  return `
-    <section class="surface-panel archive-map-card">
-      <div class="tag-row archive-map-card__tags" data-investigation-map-tags></div>
-      <div class="map-board map-board--leaflet map-board--compact" data-investigation-map-canvas></div>
-      <div class="button-row">
-        <a class="button-ghost" href="./map.html">Open full map</a>
-      </div>
-    </section>
-  `;
-}
-
-function renderArchiveStatusOption(option, selectedValue) {
-  const value = String(option?.value || "");
-  const isActive = value === String(selectedValue || "");
-  return `
-    <button
-      class="archive-status-menu__option${isActive ? " is-active" : ""}"
-      type="button"
-      role="option"
-      aria-selected="${isActive ? "true" : "false"}"
-      data-status-option="${escapeAttribute(value)}"
-    >
-      ${escapeHtml(String(option?.label || ""))}
-    </button>
-  `;
-}
-
-function archiveStatusLabel(value) {
-  return ARCHIVE_STATUS_OPTIONS.find((option) => option.value === String(value || ""))?.label || "All statuses";
+  commitLocalPublicState(applyDerivedCommentState(state.publicState, nextComments));
 }
 
 function updateArchiveStatusMenu(shell = document.querySelector("[data-investigation-filters]")) {
@@ -2091,7 +1686,7 @@ function initializeArchiveView(entries, publicState, canEdit) {
   const filtersShell = document.querySelector("[data-investigation-filters-shell]");
   const mapShell = document.querySelector("[data-investigation-map-shell]");
   if (!(listGrid instanceof HTMLElement)) return;
-  state.archiveFilters = currentArchiveFilters(canEdit);
+  state.archiveFilters = getCurrentArchiveFilters(window.location.search, canEdit);
   state.archiveFilterOpenField = "";
   state.archiveFilterHighlight = -1;
   state.archiveStatusMenuOpen = false;
@@ -2101,7 +1696,11 @@ function initializeArchiveView(entries, publicState, canEdit) {
     <div class="story-list__results" data-investigation-results></div>
   `;
   if (filtersShell instanceof HTMLElement) {
-    filtersShell.innerHTML = renderArchiveFiltersPanel(entries, publicState, activeArchiveFilters(), canEdit);
+    filtersShell.innerHTML = renderArchiveFiltersPanel({
+      filters: activeArchiveFilters(),
+      canEdit,
+      statusMenuOpen: state.archiveStatusMenuOpen
+    });
     bindInvestigationFilters(entries, publicState, canEdit);
   }
   if (mapShell instanceof HTMLElement) {
@@ -2134,7 +1733,7 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
       [name]: String(target.value || "").trim()
     };
     state.archiveFilterOpenField = name;
-    state.archiveFilterHighlight = archiveFilterSuggestions(name, entries, publicState).matching.length ? 0 : -1;
+    state.archiveFilterHighlight = archiveFilterSuggestions(name, entries, publicState, activeArchiveFilters()).matching.length ? 0 : -1;
     syncArchiveFiltersToUrl(canEdit);
     scheduleArchiveResults(entries, publicState, canEdit);
   });
@@ -2162,20 +1761,16 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
     }
     if (!(target instanceof HTMLInputElement) || !target.matches("[data-filter-input]")) return;
     const field = target.getAttribute("data-filter-input") || "";
-    const descriptor = archiveFilterSuggestions(field, entries, publicState);
+    const descriptor = archiveFilterSuggestions(field, entries, publicState, activeArchiveFilters());
     if (event.key === "ArrowDown" && descriptor.matching.length) {
       event.preventDefault();
-      state.archiveFilterHighlight = state.archiveFilterHighlight >= 0
-        ? (state.archiveFilterHighlight + 1) % descriptor.matching.length
-        : 0;
+      state.archiveFilterHighlight = cycleHighlightIndex(state.archiveFilterHighlight, descriptor.matching.length, 1);
       updateArchiveFilterPanels(entries, publicState);
       return;
     }
     if (event.key === "ArrowUp" && descriptor.matching.length) {
       event.preventDefault();
-      state.archiveFilterHighlight = state.archiveFilterHighlight > 0
-        ? state.archiveFilterHighlight - 1
-        : descriptor.matching.length - 1;
+      state.archiveFilterHighlight = cycleHighlightIndex(state.archiveFilterHighlight, descriptor.matching.length, -1);
       updateArchiveFilterPanels(entries, publicState);
       return;
     }
@@ -2314,8 +1909,24 @@ function updateArchiveSummary(filteredEntries, entries) {
 
 function updateArchiveFilterPanels(entries, publicState) {
   syncArchiveFilterFieldControls();
-  renderArchiveSuggestionPanel("tag", archiveFilterSuggestions("tag", entries, publicState));
-  renderArchiveSuggestionPanel("entity", archiveFilterSuggestions("entity", entries, publicState));
+  const tagHost = document.querySelector('[data-filter-results="tag"]');
+  if (tagHost instanceof HTMLElement) {
+    tagHost.innerHTML = renderArchiveSuggestionPanel(
+      "tag",
+      archiveFilterSuggestions("tag", entries, publicState, activeArchiveFilters()),
+      state.archiveFilterOpenField,
+      state.archiveFilterHighlight
+    );
+  }
+  const entityHost = document.querySelector('[data-filter-results="entity"]');
+  if (entityHost instanceof HTMLElement) {
+    entityHost.innerHTML = renderArchiveSuggestionPanel(
+      "entity",
+      archiveFilterSuggestions("entity", entries, publicState, activeArchiveFilters()),
+      state.archiveFilterOpenField,
+      state.archiveFilterHighlight
+    );
+  }
 }
 
 function syncArchiveFilterFieldControls() {
@@ -2341,45 +1952,6 @@ function syncArchiveFilterFieldControls() {
       existing.remove();
     }
   }
-}
-
-function archiveFilterSuggestions(field, entries, publicState) {
-  const filters = activeArchiveFilters();
-  const query = String(filters?.[field] || "").trim().toLowerCase();
-  const values = field === "tag"
-    ? dedupe(entries.flatMap((entry) => Array.isArray(entry.tags) ? entry.tags : []))
-    : dedupe(entries.flatMap((entry) => archiveEntryEntityOptions(entry, publicState)));
-  const matching = values
-    .filter((value) => String(value || "").trim())
-    .filter((value) => !query || value.toLowerCase().includes(query))
-    .slice(0, 8);
-  return { field, query, matching };
-}
-
-function renderArchiveSuggestionPanel(field, descriptor) {
-  const host = document.querySelector(`[data-filter-results="${field}"]`);
-  if (!(host instanceof HTMLElement)) return;
-  const isOpen = state.archiveFilterOpenField === field;
-  const query = String(descriptor?.query || "").trim();
-  const matching = Array.isArray(descriptor?.matching) ? descriptor.matching : [];
-  if (!isOpen || !query) {
-    host.removeAttribute("data-open");
-    host.innerHTML = "";
-    return;
-  }
-  host.setAttribute("data-open", "yes");
-  host.innerHTML = matching.length
-    ? matching
-        .map(
-          (value, index) => `
-            <button class="picker-chip${state.archiveFilterHighlight === index ? " is-highlighted" : ""}" type="button" data-filter-suggestion="${escapeAttribute(field)}" data-filter-value="${escapeAttribute(value)}" aria-selected="${state.archiveFilterHighlight === index ? "true" : "false"}">
-              <strong>${escapeHtml(value)}</strong>
-              <span>Use ${field}</span>
-            </button>
-          `
-        )
-        .join("")
-    : `<div class="picker-hint">No ${field} matches yet.</div>`;
 }
 
 function syncArchiveFiltersToUrl(canEdit) {
@@ -2425,127 +1997,11 @@ function updateArchiveMapPreview(filteredEntries, entries, publicState) {
     canvas.innerHTML = `<div class="map-empty">No mapped locations in the current results.</div>`;
     return;
   }
-  renderLeafletPreviewMap(canvas, mappedEntities);
-}
-
-function archiveEntitiesForEntries(entries, publicState) {
-  const entityMap = new Map((publicState?.approvedEntities || []).map((entity) => [entity.slug, entity]));
-  const refs = dedupe(
-    (Array.isArray(entries) ? entries : []).flatMap((entry) => [
-      ...(Array.isArray(entry?.entity_refs) ? entry.entity_refs : []),
-      ...(entry?.body ? collectEntityRefsFromText(entry.body, publicState?.approvedEntities || []) : [])
-    ])
-  );
-  return refs.map((slug) => entityMap.get(slug)).filter(Boolean);
-}
-
-function destroyLeafletPreview(canvas) {
-  if (canvas?.__leafletPreviewMap) {
-    canvas.__leafletPreviewMap.remove();
-    canvas.__leafletPreviewMap = null;
-  }
+  renderLeafletPreviewMap(canvas, mappedEntities, queueLeafletBoundsFit);
 }
 
 function destroyLeafletMap() {
-  if (state.markers?.remove) state.markers.remove();
-  state.markers = null;
-  state.markerIndex = new Map();
-  if (state.map?.remove) state.map.remove();
-  state.map = null;
-  state.mapCanvas = null;
-  state.pendingMapEntitySlug = "";
-}
-
-function renderLeafletPreviewMap(canvas, entities) {
-  if (!window.L) {
-    canvas.innerHTML = `<div class="map-empty">Map library unavailable.</div>`;
-    return;
-  }
-  destroyLeafletPreview(canvas);
-  canvas.innerHTML = "";
-  const previewMap = window.L.map(canvas, {
-    zoomControl: false,
-    attributionControl: false,
-    dragging: false,
-    scrollWheelZoom: false,
-    doubleClickZoom: false,
-    boxZoom: false,
-    keyboard: false,
-    tap: false,
-    touchZoom: false
-  }).setView(SITE.map.defaultCenter, SITE.map.defaultZoom);
-  canvas.__leafletPreviewMap = previewMap;
-  window.L.tileLayer(SITE.map.tileUrl, {
-    attribution: SITE.map.tileAttribution,
-    minZoom: SITE.map.minZoom
-  }).addTo(previewMap);
-  const markers = window.L.layerGroup().addTo(previewMap);
-  const points = [];
-  for (const entity of entities) {
-    if (!Number.isFinite(entity.lat) || !Number.isFinite(entity.lng)) continue;
-    points.push([entity.lat, entity.lng]);
-    const marker = window.L.circleMarker([entity.lat, entity.lng], {
-      radius: 6,
-      color: "#6f0d09",
-      weight: 2,
-      fillColor: "#b3201a",
-      fillOpacity: 0.88
-    }).addTo(markers);
-    marker.bindTooltip(escapeHtml(entity.name), { direction: "top", opacity: 0.92 });
-  }
-  queueLeafletBoundsFit(previewMap, points, {
-    padding: [28, 28],
-    duration: 0.4,
-    defaultCenter: SITE.map.defaultCenter,
-    defaultZoom: SITE.map.defaultZoom,
-    singleZoom: 8
-  });
-}
-
-function filterArchiveEntries(entries, publicState, filters) {
-  const tagQuery = String(filters?.tag || "").trim().toLowerCase();
-  const entityQuery = String(filters?.entity || "").trim().toLowerCase();
-  const statusQuery = String(filters?.status || "").trim().toLowerCase();
-  const authorQuery = String(filters?.author || "").trim().toLowerCase();
-  return (Array.isArray(entries) ? entries : []).filter((entry) => {
-    if (statusQuery && normalizeDraftStatus(entry.archiveStatus) !== statusQuery) return false;
-    if (authorQuery) {
-      const author = String(entry.author || "").trim().toLowerCase();
-      const authorUser = (publicState?.users || []).find((user) => user.pubkey === author) || null;
-      const authorLabels = [author, authorUser?.username, authorUser?.displayName]
-        .map((value) => String(value || "").trim().toLowerCase())
-        .filter(Boolean);
-      if (!authorLabels.some((value) => value.includes(authorQuery))) return false;
-    }
-    if (tagQuery) {
-      const matchesTag = (Array.isArray(entry.tags) ? entry.tags : [])
-        .map((tag) => String(tag || "").trim().toLowerCase())
-        .some((tag) => tag.includes(tagQuery));
-      if (!matchesTag) return false;
-    }
-    if (entityQuery) {
-      const matchesEntity = archiveEntryEntityOptions(entry, publicState)
-        .map((value) => String(value || "").trim().toLowerCase())
-        .some((value) => value.includes(entityQuery));
-      if (!matchesEntity) return false;
-    }
-    return true;
-  });
-}
-
-function archiveEntryEntityOptions(entry, publicState) {
-  const entityMap = new Map((publicState?.approvedEntities || []).map((entity) => [entity.slug, entity]));
-  const refs = dedupe([
-    ...(Array.isArray(entry?.entity_refs) ? entry.entity_refs : []),
-    ...(entry?.body ? collectEntityRefsFromText(entry.body, publicState?.approvedEntities || []) : [])
-  ]);
-  return dedupe(
-    refs.flatMap((slug) => {
-      const entity = entityMap.get(slug);
-      if (!entity) return [slug];
-      return [entity.slug, entity.name, entity.location];
-    })
-  );
+  destroySurfaceLeafletMap(state);
 }
 
 function normalizeDraftStatus(status) {
@@ -3029,8 +2485,8 @@ async function publishReviewDecision(panel, draft, button) {
         review_action: action
       }
     });
-    state.publicState = await loadPublicState(true);
-    state.notifications = [];
+    state.publicState = (await publicStateStore.hydrate({ force: true, reason: "review-action" })).value;
+    notificationState.reset();
     void hydrateNotifications(true);
     if (statusBox instanceof HTMLElement) {
       statusBox.textContent = reviewActionMessage(action, draft);
@@ -3070,24 +2526,9 @@ function reviewActionMessage(action, draft = null) {
 }
 
 async function hydrateNotifications(force = false) {
-  if (!state.session) {
-    state.notifications = [];
-    state.notificationsLoading = false;
-    return;
-  }
   const publicState = await getPublicState();
   primeViewerFromSession(false);
-  if (!state.viewer?.pubkey) return;
-  state.notificationsLoading = true;
-  renderNavigation();
-  try {
-    state.notifications = await buildNotifications(publicState, force);
-  } catch {
-    state.notifications = [];
-  } finally {
-    state.notificationsLoading = false;
-    renderNavigation();
-  }
+  await notificationState.hydrate({ publicState, force });
 }
 
 async function buildNotifications(publicState) {
@@ -3174,13 +2615,9 @@ async function buildNotifications(publicState) {
   const submissionNotifications = await loadSubmissionNotifications(publicState, viewer.pubkey, isAdmin);
   notifications.push(...submissionNotifications);
 
-  const dismissed = dismissedNotificationIds();
-
   return notifications
     .sort((left, right) => right.createdAt - left.createdAt)
-    .filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index)
-    .filter((item) => !dismissed.has(item.id))
-    .slice(0, 12);
+    .filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index);
 }
 
 async function loadSubmissionNotifications(publicState, viewerPubkey, isAdmin) {
@@ -3250,51 +2687,6 @@ function notificationSitePubkeys(publicState) {
   ]);
 }
 
-function dismissedNotificationIds() {
-  if (!state.viewer?.pubkey) return new Set();
-  try {
-    const raw = window.localStorage.getItem(notificationDismissedKey(state.viewer.pubkey));
-    const parsed = raw ? JSON.parse(raw) : [];
-    return new Set(Array.isArray(parsed) ? parsed.map((item) => String(item || "").trim()).filter(Boolean) : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function notificationDismissedKey(pubkey) {
-  return `${SITE.nostr.storageNamespace}.notifications.dismissed.${pubkey}`;
-}
-
-function dismissNotification(id) {
-  if (!state.viewer?.pubkey || !id) return;
-  const dismissed = dismissedNotificationIds();
-  dismissed.add(String(id));
-  window.localStorage.setItem(notificationDismissedKey(state.viewer.pubkey), JSON.stringify([...dismissed]));
-  state.notifications = state.notifications.filter((item) => item.id !== id);
-}
-
-function clearNotifications() {
-  if (!state.viewer?.pubkey || !state.notifications.length) return;
-  const dismissed = dismissedNotificationIds();
-  for (const item of state.notifications) dismissed.add(item.id);
-  window.localStorage.setItem(notificationDismissedKey(state.viewer.pubkey), JSON.stringify([...dismissed]));
-  state.notifications = [];
-}
-
-function countUnreadNotifications(notifications) {
-  return Array.isArray(notifications) ? notifications.length : 0;
-}
-
-function renderNotificationItem(item) {
-  return `
-    <a class="profile-menu__notice-item" href="${escapeAttribute(item.href)}" data-notification-link="${escapeAttribute(item.id)}">
-      <span class="profile-menu__notice-label">${escapeHtml(item.label)}</span>
-      <strong>${escapeHtml(item.title)}</strong>
-      <span>${escapeHtml(item.detail || "")}</span>
-    </a>
-  `;
-}
-
 function reviewNotificationTitle(action, isPage = false) {
   if (isPage) {
     if (action === "approve") return "Your page update was approved";
@@ -3338,171 +2730,38 @@ function renderEntityCard(entity, posts) {
   `;
 }
 
-function renderLeafletMap(canvas, entities) {
-  if (!window.L) {
-    destroyLeafletMap();
-    canvas.innerHTML = `<div class="map-empty">Map library unavailable.</div>`;
-    return;
-  }
-  if (state.map && state.mapCanvas !== canvas) {
-    destroyLeafletMap();
-  }
-  if (!state.map) {
-    canvas.innerHTML = "";
-    state.map = window.L.map(canvas, {
-      zoomControl: true,
-      scrollWheelZoom: false
-    }).setView(SITE.map.defaultCenter, SITE.map.defaultZoom);
-    state.mapCanvas = canvas;
-    window.L.tileLayer(SITE.map.tileUrl, {
-      attribution: SITE.map.tileAttribution,
-      minZoom: SITE.map.minZoom
-    }).addTo(state.map);
-  }
-  if (state.markers) state.markers.remove();
-  state.markerIndex = new Map();
-  state.markers = window.L.layerGroup().addTo(state.map);
-
-  const points = [];
-  for (const entity of entities) {
-    if (!Number.isFinite(entity.lat) || !Number.isFinite(entity.lng)) continue;
-    points.push([entity.lat, entity.lng]);
-    const marker = window.L.circleMarker([entity.lat, entity.lng], {
-      radius: 8,
-      color: "#6f0d09",
-      weight: 2,
-      fillColor: "#b3201a",
-      fillOpacity: 0.88
-    }).addTo(state.markers);
-    state.markerIndex.set(entity.slug, marker);
-    marker.bindPopup(`
-      <div class="map-popup">
-        <strong>${escapeHtml(entity.name)}</strong>
-        <div>${escapeHtml(entity.location)}</div>
-        <a href="./map.html?entity=${encodeURIComponent(entity.slug)}">Open entry</a>
-      </div>
-    `);
-    marker.on("click", () => {
-      const card = document.querySelector(`[data-entity-card="${entity.slug}"]`);
-      if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
-  }
-
-  queueLeafletBoundsFit(state.map, points, {
-    padding: [40, 40],
-    duration: 0.45,
-    defaultCenter: SITE.map.defaultCenter,
-    defaultZoom: SITE.map.defaultZoom,
-    singleZoom: 8,
-    onSettled: () => {
-      if (state.pendingMapEntitySlug) {
-        scheduleMapEntityFocus(state.pendingMapEntitySlug, { scrollCard: false });
-      }
-    }
-  });
-}
-
-function queueLeafletBoundsFit(map, points, options = {}) {
-  if (!map) return;
-  const validPoints = (Array.isArray(points) ? points : []).filter(
-    (point) => Array.isArray(point) && Number.isFinite(point[0]) && Number.isFinite(point[1])
-  );
-  const padding = Array.isArray(options.padding) ? options.padding : [40, 40];
-  const duration = Number.isFinite(options.duration) ? options.duration : 0.45;
-  const defaultCenter = Array.isArray(options.defaultCenter) ? options.defaultCenter : SITE.map.defaultCenter;
-  const defaultZoom = Number.isFinite(options.defaultZoom) ? options.defaultZoom : SITE.map.defaultZoom;
-  const singleZoom = Number.isFinite(options.singleZoom) ? options.singleZoom : Math.max(map.getZoom?.() || defaultZoom, 8);
-
-  const applyFit = (animate) => {
-    map.invalidateSize({ pan: false });
-    if (validPoints.length > 1 && window.L?.latLngBounds) {
-      const bounds = window.L.latLngBounds(validPoints);
-      if (bounds.isValid()) {
-        if (animate && typeof map.flyToBounds === "function") {
-          map.flyToBounds(bounds, { padding, duration });
-        } else {
-          map.fitBounds(bounds, { padding });
-        }
-        return;
-      }
-    }
-    if (validPoints.length === 1) {
-      const target = validPoints[0];
-      if (animate && typeof map.flyTo === "function") {
-        map.flyTo(target, singleZoom, { duration });
-      } else {
-        map.setView(target, singleZoom);
-      }
-      return;
-    }
-    map.setView(defaultCenter, defaultZoom);
+function mapSurfaceDeps() {
+  return {
+    mapState: state,
+    escapeHtml,
+    renderEntityCard,
+    renderLeafletMapSurface: (canvas, entities) =>
+      renderLeafletMapSurface(canvas, entities, state, {
+        escapeHtml,
+        scheduleMapEntityFocus,
+        queryEntityCard: (slug) => document.querySelector(`[data-entity-card="${slug}"]`)
+      }),
+    bindMapEntityCards: () => bindMapSurfaceEntityCards((slug) => scheduleMapEntityFocus(slug)),
+    focusRequestedEntity,
+    queryEntityCard: (slug) => document.querySelector(`[data-entity-card="${slug}"]`)
   };
-
-  const raf = typeof window.requestAnimationFrame === "function"
-    ? window.requestAnimationFrame.bind(window)
-    : (callback) => window.setTimeout(callback, 0);
-  raf(() => applyFit(true));
-  window.setTimeout(() => {
-    applyFit(false);
-    if (typeof options.onSettled === "function") options.onSettled();
-  }, 180);
-}
-
-function bindMapEntityCards() {
-  for (const card of document.querySelectorAll("[data-entity-card]")) {
-    if (!(card instanceof HTMLElement) || card.dataset.bound === "yes") continue;
-    card.dataset.bound = "yes";
-    card.addEventListener("click", (event) => {
-      const target = event.target;
-      if (target instanceof Element && target.closest(".entity-card__links a")) return;
-      scheduleMapEntityFocus(card.getAttribute("data-entity-card") || "");
-    });
-    card.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      const target = event.target;
-      if (target instanceof Element && target.closest(".entity-card__links a")) return;
-      event.preventDefault();
-      scheduleMapEntityFocus(card.getAttribute("data-entity-card") || "");
-    });
-  }
-}
-
-function focusEntityOnMap(slug, options = {}) {
-  const clean = cleanSlug(slug || "");
-  if (!clean) return false;
-  const marker = state.markerIndex?.get(clean);
-  const card = document.querySelector(`[data-entity-card="${clean}"]`);
-  if (card instanceof HTMLElement) {
-    for (const item of document.querySelectorAll(".entity-card--focus")) item.classList.remove("entity-card--focus");
-    card.classList.add("entity-card--focus");
-    if (options.scrollCard !== false) {
-      card.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }
-  if (marker && state.map) {
-    state.pendingMapEntitySlug = "";
-    const latLng = marker.getLatLng();
-    state.map.flyTo(latLng, Math.max(state.map.getZoom(), 8), { duration: 0.45 });
-    window.setTimeout(() => marker.openPopup(), 80);
-    return true;
-  }
-  state.pendingMapEntitySlug = clean;
-  return false;
 }
 
 function scheduleMapEntityFocus(slug, options = {}, attempt = 0) {
-  const clean = cleanSlug(slug || "");
-  if (!clean) return;
-  state.pendingMapEntitySlug = clean;
-  const applied = focusEntityOnMap(clean, options);
-  if (applied || attempt >= 10) return;
-  window.setTimeout(() => {
-    scheduleMapEntityFocus(clean, options, attempt + 1);
-  }, 140);
+  scheduleSurfaceMapEntityFocus(
+    slug,
+    state,
+    {
+      cleanSlug,
+      queryEntityCard: (value) => document.querySelector(`[data-entity-card="${value}"]`)
+    },
+    options,
+    attempt
+  );
 }
 
 function focusRequestedEntity() {
-  const requested = cleanSlug(new URLSearchParams(window.location.search).get("entity") || "");
+  const requested = requestedMapEntity(window.location.search, cleanSlug);
   if (!requested) return;
   scheduleMapEntityFocus(requested);
 }
@@ -3514,11 +2773,10 @@ async function getPublicState() {
     if (!state.guestSession) {
       state.guestSession = await getOrCreateGuestSession().catch(() => null);
     }
-    await ensurePublicStateRepairPeer();
-    state.publicState = await loadPublicState();
-    state.publicStateDigest = createPublicStateDigest(state.publicState);
+    const result = await publicStateStore.hydrate({ force: false, reason: "get-public-state" });
+    state.publicState = result.value;
+    state.publicStateDigest = result.digest;
     primeViewerFromSession(true);
-    void maybeRequestPublicStateRepair(state.publicState, "get-public-state");
     if (state.session) {
       void hydrateNotifications();
     }
@@ -3529,6 +2787,8 @@ async function getPublicState() {
       connected: false,
       approvedEntities: [],
       commentsByPost: new Map(),
+      commentIndex: new Map(),
+      commentThreadsByPost: new Map(),
       admins: []
     };
     return state.publicState;
@@ -3550,72 +2810,23 @@ function shouldRefreshPublicState() {
 }
 
 function schedulePublicStateRefresh(delay = publicStateRefreshDelayMs()) {
-  if (state.publicStateRefreshTimer) {
-    window.clearTimeout(state.publicStateRefreshTimer);
-    state.publicStateRefreshTimer = 0;
-  }
-  if (!shouldRefreshPublicState()) return;
-  state.publicStateRefreshTimer = window.setTimeout(() => {
-    void syncPublicState(true);
-  }, delay);
+  publicStateStore.schedule(delay);
 }
 
 async function syncPublicState(force = true) {
-  if (state.publicStateRefreshInFlight) return;
-  if (!shouldRefreshPublicState()) return;
-  state.publicStateRefreshInFlight = true;
   try {
     await ensureEventToolsLoaded();
     if (!state.guestSession) {
       state.guestSession = await getOrCreateGuestSession().catch(() => null);
     }
-    const nextState = await loadPublicState(force);
-    const nextDigest = createPublicStateDigest(nextState);
-    void maybeRequestPublicStateRepair(nextState, "background-sync");
-    if (nextDigest !== state.publicStateDigest) {
-      state.publicState = nextState;
-      state.publicStateDigest = nextDigest;
+    const result = await publicStateStore.sync({ force, reason: "background-sync" });
+    if (result.changed) {
+      state.publicState = result.value;
+      state.publicStateDigest = result.digest;
       await applyPublicStateRefresh();
     }
   } catch {
     return;
-  } finally {
-    state.publicStateRefreshInFlight = false;
-    schedulePublicStateRefresh();
-  }
-}
-
-async function ensurePublicStateRepairPeer() {
-  if (state.publicStateRepairPeerStarted || !hasNostrTools()) return;
-  try {
-    await startPublicStateRepairPeer();
-    state.publicStateRepairPeerStarted = true;
-  } catch {
-    return;
-  }
-}
-
-async function maybeRequestPublicStateRepair(publicState, reason = "") {
-  if (!publicStateNeedsRepair(publicState) || state.publicStateRepairInFlight) return;
-  const now = Date.now();
-  if (now - state.publicStateRepairRequestedAt < 45000) return;
-  const secretKeyHex = await getRequestSignerSecretKey().catch(() => "");
-  if (!secretKeyHex) return;
-  state.publicStateRepairInFlight = true;
-  state.publicStateRepairRequestedAt = now;
-  try {
-    await requestPublicStateRepair(secretKeyHex, {
-      reason,
-      page: document.body.dataset.page || "site",
-      knownEventCount: Array.isArray(publicState?.rawEvents) ? publicState.rawEvents.length : 0
-    });
-    window.setTimeout(() => {
-      void syncPublicState(true);
-    }, 2800);
-  } catch {
-    return;
-  } finally {
-    state.publicStateRepairInFlight = false;
   }
 }
 
@@ -3670,19 +2881,6 @@ async function refreshVisibleCommentThread() {
   const slug = cleanSlug(params.get("slug") || "");
   if (!slug || !state.publicState) return;
   await renderComments(slug, state.publicState);
-}
-
-function createPublicStateDigest(publicState) {
-  const digest = {
-    admins: [...(publicState?.admins || [])].sort(),
-    users: (publicState?.users || []).map((user) => `${user.pubkey}:${user.isAdmin ? 1 : 0}:${user.commentCount || 0}:${user.submissionCount || 0}`),
-    entities: (publicState?.approvedEntities || []).map((entity) => `${entity.slug}:${entity.status || ""}:${entity.updated_at || entity.created_at || ""}`),
-    drafts: (publicState?.drafts || []).map((draft) => `${draft.id || draft.slug}:${draft.status || ""}:${draft.created_at || ""}`),
-    comments: (publicState?.allComments || []).map((comment) => `${comment.id}:${comment.visibility || "visible"}:${comment.created_at || ""}`),
-    keyRequests: (publicState?.pendingAdminKeyRequests || []).map((request) => `${request.id}:${request.requester_pubkey}:${request.site_pubkey}`),
-    activeSite: publicState?.siteInfo?.activePubkey || ""
-  };
-  return JSON.stringify(digest);
 }
 
 function createMapDataDigest(publicState) {
@@ -4157,8 +3355,8 @@ async function saveStaticEditSnapshot() {
       ],
       content: payload
     });
-    state.publicState = await loadPublicState(true);
-    state.notifications = [];
+    state.publicState = (await publicStateStore.hydrate({ force: true, reason: "page-snapshot-review" })).value;
+    notificationState.reset();
     void hydrateNotifications(true);
     editState.status = `Snapshot saved locally at ${formatLocalTimestamp(savedAt)} and sent to review.`;
   } catch (error) {
@@ -4387,21 +3585,4 @@ function sortDateValue(item) {
 function trimmed(value, length) {
   const text = String(value || "").trim();
   return text.length > length ? `${text.slice(0, Math.max(0, length - 1))}...` : text;
-}
-
-function dedupe(values) {
-  return [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || "").trim()).filter(Boolean))];
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function escapeAttribute(value) {
-  return escapeHtml(value).replace(/`/g, "");
 }

@@ -25,6 +25,50 @@ The intended publishing model is:
 
 This means the public site should feel static-first, but still allow live admin-authored updates between bakedowns.
 
+## Cache-first live component contract
+
+Every live component on the site should follow the same rule:
+
+1. render static or cached baseline immediately
+2. load fresher relay state in the background
+3. patch the mounted component in place
+
+Comments, filters, maps, workspace lists, notifications, and collaborative units should all behave that way.
+
+A loading state is only appropriate when there is no useful cached or static baseline to show.
+
+## Code layering
+
+The implementation should converge on three layers:
+
+- `scripts/core`
+  - transport wrappers
+  - cache and public-state normalization
+  - subscribed public-state store lifecycle
+  - navigation UI state
+  - notification state
+  - reusable rendering helpers for shared controls
+- `scripts/surfaces`
+  - composed surface modules that render and update one UI family at a time
+  - profile overlays
+  - archive
+  - comments
+  - map
+  - submit shell
+  - workspace
+  - workspace filters
+  - workspace actions
+  - editor shell
+- HTML documents
+  - static baseline markup
+  - mount points for live surfaces
+
+Page files should compose shared surfaces and helpers. They should not reintroduce duplicate escaping, duplicate comment threading, or duplicate attached-search behavior.
+
+The current branch has already applied this move to navigation, profile-menu state, notifications, archive, comments, submit shell rendering, public profile overlays, workspace rendering, workspace actions, map shells, editor-shell rendering, and a shared `public-state-store` boundary for public, workspace, and editor controllers. The next refactors should keep reducing page controllers into composed surface modules backed by explicit shared state helpers.
+
+The next tightening step for the current branch is no longer shell normalization. It is feature-facing work on top of the normalized shell: collaborative editor rails, richer entity relationships, and broader live-unit coverage.
+
 ## Trust model
 
 For now, an admin is an admin.
@@ -69,6 +113,18 @@ Today, True Cost does not yet have:
 
 - archive-wide and entity-record live overlay coverage
 - periodic PR cadence driven from the live collaborative unit layer instead of the older review queue
+
+## Testing contract
+
+Feature work is not complete until the expected behavior is covered at the right layer.
+
+At minimum, changes to live or cached behavior should be covered for:
+
+- cache-first restore
+- optimistic update persistence
+- reload resilience
+- stale remote merge behavior
+- hierarchy preservation for threaded data
 
 ## Target implementation
 

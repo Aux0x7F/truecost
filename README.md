@@ -8,8 +8,15 @@ The reusable framework now lives separately in the sibling `nostr-site` repo.
 
 - `scripts/`: True Cost browser code and entrypoints
 - `scripts/core/`: site config, session, content, and Nostr helpers
+- `scripts/surfaces/`: shared navigation, archive, comment, workspace, workspace-action, map, and editor-shell surface modules
 - `ARCHITECTURE.md`: project-specific publishing and trust model
+- `BROWSER_SUPPORT.md`: browser compatibility and progressive-enhancement contract
+- `COMPONENTS.md`: reusable component and interaction families
+- `CONTRIBUTING.md`: branch-purpose-squash workflow contract
 - `OPERATIONS.md`: project operating and bakedown expectations
+- `STYLE_GUIDE.md`: UI contract for pages and shared patterns
+- `TESTING.md`: minimum regression and validation contract
+- `ROADMAP.md`: current completion status and next tightening priorities
 - `vendor/nostr-site-support.esm.js`: vendored minified browser bundle built from `nostr-site/support-lib`
 - sibling `nostr-site/`: standalone generic framework repo boundary, including the bundled `peer-pinner` package
 
