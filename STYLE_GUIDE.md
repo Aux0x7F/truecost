@@ -73,7 +73,7 @@ Whole UI families that compose those primitives belong in `scripts/surfaces`, no
 - Vote controls must update the visible score immediately.
 - Root comment vote changes may rerank the root list.
 - Reply vote changes must not reorder the thread.
-- If a root comment reranks, the card should translate smoothly into place so the movement is readable as layout change instead of a random jump.
+- If a root comment reranks, the card should translate smoothly into place on a clearly readable timescale, not snap or finish so fast that the motion is hard to perceive.
 - During that motion, the voted root card should stay visually above neighboring cards and remain opaque enough that cards do not appear to move through each other.
 - When the motion completes, the viewport should ease back to the voted root card rather than snapping.
 

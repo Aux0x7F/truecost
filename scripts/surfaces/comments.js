@@ -17,7 +17,7 @@ export function captureRootCommentPositions(panel) {
 export function animateRootCommentReorder(panel, previousPositions, anchorCommentId = "", options = {}) {
   if (!(panel instanceof HTMLElement) || !(previousPositions instanceof Map) || !previousPositions.size) return;
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
-  const duration = Number.isFinite(options.duration) ? options.duration : 680;
+  const duration = Number.isFinite(options.duration) ? options.duration : 1120;
   const easing = String(options.easing || "cubic-bezier(0.16, 1, 0.3, 1)");
   const anchorId = String(anchorCommentId || "").trim();
   const moved = [];
