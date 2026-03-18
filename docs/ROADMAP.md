@@ -4,6 +4,7 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 
 ## Completed Recently
 
+- Contract, operations, and roadmap docs now live under `docs/` instead of cluttering the repo root.
 - Static-first live overlays are in for editable pages and investigation detail/editor flows.
 - Cache-first restore and background patching are now the documented live-surface contract.
 - Comment threading now uses a shared derived structure with regression coverage for reload and stale-refresh behavior.

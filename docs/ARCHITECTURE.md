@@ -1,6 +1,6 @@
 # Architecture
 
-This document captures the intended operating model for The True Cost Project site.
+This document captures the current operating model for The True Cost Project site.
 
 ## Repo boundary
 
@@ -15,7 +15,7 @@ The site depends on two sibling layers:
 
 ## Product model
 
-The intended publishing model is:
+The publishing model is:
 
 1. Visitors load static content first.
 2. After load, the browser may connect to Nostr and receive newer live state.
@@ -65,15 +65,15 @@ The implementation should converge on three layers:
 
 Page files should compose shared surfaces and helpers. They should not reintroduce duplicate escaping, duplicate comment threading, or duplicate attached-search behavior.
 
-The current branch has already applied this move to navigation, profile-menu state, notifications, archive, comments, submit shell rendering, public profile overlays, workspace rendering, workspace actions, map shells, editor-shell rendering, and a shared `public-state-store` boundary for public, workspace, and editor controllers. The next refactors should keep reducing page controllers into composed surface modules backed by explicit shared state helpers.
+The codebase now applies this split to navigation, profile-menu state, notifications, archive, comments, submit shell rendering, public profile overlays, workspace rendering, workspace actions, map shells, editor-shell rendering, and a shared `public-state-store` boundary for public, workspace, and editor controllers. Future refactors should keep reducing page controllers into composed surface modules backed by explicit shared state helpers.
 
-The next tightening step for the current branch is no longer shell normalization. It is feature-facing work on top of the normalized shell: collaborative editor rails, richer entity relationships, and broader live-unit coverage.
+The next tightening step is feature-facing work on top of the normalized shell: collaborative editor rails, richer entity relationships, and broader live-unit coverage.
 
 ## Trust model
 
 For now, an admin is an admin.
 
-The intended client rule is:
+The client rule is:
 
 - each live privileged update is signed by the admin's own key
 - the client reconstructs the current admin set from the existing True Cost admin grant and revoke chain
@@ -83,7 +83,7 @@ The inbox key is not the signing key for public live content updates.
 
 ## Collaborative units
 
-The units that should become collaborative over time are:
+The units already targeted for collaboration are:
 
 - static pages such as `home`, `about`, `guide`, and other editable public sections
 - investigations
@@ -128,7 +128,7 @@ At minimum, changes to live or cached behavior should be covered for:
 
 ## Target implementation
 
-The next architectural shift should be:
+The next architectural shift is:
 
 - expand `nostr-crdt` usage beyond static pages into investigations and entity records
 - let `nostr-site` keep the trust and publishing policy
@@ -143,7 +143,7 @@ That should simplify:
 
 ## Pinner cadence
 
-The intended pinner behavior is periodic PR generation, not per-edit PR generation.
+The pinner behavior is periodic PR generation, not per-edit PR generation.
 
 Initial cadence:
 
