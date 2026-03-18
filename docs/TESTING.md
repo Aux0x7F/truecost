@@ -7,6 +7,7 @@
 Changes to live state, cached state, comments, filters, maps, workspace surfaces, or collaborative units should have:
 
 - a focused deterministic test for the data/state contract
+- a focused feature/runtime test when route-owned logic moves out of a root controller
 - a focused surface test when a new render family is extracted from a page controller
 - a browser regression when the failure mode is a runtime boot error, DOM lifecycle error, or broken attached-field interaction
 - syntax validation for touched modules
@@ -39,10 +40,15 @@ Where applicable, cover:
 - `node --test tests/comment-vote-ranking.test.mjs`
 - `node --test tests/public-state-store.test.mjs`
 - `node --test tests/navigation-notification.test.mjs`
+- `node --test tests/notification-builder.test.mjs`
+- `node --test tests/page-drafts.test.mjs`
+- `node --test tests/public-state-store.test.mjs`
 - `node --test tests/workspace-actions.test.mjs`
 - `node --test tests/workspace-filters.test.mjs`
 - `node --test tests/editor-shell.test.mjs`
+- `node --test tests/investigation-detail-surface.test.mjs`
 - `node --test tests/map-surface.test.mjs`
+- `node --test tests/static-page-edit.test.mjs`
 - `node --test tests/submit-shell.test.mjs`
 - `node --test tests/admin-editor-submit.browser.test.mjs`
 Use the checked-in browser regression whenever a fix touches:

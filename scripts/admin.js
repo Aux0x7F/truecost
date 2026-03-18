@@ -25,6 +25,15 @@ import {
 import { createPublicStateStore } from "./core/public-state-store.js";
 import { publicStateHasAdminPubkey } from "./core/public-state.js";
 import {
+  draftOwnerPubkey,
+  draftReviewAction,
+  draftStatusLabel as reviewStatusLabel,
+  isPageDraft,
+  pageDraftActionLabel,
+  pageDraftHref,
+  pageDraftLabel
+} from "./core/page-drafts.js";
+import {
   collectRecordBranchIds as collectWorkspaceCommentBranchIds,
   regroupRecordsByKey as regroupComments
 } from "./core/comment-utils.js";
@@ -1179,48 +1188,6 @@ function renderReviewedCard(draft) {
   `;
 }
 
-function isPageDraft(draft) {
-  return String(draft?.content_type || "").trim().toLowerCase() === "page" && cleanSlug(draft?.page_id || "");
-}
-
-function pageDraftLabel(draft) {
-  const pageId = cleanSlug(draft?.page_id || "");
-  if (pageId === "home") return "Home page";
-  if (pageId === "about") return "About page";
-  return "Page";
-}
-
-function pageDraftHref(draft, statusOverride = "") {
-  const pageId = cleanSlug(draft?.page_id || "");
-  const status = String(statusOverride || draft?.status || "").trim().toLowerCase();
-  const path = pageId === "about" ? "./about.html" : "./index.html";
-  if (["approved", "revision", "denied"].includes(status)) return path;
-  return `${path}?draft=${encodeURIComponent(draft.slug)}`;
-}
-
-function draftOwnerPubkey(draft) {
-  const revisions = Array.isArray(draft?.revisions) ? draft.revisions : [];
-  const oldest = revisions.length ? revisions[revisions.length - 1] : null;
-  return String(oldest?.author || draft?.author || "").trim().toLowerCase();
-}
-
-function draftReviewAction(draft) {
-  const tag = Array.isArray(draft?._event?.tags)
-    ? draft._event.tags.find((item) => Array.isArray(item) && item[0] === "review")
-    : null;
-  return String(tag?.[1] || "").trim().toLowerCase();
-}
-
-function reviewStatusLabel(status, reviewAction = "") {
-  const cleanStatus = String(status || "").trim().toLowerCase();
-  const cleanAction = String(reviewAction || "").trim().toLowerCase();
-  if (cleanStatus === "approved" || cleanAction === "approve") return "Approved";
-  if (cleanStatus === "denied" || cleanAction === "deny") return "Denied";
-  if (cleanStatus === "revision" || cleanAction === "revise") return "Revision requested";
-  if (["candidate", "submitted", "review"].includes(cleanStatus)) return "Submitted";
-  return "Draft";
-}
-
 function reviewedDraftHref(draft, statusOverride = "") {
   const status = String(statusOverride || draft?.status || "").trim().toLowerCase();
   if (isPageDraft(draft)) return pageDraftHref(draft, status);
@@ -1231,9 +1198,7 @@ function reviewedDraftHref(draft, statusOverride = "") {
 
 function reviewedDraftAction(draft) {
   if (isPageDraft(draft)) {
-    return ["revision", "approved", "denied"].includes(String(draft?.status || "").trim().toLowerCase())
-      ? "Open page"
-      : "Open preview";
+    return pageDraftActionLabel(draft, draft?.status);
   }
   return String(draft?.status || "").trim().toLowerCase() === "revision"
     ? "Open draft"

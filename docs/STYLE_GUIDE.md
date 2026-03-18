@@ -33,6 +33,8 @@ See [COMPONENTS.md](./COMPONENTS.md) for the expected reusable component familie
 - `picker-results--dropdown`: attached pseudo-dropdown, always anchored to its field
 - `modal-card`: focused tasks, not long-form page replacement
 
+Typography assets are self-hosted. Public pages should not require client font requests to Google or other third-party font CDNs.
+
 Do not create a new card/button/search pattern when one of these can be extended.
 
 The shared JS entry points for these primitives belong in `scripts/core`:
@@ -43,6 +45,13 @@ The shared JS entry points for these primitives belong in `scripts/core`:
 - `public-state.js`
 
 Whole UI families that compose those primitives belong in `scripts/surfaces`, not directly in page controllers.
+
+The stylesheet follows the same idea:
+
+- `styles.css` is the ordered manifest
+- `styles/00-foundation.css` through `styles/08-responsive.css` hold the actual surface-family rules
+- repeated control, dropdown, panel, grid, and text-layout behavior should converge in the earlier shared partials before another surface copies it again
+- a stylesheet reduction pass is not complete when rules are only moved; duplicated behavior should be collapsed into shared selector families so the total CSS footprint actually drops
 
 Current extracted surface families:
 

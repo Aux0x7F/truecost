@@ -1,0 +1,118 @@
+/* Map Surfaces */
+
+.map-board {
+  position: relative;
+  min-height: 32rem;
+  overflow: hidden;
+  border-radius: 20px;
+  background:
+    linear-gradient(90deg, rgba(18, 18, 18, 0.08) 1px, transparent 1px),
+    linear-gradient(rgba(18, 18, 18, 0.08) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(223, 213, 203, 0.85));
+  background-size: 4rem 4rem, 4rem 4rem, cover;
+  border: 1px solid rgba(18, 18, 18, 0.08);
+}
+
+.map-board--leaflet {
+  min-height: 36rem;
+  background: #d9e5d1;
+  z-index: 1;
+}
+
+.map-board--compact {
+  min-height: 16rem;
+}
+
+.map-board--leaflet::before {
+  content: none;
+}
+
+.map-board::before {
+  content: "Map";
+  position: absolute;
+  left: 1rem;
+  top: 1rem;
+  font-size: 0.8rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", monospace;
+  color: var(--ink-soft);
+}
+
+.map-empty {
+  display: grid;
+  place-items: center;
+  min-height: 32rem;
+  color: var(--ink-soft);
+}
+
+.map-dot {
+  position: absolute;
+  width: 1rem;
+  height: 1rem;
+  margin: -0.5rem 0 0 -0.5rem;
+  border-radius: 999px;
+  border: 0;
+  background: var(--accent);
+  box-shadow: 0 0 0 6px rgba(156, 29, 24, 0.12);
+  cursor: pointer;
+}
+
+.map-dot span {
+  position: absolute;
+  left: 1.2rem;
+  top: -0.4rem;
+  display: none;
+  padding: 0.35rem 0.55rem;
+  border-radius: 10px;
+  background: var(--bg-strong);
+  color: #f7f2ed;
+  white-space: nowrap;
+  font-size: 0.8rem;
+}
+
+.map-dot:hover span,
+.map-dot:focus-visible span {
+  display: block;
+}
+
+.map-list {
+  display: grid;
+  gap: 1rem;
+  max-height: 36rem;
+  overflow: auto;
+  padding-right: 0.35rem;
+}
+
+.entity-card {
+  padding: 1.2rem;
+  border-radius: 18px;
+  background: rgba(18, 18, 18, 0.05);
+  border: 1px solid rgba(18, 18, 18, 0.08);
+}
+
+.entity-card--interactive {
+  cursor: pointer;
+}
+
+.entity-card--focus {
+  outline: 2px solid rgba(156, 29, 24, 0.35);
+  background: rgba(156, 29, 24, 0.08);
+}
+
+.entity-card__links {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.8rem;
+}
+
+.entity-card__links a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.entity-card__meta {
+  margin-top: 0.8rem;
+  font-size: 0.85rem;
+}
+
