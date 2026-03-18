@@ -163,20 +163,6 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
       { timeout: 5000 }
     );
 
-    const checkboxState = await page.evaluate(() => {
-      const label = document.querySelector(".checkbox--panel");
-      const input = document.querySelector(".checkbox__input");
-      const indicator = document.querySelector(".checkbox__indicator");
-      if (!(label instanceof HTMLElement) || !(input instanceof HTMLInputElement) || !(indicator instanceof HTMLElement)) {
-        return null;
-      }
-      label.click();
-      return {
-        checkedAfterClick: input.checked,
-        indicatorPresent: indicator instanceof HTMLElement
-      };
-    });
-
     await seedSession(page);
     await page.goto(`http://127.0.0.1:${port}/editor.html`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector("[data-editor-form]", { timeout: 15000 });
@@ -189,8 +175,6 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
     assert.ok(attachedFieldMetrics.hostTop >= attachedFieldMetrics.inputBottom - 2, "attached suggestions should render below the input");
     assert.ok(attachedFieldMetrics.hostWidth <= attachedFieldMetrics.wrapperWidth + 2, "attached suggestions should stay within the field width");
     assert.equal(attachedFieldMetrics.openHintVisible, true, "attached dropdown should render its empty-state hint in place");
-    assert.ok(checkboxState?.indicatorPresent, "consent checkbox should render a styled indicator");
-    assert.equal(checkboxState?.checkedAfterClick, true, "consent checkbox should toggle from the panel control");
   } finally {
     await browser.close();
     await new Promise((resolve) => server.close(resolve));

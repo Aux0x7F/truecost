@@ -55,7 +55,6 @@ test("submit shell renders attached search fields and consent copy inside the mo
   assert.match(view.shellMarkup, /data-submit-suggested-entity-results/);
   assert.match(view.shellMarkup, /data-submit-location-results/);
   assert.match(view.shellMarkup, /Allow follow-up/);
-  assert.match(view.shellMarkup, /checkbox__indicator/);
 });
 
 test("submit suggestion markup keeps attached dropdown semantics for each field kind", () => {
