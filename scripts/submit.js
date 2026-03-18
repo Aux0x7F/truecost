@@ -16,6 +16,7 @@ import {
   startPublicStateRepairPeer,
   resolveSitePubkey
 } from "./core/nostr.js";
+import { renderSearchField } from "./core/search-controls.js";
 import { getStoredSession } from "./core/session.js";
 
 const submitState = {
@@ -70,6 +71,12 @@ function bindSubmitPage() {
     const locationPick = target.closest("[data-submit-location-pick]");
     if (locationPick) {
       applyLocationPick(locationPick);
+      return;
+    }
+
+    const clearField = target.closest("[data-clear-submit-field]");
+    if (clearField) {
+      clearSubmissionField(clearField.getAttribute("data-clear-submit-field") || "");
       return;
     }
 
@@ -229,6 +236,8 @@ function renderSubmissionRow(submission) {
 function renderSubmissionModal() {
   if (!submitState.formModal) return "";
   const payload = submitState.formModal.payload || {};
+  const entityRefsValue = (payload.entity_refs || []).map(resolveEntityDisplayValue).join(", ");
+  const suggestedLocationValue = String(payload.suggested_entity?.location || "");
   return `
     <div class="modal-backdrop">
       <section class="modal-card modal-card--wide">
@@ -260,11 +269,25 @@ function renderSubmissionModal() {
             <span>Location or agency</span>
             <input name="location" type="text" maxlength="160" value="${escapeAttribute(payload.location || "")}">
           </label>
-          <label>
-            <span>Related entities</span>
-            <input name="entityRefs" type="text" data-submit-entity-input placeholder="Search existing entities or list comma-separated names" value="${escapeAttribute((payload.entity_refs || []).map(resolveEntityDisplayValue).join(", "))}">
-            <div class="picker-results" data-submit-entity-results></div>
-          </label>
+          ${renderSearchField({
+            srLabel: "Related entities",
+            inputAttributes: {
+              name: "entityRefs",
+              type: "text",
+              maxlength: "240",
+              autocomplete: "off",
+              placeholder: "Search existing entities or list comma-separated names",
+              value: entityRefsValue,
+              "data-submit-entity-input": true
+            },
+            clearButton: entityRefsValue
+              ? {
+                  attributes: { "data-clear-submit-field": "entityRefs" },
+                  ariaLabel: "Clear related entities"
+                }
+              : null,
+            resultsHtml: '<div class="picker-results picker-results--dropdown" data-submit-entity-results></div>'
+          })}
           <label>
             <span>Details</span>
             <textarea name="details" required>${escapeHtml(payload.details || "")}</textarea>
@@ -275,11 +298,25 @@ function renderSubmissionModal() {
               <span>Suggested entity name</span>
               <input name="suggestedEntityName" type="text" maxlength="140" value="${escapeAttribute(payload.suggested_entity?.name || "")}">
             </label>
-            <label>
-              <span>Suggested entity location</span>
-              <input name="suggestedEntityLocation" type="text" maxlength="160" data-submit-location-input value="${escapeAttribute(payload.suggested_entity?.location || "")}">
-              <div class="picker-results" data-submit-location-results></div>
-            </label>
+            ${renderSearchField({
+              srLabel: "Suggested entity location",
+              inputAttributes: {
+                name: "suggestedEntityLocation",
+                type: "text",
+                maxlength: "160",
+                autocomplete: "off",
+                placeholder: "Suggested entity location",
+                value: suggestedLocationValue,
+                "data-submit-location-input": true
+              },
+              clearButton: suggestedLocationValue
+                ? {
+                    attributes: { "data-clear-submit-field": "suggestedEntityLocation" },
+                    ariaLabel: "Clear suggested entity location"
+                  }
+                : null,
+              resultsHtml: '<div class="picker-results picker-results--dropdown" data-submit-location-results></div>'
+            })}
           </div>
           <div class="tip-form__split">
             <label>
@@ -603,6 +640,13 @@ function applyLocationPick(button) {
   const input = document.querySelector("[data-submit-location-input]");
   if (!(input instanceof HTMLInputElement)) return;
   input.value = value;
+  hydrateSubmissionEnhancements();
+}
+
+function clearSubmissionField(fieldName) {
+  const input = document.querySelector(`[name="${fieldName}"]`);
+  if (!(input instanceof HTMLInputElement)) return;
+  input.value = "";
   hydrateSubmissionEnhancements();
 }
 
