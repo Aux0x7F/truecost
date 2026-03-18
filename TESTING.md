@@ -9,6 +9,7 @@ Changes to live state, cached state, comments, filters, maps, workspace surfaces
 - a focused deterministic test for the data/state contract
 - syntax validation for touched modules
 - a clear statement of what user behavior was verified
+- a compatibility note when introducing non-baseline browser features
 
 ## Required live-state cases
 

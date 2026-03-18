@@ -112,9 +112,15 @@ h3 {
   position: sticky;
   top: 0;
   z-index: 1200;
-  backdrop-filter: blur(18px);
   background: rgba(241, 236, 230, 0.82);
   border-bottom: 1px solid rgba(18, 18, 18, 0.06);
+}
+
+@supports ((-webkit-backdrop-filter: blur(18px)) or (backdrop-filter: blur(18px))) {
+  .site-header {
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
+  }
 }
 
 .site-header__inner {
@@ -867,7 +873,6 @@ h3 {
   overflow: auto;
   overscroll-behavior: contain;
   padding-right: 0.1rem;
-  scrollbar-gutter: stable;
 }
 
 .archive-rail {
@@ -1535,7 +1540,6 @@ h3 {
   overflow: auto;
   overscroll-behavior: contain;
   padding-right: 0.1rem;
-  scrollbar-gutter: stable;
 }
 
 .page-layout--article {
@@ -2344,7 +2348,6 @@ h3 {
   overflow: auto;
   overscroll-behavior: contain;
   padding-right: 0.1rem;
-  scrollbar-gutter: stable;
 }
 
 .workspace-rail-panel {
@@ -2822,14 +2825,27 @@ h3 {
   z-index: 3;
   will-change: transform;
   background: rgba(255, 253, 251, 0.52);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
   opacity: 1;
+}
+
+@supports ((-webkit-backdrop-filter: blur(12px)) or (backdrop-filter: blur(12px))) {
+  .comment-card--reordering {
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
 }
 
 .comment-card--reordering-target {
   z-index: 5;
   box-shadow: 0 18px 40px rgba(18, 18, 18, 0.12);
+}
+
+@supports (scrollbar-gutter: stable) {
+  .archive-rail-shell,
+  .article-aside,
+  .workspace-rail-stack {
+    scrollbar-gutter: stable;
+  }
 }
 
 .comment-card__shell {

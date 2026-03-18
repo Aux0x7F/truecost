@@ -182,6 +182,8 @@ function initNavigation() {
     if (toggle) {
       toggle.classList.toggle("is-open", open);
       toggle.setAttribute("aria-expanded", String(open));
+      toggle.setAttribute("aria-label", open ? "Close navigation" : "Open navigation");
+      toggle.setAttribute("title", open ? "Close navigation" : "Open navigation");
     }
   };
 

@@ -51,6 +51,7 @@ The shared JS entry points for these primitives belong in `scripts/core`:
 - Loading should preserve expected layout space; do not collapse sections while data is pending.
 - Background refreshes should update data in place, not rebuild whole panels unless structure truly changed.
 - If useful cached data exists, render it first and update in place instead of showing a blank loading state.
+- Interactive buttons and toggles must have a discernible accessible name in the static HTML, not only after JavaScript enhancement.
 
 ## Content Rules
 - User-facing text should be plain and direct.
@@ -87,6 +88,7 @@ The shared JS entry points for these primitives belong in `scripts/core`:
 ## Testing Expectations
 - A live-surface change should ship with a regression test for the data contract it depends on.
 - Claims about reload behavior, stale merges, or thread integrity should be backed by deterministic tests, not only manual checking.
+- Browser-sensitive features should follow [BROWSER_SUPPORT.md](./BROWSER_SUPPORT.md).
 
 ## Next Convergence Targets
 - reusable filter/search rail components
