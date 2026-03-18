@@ -115,12 +115,15 @@ Current extraction targets:
 - `scripts/surfaces/comments.js`
 - `scripts/surfaces/archive.js`
 - `scripts/surfaces/workspace.js`
+- `scripts/surfaces/workspace-actions.js`
+- `scripts/surfaces/map.js`
+- `scripts/surfaces/editor-shell.js`
 
 The next convergence targets are:
 
-- action sheets and moderation modals
-- map shells
+- notification/profile-menu state
 - editor side rails
+- controller/store boundaries behind these surfaces
 
 ## Modals and action sheets
 

@@ -11,11 +11,12 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - Browser compatibility is now a documented contract, with current fallbacks in place for blur, scrollbar reservation, and static accessible nav labels.
 - Branch-purpose-squash is now the documented contribution pattern.
 - The first broad surface split is in place: navigation, archive, comments, and workspace rendering now have dedicated modules instead of living only inside page controllers.
-- The framework/template repo now follows the same direction with extracted comment and archive surface modules instead of keeping that logic only in one large template controller.
+- Workspace action sheets, map shells, and editor-shell rendering are now split into dedicated surface modules instead of staying buried in page controllers.
+- The framework/template repo now follows the same direction with matching extracted surface families instead of keeping that logic only in one large template controller.
 
 ## Near Term
 
-- Finish the surface/module split so action sheets and moderation modals, map shells, and editor side rails are composed from shared state and rendering primitives instead of page-controller sprawl.
+- Finish the controller/store split so notifications, profile-menu state, editor side rails, and remaining live orchestration stop living as long ad hoc state inside page controllers.
 - Extend the live collaborative layer from static pages and investigation detail/editor flows into the archive and entity records without regressing the static-first baseline.
 - Add clearer history and conflict handling for live collaborative units before each bakedown cycle, so operators can see what will ship and why.
 - Expand end-to-end browser validation around submissions, moderation, publishing, comment handling, and browser-compat fallbacks before each release.

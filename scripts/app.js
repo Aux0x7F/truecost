@@ -74,6 +74,16 @@ import {
   renderAuthoringLeadCard,
   renderLeafletPreviewMap
 } from "./surfaces/archive.js";
+import {
+  bindMapEntityCards as bindMapSurfaceEntityCards,
+  destroyLeafletMap as destroySurfaceLeafletMap,
+  focusEntityOnRenderedMap,
+  queueLeafletBoundsFit,
+  renderLeafletMapSurface,
+  renderMapPageSurface,
+  requestedMapEntity,
+  scheduleMapEntityFocus as scheduleSurfaceMapEntityFocus
+} from "./surfaces/map.js";
 
 const NAV_KEYS = {
   home: ["home"],
@@ -1037,7 +1047,7 @@ async function initMapPage() {
   const cachedEntities = visibleMapEntities(state.publicState);
   const renderedCachedMap = Boolean(cachedEntities.length);
   if (cachedEntities.length) {
-    renderMapPageState(list, canvas, cachedEntities);
+    renderMapPageSurface(list, canvas, cachedEntities, null, mapSurfaceDeps());
   } else {
     const hasStableMapData = Array.isArray(state.lastGoodMapEntities) && state.lastGoodMapEntities.length;
     if (!hasStableMapData) {
@@ -1062,7 +1072,7 @@ async function initMapPage() {
 
     const posts = await loadPosts().catch(() => []);
     const entityUsage = buildEntityUsage(posts, entities);
-    renderMapPageState(list, canvas, entities, entityUsage);
+    renderMapPageSurface(list, canvas, entities, entityUsage, mapSurfaceDeps());
     state.mapViewDigest = createMapDataDigest({
       approvedEntities: entities
     });
@@ -1081,16 +1091,6 @@ function visibleMapEntities(publicState) {
     return state.lastGoodMapEntities.map((entity) => ({ ...entity }));
   }
   return [];
-}
-
-function renderMapPageState(list, canvas, entities, entityUsage = null) {
-  const posts = entityUsage || buildEntityUsage(clonePosts(state.posts), entities);
-  list.innerHTML = entities
-    .map((entity) => renderEntityCard(entity, posts.get(entity.slug) || []))
-    .join("");
-  renderLeafletMap(canvas, entities);
-  bindMapEntityCards();
-  focusRequestedEntity();
 }
 
 async function renderComments(postSlug, publicState) {
@@ -1987,13 +1987,7 @@ function updateArchiveMapPreview(filteredEntries, entries, publicState) {
 }
 
 function destroyLeafletMap() {
-  if (state.markers?.remove) state.markers.remove();
-  state.markers = null;
-  state.markerIndex = new Map();
-  if (state.map?.remove) state.map.remove();
-  state.map = null;
-  state.mapCanvas = null;
-  state.pendingMapEntitySlug = "";
+  destroySurfaceLeafletMap(state);
 }
 
 function normalizeDraftStatus(status) {
@@ -2776,171 +2770,38 @@ function renderEntityCard(entity, posts) {
   `;
 }
 
-function renderLeafletMap(canvas, entities) {
-  if (!window.L) {
-    destroyLeafletMap();
-    canvas.innerHTML = `<div class="map-empty">Map library unavailable.</div>`;
-    return;
-  }
-  if (state.map && state.mapCanvas !== canvas) {
-    destroyLeafletMap();
-  }
-  if (!state.map) {
-    canvas.innerHTML = "";
-    state.map = window.L.map(canvas, {
-      zoomControl: true,
-      scrollWheelZoom: false
-    }).setView(SITE.map.defaultCenter, SITE.map.defaultZoom);
-    state.mapCanvas = canvas;
-    window.L.tileLayer(SITE.map.tileUrl, {
-      attribution: SITE.map.tileAttribution,
-      minZoom: SITE.map.minZoom
-    }).addTo(state.map);
-  }
-  if (state.markers) state.markers.remove();
-  state.markerIndex = new Map();
-  state.markers = window.L.layerGroup().addTo(state.map);
-
-  const points = [];
-  for (const entity of entities) {
-    if (!Number.isFinite(entity.lat) || !Number.isFinite(entity.lng)) continue;
-    points.push([entity.lat, entity.lng]);
-    const marker = window.L.circleMarker([entity.lat, entity.lng], {
-      radius: 8,
-      color: "#6f0d09",
-      weight: 2,
-      fillColor: "#b3201a",
-      fillOpacity: 0.88
-    }).addTo(state.markers);
-    state.markerIndex.set(entity.slug, marker);
-    marker.bindPopup(`
-      <div class="map-popup">
-        <strong>${escapeHtml(entity.name)}</strong>
-        <div>${escapeHtml(entity.location)}</div>
-        <a href="./map.html?entity=${encodeURIComponent(entity.slug)}">Open entry</a>
-      </div>
-    `);
-    marker.on("click", () => {
-      const card = document.querySelector(`[data-entity-card="${entity.slug}"]`);
-      if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
-  }
-
-  queueLeafletBoundsFit(state.map, points, {
-    padding: [40, 40],
-    duration: 0.45,
-    defaultCenter: SITE.map.defaultCenter,
-    defaultZoom: SITE.map.defaultZoom,
-    singleZoom: 8,
-    onSettled: () => {
-      if (state.pendingMapEntitySlug) {
-        scheduleMapEntityFocus(state.pendingMapEntitySlug, { scrollCard: false });
-      }
-    }
-  });
-}
-
-function queueLeafletBoundsFit(map, points, options = {}) {
-  if (!map) return;
-  const validPoints = (Array.isArray(points) ? points : []).filter(
-    (point) => Array.isArray(point) && Number.isFinite(point[0]) && Number.isFinite(point[1])
-  );
-  const padding = Array.isArray(options.padding) ? options.padding : [40, 40];
-  const duration = Number.isFinite(options.duration) ? options.duration : 0.45;
-  const defaultCenter = Array.isArray(options.defaultCenter) ? options.defaultCenter : SITE.map.defaultCenter;
-  const defaultZoom = Number.isFinite(options.defaultZoom) ? options.defaultZoom : SITE.map.defaultZoom;
-  const singleZoom = Number.isFinite(options.singleZoom) ? options.singleZoom : Math.max(map.getZoom?.() || defaultZoom, 8);
-
-  const applyFit = (animate) => {
-    map.invalidateSize({ pan: false });
-    if (validPoints.length > 1 && window.L?.latLngBounds) {
-      const bounds = window.L.latLngBounds(validPoints);
-      if (bounds.isValid()) {
-        if (animate && typeof map.flyToBounds === "function") {
-          map.flyToBounds(bounds, { padding, duration });
-        } else {
-          map.fitBounds(bounds, { padding });
-        }
-        return;
-      }
-    }
-    if (validPoints.length === 1) {
-      const target = validPoints[0];
-      if (animate && typeof map.flyTo === "function") {
-        map.flyTo(target, singleZoom, { duration });
-      } else {
-        map.setView(target, singleZoom);
-      }
-      return;
-    }
-    map.setView(defaultCenter, defaultZoom);
+function mapSurfaceDeps() {
+  return {
+    mapState: state,
+    escapeHtml,
+    renderEntityCard,
+    renderLeafletMapSurface: (canvas, entities) =>
+      renderLeafletMapSurface(canvas, entities, state, {
+        escapeHtml,
+        scheduleMapEntityFocus,
+        queryEntityCard: (slug) => document.querySelector(`[data-entity-card="${slug}"]`)
+      }),
+    bindMapEntityCards: () => bindMapSurfaceEntityCards((slug) => scheduleMapEntityFocus(slug)),
+    focusRequestedEntity,
+    queryEntityCard: (slug) => document.querySelector(`[data-entity-card="${slug}"]`)
   };
-
-  const raf = typeof window.requestAnimationFrame === "function"
-    ? window.requestAnimationFrame.bind(window)
-    : (callback) => window.setTimeout(callback, 0);
-  raf(() => applyFit(true));
-  window.setTimeout(() => {
-    applyFit(false);
-    if (typeof options.onSettled === "function") options.onSettled();
-  }, 180);
-}
-
-function bindMapEntityCards() {
-  for (const card of document.querySelectorAll("[data-entity-card]")) {
-    if (!(card instanceof HTMLElement) || card.dataset.bound === "yes") continue;
-    card.dataset.bound = "yes";
-    card.addEventListener("click", (event) => {
-      const target = event.target;
-      if (target instanceof Element && target.closest(".entity-card__links a")) return;
-      scheduleMapEntityFocus(card.getAttribute("data-entity-card") || "");
-    });
-    card.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      const target = event.target;
-      if (target instanceof Element && target.closest(".entity-card__links a")) return;
-      event.preventDefault();
-      scheduleMapEntityFocus(card.getAttribute("data-entity-card") || "");
-    });
-  }
-}
-
-function focusEntityOnMap(slug, options = {}) {
-  const clean = cleanSlug(slug || "");
-  if (!clean) return false;
-  const marker = state.markerIndex?.get(clean);
-  const card = document.querySelector(`[data-entity-card="${clean}"]`);
-  if (card instanceof HTMLElement) {
-    for (const item of document.querySelectorAll(".entity-card--focus")) item.classList.remove("entity-card--focus");
-    card.classList.add("entity-card--focus");
-    if (options.scrollCard !== false) {
-      card.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }
-  if (marker && state.map) {
-    state.pendingMapEntitySlug = "";
-    const latLng = marker.getLatLng();
-    state.map.flyTo(latLng, Math.max(state.map.getZoom(), 8), { duration: 0.45 });
-    window.setTimeout(() => marker.openPopup(), 80);
-    return true;
-  }
-  state.pendingMapEntitySlug = clean;
-  return false;
 }
 
 function scheduleMapEntityFocus(slug, options = {}, attempt = 0) {
-  const clean = cleanSlug(slug || "");
-  if (!clean) return;
-  state.pendingMapEntitySlug = clean;
-  const applied = focusEntityOnMap(clean, options);
-  if (applied || attempt >= 10) return;
-  window.setTimeout(() => {
-    scheduleMapEntityFocus(clean, options, attempt + 1);
-  }, 140);
+  scheduleSurfaceMapEntityFocus(
+    slug,
+    state,
+    {
+      cleanSlug,
+      queryEntityCard: (value) => document.querySelector(`[data-entity-card="${value}"]`)
+    },
+    options,
+    attempt
+  );
 }
 
 function focusRequestedEntity() {
-  const requested = cleanSlug(new URLSearchParams(window.location.search).get("entity") || "");
+  const requested = requestedMapEntity(window.location.search, cleanSlug);
   if (!requested) return;
   scheduleMapEntityFocus(requested);
 }

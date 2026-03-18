@@ -51,20 +51,21 @@ The implementation should converge on three layers:
   - comments
   - map
   - workspace
-  - editor
+  - workspace actions
+  - editor shell
 - HTML documents
   - static baseline markup
   - mount points for live surfaces
 
 Page files should compose shared surfaces and helpers. They should not reintroduce duplicate escaping, duplicate comment threading, or duplicate attached-search behavior.
 
-The current branch has already applied this move to navigation, archive, comments, and workspace rendering. The next refactors should continue reducing page controllers into composed surface modules backed by explicit shared state helpers.
+The current branch has already applied this move to navigation, archive, comments, workspace rendering, workspace actions, map shells, and editor-shell rendering. The next refactors should continue reducing page controllers into composed surface modules backed by explicit shared state helpers.
 
 The next tightening step for the current branch is to finish that move for the remaining highest-churn surfaces:
 
-- action sheets and moderation modals
-- map shells that still sit in page controllers
+- notifications and profile-menu state
 - editor side rails and collaboration controls
+- controller/store extraction so page files orchestrate surfaces instead of owning long-lived state logic
 
 ## Trust model
 
