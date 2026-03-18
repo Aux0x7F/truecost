@@ -2086,6 +2086,39 @@ h3 {
   gap: 1rem;
 }
 
+.submit-form-field {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+  align-content: start;
+}
+
+.submit-form-field__label {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.submit-search-field {
+  min-width: 0;
+  align-self: start;
+  font-weight: 400;
+}
+
+.submit-search-field .workspace-search__results {
+  top: calc(100% + 0.35rem);
+}
+
+.submit-search-field .workspace-search__input {
+  font-weight: 400;
+}
+
+.submit-form-note {
+  padding: 0.95rem 1rem;
+  border-radius: 16px;
+  background: rgba(18, 18, 18, 0.05);
+  color: var(--ink-soft);
+}
+
 .checkbox {
   display: flex;
   align-items: start;
@@ -2095,6 +2128,27 @@ h3 {
 .checkbox input {
   width: auto;
   margin-top: 0.25rem;
+}
+
+.checkbox--panel {
+  padding: 0.95rem 1rem;
+  border-radius: 16px;
+  background: rgba(18, 18, 18, 0.05);
+}
+
+.checkbox__copy {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.checkbox__copy strong {
+  font-size: 0.98rem;
+}
+
+.checkbox__copy small {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  line-height: 1.5;
 }
 
 .status-box {

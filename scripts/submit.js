@@ -74,6 +74,12 @@ function bindSubmitPage() {
       return;
     }
 
+    const suggestedEntityPick = target.closest("[data-submit-suggested-entity-pick]");
+    if (suggestedEntityPick) {
+      applySuggestedEntityPick(suggestedEntityPick);
+      return;
+    }
+
     const clearField = target.closest("[data-clear-submit-field]");
     if (clearField) {
       clearSubmissionField(clearField.getAttribute("data-clear-submit-field") || "");
@@ -103,7 +109,11 @@ function bindSubmitPage() {
   shell.addEventListener("input", (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
-    if (target.matches("[data-submit-entity-input], [data-submit-location-input]")) {
+    if (
+      target.matches(
+        "[data-submit-entity-input], [data-submit-location-input], [data-submit-suggested-entity-input]"
+      )
+    ) {
       hydrateSubmissionEnhancements();
     }
   });
@@ -266,57 +276,93 @@ function renderSubmissionModal() {
             </label>
           </div>
           <label>
-            <span>Location or agency</span>
-            <input name="location" type="text" maxlength="160" value="${escapeAttribute(payload.location || "")}">
+            <span>Submission location</span>
+            <input
+              name="location"
+              type="text"
+              maxlength="160"
+              placeholder="Where did this happen?"
+              value="${escapeAttribute(payload.location || "")}"
+            >
           </label>
-          ${renderSearchField({
-            srLabel: "Related entities",
-            inputAttributes: {
-              name: "entityRefs",
-              type: "text",
-              maxlength: "240",
-              autocomplete: "off",
-              placeholder: "Search existing entities or list comma-separated names",
-              value: entityRefsValue,
-              "data-submit-entity-input": true
-            },
-            clearButton: entityRefsValue
-              ? {
-                  attributes: { "data-clear-submit-field": "entityRefs" },
-                  ariaLabel: "Clear related entities"
-                }
-              : null,
-            resultsHtml: '<div class="picker-results picker-results--dropdown" data-submit-entity-results></div>'
-          })}
+          <div class="submit-form-field">
+            <span class="submit-form-field__label">Related entities</span>
+            ${renderSearchField({
+              wrapperClass: "workspace-search submit-search-field",
+              srLabel: "Related entities",
+              inputAttributes: {
+                name: "entityRefs",
+                type: "text",
+                maxlength: "240",
+                autocomplete: "off",
+                placeholder: "Search entities to connect this submission",
+                value: entityRefsValue,
+                "data-submit-entity-input": true
+              },
+              clearButton: entityRefsValue
+                ? {
+                    attributes: { "data-clear-submit-field": "entityRefs" },
+                    ariaLabel: "Clear related entities"
+                  }
+                : null,
+              resultsHtml:
+                '<div class="picker-results picker-results--dropdown workspace-search__results" data-submit-entity-results></div>'
+            })}
+          </div>
           <label>
             <span>Details</span>
             <textarea name="details" required>${escapeHtml(payload.details || "")}</textarea>
           </label>
-          <div class="status-box">If the entity is not listed yet, suggest a new one below for admin review.</div>
+          <div class="submit-form-note">If the entity is missing, suggest it below and include the location you want attached to it.</div>
           <div class="tip-form__split">
-            <label>
-              <span>Suggested entity name</span>
-              <input name="suggestedEntityName" type="text" maxlength="140" value="${escapeAttribute(payload.suggested_entity?.name || "")}">
-            </label>
-            ${renderSearchField({
-              srLabel: "Suggested entity location",
-              inputAttributes: {
-                name: "suggestedEntityLocation",
-                type: "text",
-                maxlength: "160",
-                autocomplete: "off",
-                placeholder: "Suggested entity location",
-                value: suggestedLocationValue,
-                "data-submit-location-input": true
-              },
-              clearButton: suggestedLocationValue
-                ? {
-                    attributes: { "data-clear-submit-field": "suggestedEntityLocation" },
-                    ariaLabel: "Clear suggested entity location"
-                  }
-                : null,
-              resultsHtml: '<div class="picker-results picker-results--dropdown" data-submit-location-results></div>'
-            })}
+            <div class="submit-form-field">
+              <span class="submit-form-field__label">Suggested entity</span>
+              ${renderSearchField({
+                wrapperClass: "workspace-search submit-search-field",
+                srLabel: "Suggested entity",
+                inputAttributes: {
+                  name: "suggestedEntityName",
+                  type: "text",
+                  maxlength: "140",
+                  autocomplete: "off",
+                  placeholder: "Search existing entities or name a new one",
+                  value: payload.suggested_entity?.name || "",
+                  "data-submit-suggested-entity-input": true
+                },
+                clearButton: payload.suggested_entity?.name
+                  ? {
+                      attributes: { "data-clear-submit-field": "suggestedEntityName" },
+                      ariaLabel: "Clear suggested entity"
+                    }
+                  : null,
+                resultsHtml:
+                  '<div class="picker-results picker-results--dropdown workspace-search__results" data-submit-suggested-entity-results></div>'
+              })}
+            </div>
+            <div class="submit-form-field">
+              <span class="submit-form-field__label">Suggested entity location</span>
+              ${renderSearchField({
+                wrapperClass: "workspace-search submit-search-field",
+                srLabel: "Suggested entity location",
+                inputAttributes: {
+                  name: "suggestedEntityLocation",
+                  type: "text",
+                  maxlength: "160",
+                  autocomplete: "off",
+                  placeholder: "Search known locations or type a new one",
+                  value: suggestedLocationValue,
+                  "data-submit-location-input": true
+                },
+                clearButton: suggestedLocationValue
+                  ? {
+                      attributes: { "data-clear-submit-field": "suggestedEntityLocation" },
+                      ariaLabel: "Clear suggested entity location"
+                    }
+                  : null,
+                resultsHtml:
+                  '<div class="picker-results picker-results--dropdown workspace-search__results" data-submit-location-results></div>'
+              })}
+            </div>
           </div>
           <div class="tip-form__split">
             <label>
@@ -352,9 +398,12 @@ function renderSubmissionModal() {
               <input name="attachment" type="file" accept=".txt,.md,.csv,.json,.pdf,.png,.jpg,.jpeg">
             </label>
           </div>
-          <label class="checkbox">
+          <label class="checkbox checkbox--panel">
             <input name="consent" type="checkbox" value="yes" ${payload.consent_to_follow_up ? "checked" : ""}>
-            <span>The project may follow up if clarification is needed.</span>
+            <span class="checkbox__copy">
+              <strong>Allow follow-up</strong>
+              <small>We may contact you if a quick clarification would help.</small>
+            </span>
           </label>
           <div class="button-row">
             <button class="button" type="submit">Save submission</button>
@@ -574,6 +623,7 @@ function renderOption(value, current) {
 function hydrateSubmissionEnhancements() {
   renderEntityResults();
   renderLocationResults();
+  renderSuggestedEntityResults();
 }
 
 function renderEntityResults() {
@@ -584,8 +634,10 @@ function renderEntityResults() {
   const matches = matchEntities(query).slice(0, 6);
   if (!query) {
     host.innerHTML = "";
+    host.removeAttribute("data-open");
     return;
   }
+  host.setAttribute("data-open", "yes");
   host.innerHTML = matches.length
     ? matches
         .map(
@@ -610,8 +662,10 @@ function renderLocationResults() {
     .slice(0, 6);
   if (!query && !matches.length) {
     host.innerHTML = "";
+    host.removeAttribute("data-open");
     return;
   }
+  host.setAttribute("data-open", "yes");
   host.innerHTML = matches.length
     ? matches
         .map(
@@ -623,6 +677,32 @@ function renderLocationResults() {
         )
         .join("")
     : `<div class="picker-hint">No known location matches. Keep the typed value to propose a new one.</div>`;
+}
+
+function renderSuggestedEntityResults() {
+  const host = document.querySelector("[data-submit-suggested-entity-results]");
+  const input = document.querySelector("[data-submit-suggested-entity-input]");
+  if (!(host instanceof HTMLElement) || !(input instanceof HTMLInputElement)) return;
+  const query = input.value.trim();
+  const matches = matchEntities(query).slice(0, 6);
+  if (!query) {
+    host.innerHTML = "";
+    host.removeAttribute("data-open");
+    return;
+  }
+  host.setAttribute("data-open", "yes");
+  host.innerHTML = matches.length
+    ? matches
+        .map(
+          (entity) => `
+            <button class="picker-chip" type="button" data-submit-suggested-entity-pick="${escapeAttribute(entity.slug)}">
+              <strong>${escapeHtml(entity.name)}</strong>
+              <span>${escapeHtml(entity.location)}</span>
+            </button>
+          `
+        )
+        .join("")
+    : `<div class="picker-hint">No existing entity matches. Keep the typed name to suggest a new one.</div>`;
 }
 
 function applyEntityPick(button) {
@@ -640,6 +720,21 @@ function applyLocationPick(button) {
   const input = document.querySelector("[data-submit-location-input]");
   if (!(input instanceof HTMLInputElement)) return;
   input.value = value;
+  hydrateSubmissionEnhancements();
+}
+
+function applySuggestedEntityPick(button) {
+  const slug = button.getAttribute("data-submit-suggested-entity-pick") || "";
+  const entity = resolveEntityByNameOrSlug(slug);
+  const nameInput = document.querySelector("[data-submit-suggested-entity-input]");
+  const locationInput = document.querySelector("[data-submit-location-input]");
+  const typeInput = document.querySelector('[name="suggestedEntityType"]');
+  const notesInput = document.querySelector('[name="suggestedEntityNotes"]');
+  if (!(nameInput instanceof HTMLInputElement) || !entity) return;
+  nameInput.value = entity.name || "";
+  if (locationInput instanceof HTMLInputElement) locationInput.value = entity.location || "";
+  if (typeInput instanceof HTMLInputElement) typeInput.value = entity.type || "";
+  if (notesInput instanceof HTMLInputElement) notesInput.value = entity.notes || "";
   hydrateSubmissionEnhancements();
 }
 

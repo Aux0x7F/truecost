@@ -54,6 +54,7 @@ Current extracted surface families:
 ## Interaction Rules
 - Search suggestions open from the field itself and overlay content below them.
 - `x` inside a search field must clear both the field and the active filter state.
+- Submit modal entity and location fields use the same attached-search pattern as rails and workspace filters.
 - Keyboard support is required for attached dropdowns:
   - `ArrowDown`
   - `ArrowUp`

@@ -43,6 +43,7 @@ Component behavior that spans a whole UI family should live in `scripts/surfaces
 ### Attached search
 
 - Search, lookup, and filter controls should use one attached pattern.
+- Submit modal entity and location fields are part of the same pattern, not a separate form-specific widget family.
 - Suggestions open from the field itself and overlay what sits below.
 - Fields support:
   - `ArrowUp`
