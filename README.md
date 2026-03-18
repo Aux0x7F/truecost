@@ -8,6 +8,7 @@ The reusable framework now lives separately in the sibling `nostr-site` repo.
 
 - `scripts/`: True Cost browser code and entrypoints
 - `scripts/core/`: site config, session, content, and Nostr helpers
+- `scripts/surfaces/`: shared archive and comment surface modules, with more UI families moving here over time
 - `ARCHITECTURE.md`: project-specific publishing and trust model
 - `BROWSER_SUPPORT.md`: browser compatibility and progressive-enhancement contract
 - `COMPONENTS.md`: reusable component and interaction families

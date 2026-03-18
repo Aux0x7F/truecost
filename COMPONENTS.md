@@ -53,6 +53,20 @@ Component behavior that spans a whole UI family should live in `scripts/surfaces
 - Clearing the field must clear the active filter state, not only the visible text.
 - Loading belongs in the field itself when the field is the active surface.
 
+## Workspace surfaces
+
+### Workspace lists and rails
+
+- Workspace panes should render from one list/rail contract per data family, not bespoke per-tab markup.
+- Search, stats, and filters belong in the supporting rail when they drive a list below.
+- Background refresh should patch list rows and counts in place instead of rebuilding the entire workspace pane.
+
+### Notifications and profile menu
+
+- Notification state belongs inside the profile menu, not as a separate menu surface.
+- The badge is the compact state; the expanded list is a child state of the same menu.
+- Clearing or consuming notifications should update the list in place without collapsing unrelated controls.
+
 ## Threads and comments
 
 ### Comment thread view
@@ -112,6 +126,7 @@ The next convergence targets are:
 - Focused actions should happen in a modal or inline action sheet, not by replacing the whole page.
 - Action menus should stay context-bound to the item they operate on.
 - If an action navigates to a filtered or threaded context, wait for the target context to exist before final focusing.
+- Repeated item-action patterns should converge into one action-sheet family before another list invents its own.
 
 ## Editor shell
 
