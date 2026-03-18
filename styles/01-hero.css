@@ -1,0 +1,232 @@
+/* Hero And Landing Surfaces */
+
+.hero {
+  position: relative;
+  padding: 4rem 0 2rem;
+}
+
+.hero--home {
+  padding: 4rem 0 3rem;
+}
+
+.hero__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.18fr) minmax(320px, 0.82fr);
+  gap: 2rem;
+  align-items: stretch;
+}
+
+.hero__lede {
+  font-size: 1.18rem;
+  max-width: 52rem;
+}
+
+.hero__copy {
+  max-width: 50rem;
+}
+
+.hero-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.hero-summary--stack {
+  grid-template-columns: 1fr;
+}
+
+.hero-summary__item {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.95rem 1rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  text-decoration: none;
+  transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}
+
+.hero-summary__item:hover,
+.hero-summary__item:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.hero-summary__item strong {
+  font-size: clamp(1.45rem, 3vw, 2rem);
+  font-family: "Spectral", serif;
+  color: inherit;
+}
+
+.hero-summary__item span {
+  color: rgba(248, 243, 238, 0.78);
+  font-size: 0.88rem;
+}
+
+.hero-summary--stack .hero-summary__item {
+  min-height: 5.4rem;
+}
+
+.hero-summary--light .hero-summary__item {
+  background: rgba(18, 18, 18, 0.04);
+  border-color: rgba(18, 18, 18, 0.08);
+}
+
+.hero-summary--light .hero-summary__item:hover,
+.hero-summary--light .hero-summary__item:focus-visible {
+  background: rgba(156, 29, 24, 0.05);
+  border-color: rgba(156, 29, 24, 0.18);
+}
+
+.hero-summary--light .hero-summary__item span {
+  color: var(--ink-soft);
+}
+
+.hero__actions,
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin-top: 1.6rem;
+  align-items: flex-end;
+}
+
+.hero__panel,
+.surface-panel,
+.card-grid article,
+.investigation-card,
+.info-card,
+.metric-card,
+.article-card,
+.support-card {
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: var(--shadow);
+}
+
+.hero__panel {
+  overflow: hidden;
+  min-height: 100%;
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.06), transparent 42%),
+    linear-gradient(180deg, #191919 0%, #0f0f0f 100%);
+  color: #f6f2ed;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.hero__panel-top {
+  padding: 1.5rem 1.5rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.hero__panel h2,
+.hero__panel h3,
+.hero__panel p,
+.hero__panel li {
+  color: inherit;
+}
+
+.hero__panel-body {
+  padding: 1.5rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.hero__evidence {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.hero__evidence li {
+  list-style: none;
+  margin: 0;
+  padding: 0.95rem 1rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.hero__evidence small,
+.muted {
+  color: rgba(246, 242, 237, 0.68);
+}
+
+.button,
+.button-ghost,
+.button-dark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 3rem;
+  padding: 0.85rem 1.2rem;
+  border-radius: 999px;
+  text-decoration: none;
+  border: 1px solid transparent;
+  font-weight: 600;
+  font: inherit;
+  cursor: pointer;
+  transition: transform 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+
+.button:hover,
+.button-ghost:hover,
+.button-dark:hover {
+  transform: translateY(-1px);
+}
+
+.button {
+  background: var(--accent);
+  color: #fff8f5;
+}
+
+.button:hover {
+  background: #7c120e;
+}
+
+.button[data-busy="yes"] {
+  pointer-events: none;
+}
+
+.button .loading-spinner {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-color: rgba(255, 248, 245, 0.34);
+  border-top-color: #fff8f5;
+}
+
+.button-dark {
+  background: var(--bg-strong);
+  color: #fff8f5;
+}
+
+.button-ghost {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.45);
+  border-color: var(--line);
+}
+
+.section {
+  padding: 1.6rem 0 0;
+}
+
+.section__head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.section__head p {
+  max-width: 42rem;
+}
+
+.metric-grid,
+.card-grid,
+.info-grid,

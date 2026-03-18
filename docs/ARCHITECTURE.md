@@ -65,6 +65,15 @@ The implementation should converge on three layers:
 
 Page files should compose shared surfaces and helpers. They should not reintroduce duplicate escaping, duplicate comment threading, or duplicate attached-search behavior.
 
+The CSS now follows the same split:
+
+- `styles.css`
+  - import manifest only
+- `styles/`
+  - ordered partials by shared foundation, surface family, and responsive override layer
+
+That keeps the CSS boundary closer to the JS surface split instead of letting one root stylesheet keep absorbing every component family.
+
 The codebase now applies this split to navigation, profile-menu state, notifications, archive, comments, submit shell rendering, public profile overlays, workspace rendering, workspace actions, map shells, editor-shell rendering, and a shared `public-state-store` boundary for public, workspace, and editor controllers. Future refactors should keep reducing page controllers into composed surface modules backed by explicit shared state helpers.
 
 The next tightening step is feature-facing work on top of the normalized shell: collaborative editor rails, richer entity relationships, and broader live-unit coverage.

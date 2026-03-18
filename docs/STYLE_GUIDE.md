@@ -44,6 +44,12 @@ The shared JS entry points for these primitives belong in `scripts/core`:
 
 Whole UI families that compose those primitives belong in `scripts/surfaces`, not directly in page controllers.
 
+The stylesheet follows the same idea:
+
+- `styles.css` is the ordered manifest
+- `styles/00-foundation.css` through `styles/08-responsive.css` hold the actual surface-family rules
+- repeated control, dropdown, panel, and grid behavior should converge in the earlier shared partials before another surface copies it again
+
 Current extracted surface families:
 
 - `navigation`
