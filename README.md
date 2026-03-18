@@ -6,9 +6,10 @@ The reusable framework now lives separately in the sibling `nostr-site` repo.
 
 ## Structure
 
-- `scripts/`: True Cost browser code and entrypoints
-- `scripts/core/`: site config, session, content, and Nostr helpers
-- `scripts/surfaces/`: shared navigation, archive, comment, workspace, workspace-action, map, and editor-shell surface modules
+- `scripts/`: True Cost browser code and route entrypoints
+- `scripts/core/`: shared services, stores, controllers, formatting, and transport helpers
+- `scripts/features/`: route-owned feature orchestration and lifecycle modules
+- `scripts/surfaces/`: shared presentational UI families
 - `docs/`: contract, operations, and roadmap documents for the current site
 - `docs/README.md`: index of architecture, component, testing, browser-support, and operating contracts
 - `vendor/nostr-site-support.esm.js`: vendored minified browser bundle built from `nostr-site/support-lib`

@@ -45,6 +45,22 @@ export function renderTagList(tags) {
     .join("");
 }
 
+export function renderRecordList(records) {
+  if (!Array.isArray(records) || !records.length) {
+    return `<div class="empty-state">No structured notes attached to this post.</div>`;
+  }
+  return records
+    .map((record) => {
+      const label = escapeHtml(String(record.label || "Untitled note"));
+      const note = record.note ? `<small>${escapeHtml(String(record.note))}</small>` : "";
+      if (record.href) {
+        return `<a class="record-item" href="${escapeAttribute(record.href)}"><strong>${label}</strong>${note}</a>`;
+      }
+      return `<div class="record-item"><strong>${label}</strong>${note}</div>`;
+    })
+    .join("");
+}
+
 export function renderMiniMarkdown(markdown, sanitizeTrustedHtml) {
   return renderMarkedHtml(markdown, { breaks: true }, sanitizeTrustedHtml);
 }

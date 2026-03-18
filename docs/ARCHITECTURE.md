@@ -39,7 +39,7 @@ A loading state is only appropriate when there is no useful cached or static bas
 
 ## Code layering
 
-The implementation should converge on three layers:
+The implementation now follows four layers:
 
 - `scripts/core`
   - transport wrappers
@@ -47,9 +47,18 @@ The implementation should converge on three layers:
   - subscribed public-state store lifecycle
   - navigation UI state
   - notification state
+  - viewer/session/request-signer controllers
   - shared draft and review helpers
   - shared rendering helpers for loading, markdown, tags, and TOC
   - reusable rendering helpers for shared controls
+- `scripts/features`
+  - route-owned state + logic modules
+  - site runtime/bootstrap lifecycle
+  - archive page
+  - map page
+  - markdown/article page
+  - review workflow
+  - any future route-level collaborative shells
 - `scripts/surfaces`
   - composed surface modules that render and update one UI family at a time
   - profile overlays
@@ -68,7 +77,7 @@ The implementation should converge on three layers:
   - static baseline markup
   - mount points for live surfaces
 
-Page files should compose shared surfaces and helpers. They should not reintroduce duplicate escaping, duplicate comment threading, or duplicate attached-search behavior.
+`app.js` should stay a bootstrap and route-mount file, not a dumping ground for feature logic. Page files should compose shared features and surfaces. They should not reintroduce duplicate escaping, duplicate comment threading, duplicate request-signer logic, or duplicate attached-search behavior.
 
 The CSS now follows the same split:
 
@@ -80,7 +89,7 @@ The CSS now follows the same split:
 
 That keeps the CSS boundary closer to the JS surface split instead of letting one root stylesheet keep absorbing every component family.
 
-The codebase now applies this split to navigation, profile-menu state, notifications, archive, comments, investigation detail, static-page editing, submit shell rendering, public profile overlays, workspace rendering, workspace actions, map shells, editor-shell rendering, shared draft/review helpers, shared rendering helpers, and a shared `public-state-store` boundary for public, workspace, and editor controllers. Future refactors should keep reducing page controllers into composed surface modules backed by explicit shared state helpers.
+The codebase now applies this split to navigation, profile-menu state, notifications, archive, comments, investigation detail, static-page editing, submit shell rendering, public profile overlays, workspace rendering, workspace actions, map shells, editor-shell rendering, shared draft/review helpers, shared rendering helpers, request-signer helpers, and a shared `public-state-store` boundary for public, workspace, and editor controllers. Future refactors should keep reducing remaining heavy controllers into composed feature modules backed by explicit shared state helpers.
 
 The next tightening step is thinning the remaining heavy admin controller logic the same way `app.js` was reduced, then continuing feature-facing work on top of the normalized shell: collaborative editor rails, richer entity relationships, and broader live-unit coverage.
 

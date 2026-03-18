@@ -4,7 +4,7 @@ This file describes the component families that `truecost` should keep convergin
 
 It exists so repeated UI patterns are implemented once, reused, and tested against a stable expectation.
 
-Component behavior that spans a whole UI family should live in `scripts/surfaces`, not be rebuilt inside page controllers.
+Component behavior that spans a whole UI family should live in `scripts/surfaces`, not be rebuilt inside page controllers. Route-owned orchestration belongs in `scripts/features`, and shared state/controllers belong in `scripts/core`.
 
 ## Global shell
 
@@ -116,14 +116,36 @@ Expected behavior:
 
 Do not blank useful content while waiting for background state.
 
+## Extraction boundary
+
+- `scripts/core`
+  - state stores
+  - request-signing and session/viewer controllers
+  - formatting and transport helpers
+- `scripts/features`
+  - route-owned state and lifecycle
+  - runtime/bootstrap
+  - page-level orchestration
+- `scripts/surfaces`
+  - render families and bounded interaction shells
+
+Root entry files should mostly create these layers and mount them.
+
 ## Surface modules
 
 Current extraction targets:
 
 - `scripts/core/page-drafts.js`
+- `scripts/core/request-signer.js`
 - `scripts/core/rendering.js`
 - `scripts/core/navigation-state.js`
 - `scripts/core/notification-state.js`
+- `scripts/core/viewer-controller.js`
+- `scripts/features/site-runtime.js`
+- `scripts/features/archive-page.js`
+- `scripts/features/map-page.js`
+- `scripts/features/markdown-page.js`
+- `scripts/features/review-workflow.js`
 - `scripts/surfaces/navigation.js`
 - `scripts/surfaces/profile-overlays.js`
 - `scripts/surfaces/comments.js`
@@ -142,7 +164,7 @@ The next convergence targets are:
 
 - editor collaboration rail behavior when that feature lands
 - narrower selectors behind the remaining admin controller flows
-- any remaining page-controller-owned notification or moderation detail that still has not moved into shared surfaces
+- any remaining page-controller-owned notification or moderation detail that still has not moved into shared features or surfaces
 
 ## Modals and action sheets
 
