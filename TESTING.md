@@ -19,10 +19,13 @@ Where applicable, cover:
 - reload resilience
 - stale remote merge behavior
 - nested thread integrity
+- visible control effect after local mutation
+- ranking and ordering rules when local mutation changes score or status
 
 ## Current commands
 
 - `node --check <file>`
 - `node --test tests/comment-refresh.test.mjs`
+- `node --test tests/comment-vote-ranking.test.mjs`
 
 Higher-level browser validation should continue in the sibling `nostr-site` smoke tooling until `truecost` has its own expanded harness.

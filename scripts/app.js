@@ -30,6 +30,13 @@ import {
   warmPublicState
 } from "./core/nostr.js";
 import {
+  applyCommentVoteToPublicState,
+  commentAffectsThreadRanking,
+  rankVisibleCommentThreads,
+  resolveCommentVoteSummary,
+  resolveCurrentVoteForComment
+} from "./core/comment-ranking.js";
+import {
   collectRecordBranchIds as collectCommentBranchIds,
   dedupeRecordsById as dedupeCommentList
 } from "./core/comment-utils.js";
@@ -1405,10 +1412,15 @@ async function renderComments(postSlug, publicState) {
       if (!commentId || !Number.isFinite(requestedValue) || ![1, -1].includes(requestedValue)) return;
       const currentValue = resolveCurrentVoteForComment(publicState, commentId, viewerPubkey);
       const nextValue = currentValue === requestedValue ? 0 : requestedValue;
+      const reranksRoots = commentAffectsThreadRanking(state.publicState, commentId);
       try {
         button.disabled = true;
-        applyLocalCommentVote(commentId, viewerPubkey, nextValue);
-        updateRenderedCommentVoteState(panel, commentId, publicState, viewerPubkey);
+        commitLocalPublicState(applyCommentVoteToPublicState(state.publicState, commentId, viewerPubkey, nextValue));
+        if (reranksRoots) {
+          await renderComments(postSlug, state.publicState);
+        } else {
+          updateRenderedCommentVoteState(panel, commentId, state.publicState, viewerPubkey);
+        }
         await publishTaggedJson({
           kind: SITE.nostr.kinds.commentVote,
           secretKeyHex: state.session.secretKeyHex,
@@ -1424,8 +1436,12 @@ async function renderComments(postSlug, publicState) {
           }
         });
       } catch {
-        applyLocalCommentVote(commentId, viewerPubkey, currentValue);
-        updateRenderedCommentVoteState(panel, commentId, publicState, viewerPubkey);
+        commitLocalPublicState(applyCommentVoteToPublicState(state.publicState, commentId, viewerPubkey, currentValue));
+        if (reranksRoots) {
+          await renderComments(postSlug, state.publicState);
+        } else {
+          updateRenderedCommentVoteState(panel, commentId, state.publicState, viewerPubkey);
+        }
       } finally {
         button.disabled = false;
       }
@@ -1571,22 +1587,6 @@ function closeUserProfileModal() {
   document.querySelector("[data-user-modal]")?.remove();
 }
 
-function rankVisibleCommentThreads(nodes, publicState, viewerPubkey = "") {
-  return (Array.isArray(nodes) ? nodes : []).slice().sort((left, right) => {
-    const leftOwn = Boolean(viewerPubkey) && left?.author === viewerPubkey;
-    const rightOwn = Boolean(viewerPubkey) && right?.author === viewerPubkey;
-    if (leftOwn !== rightOwn) return leftOwn ? -1 : 1;
-    const leftVotes = resolveCommentVoteSummary(publicState, left?.id);
-    const rightVotes = resolveCommentVoteSummary(publicState, right?.id);
-    if (leftVotes.score !== rightVotes.score) return rightVotes.score - leftVotes.score;
-    if (leftVotes.upvoteCount !== rightVotes.upvoteCount) return rightVotes.upvoteCount - leftVotes.upvoteCount;
-    const leftTime = Number(left?.created_at || 0);
-    const rightTime = Number(right?.created_at || 0);
-    if (leftTime !== rightTime) return rightTime - leftTime;
-    return String(left?.id || "").localeCompare(String(right?.id || ""));
-  });
-}
-
 function renderCommentCountLabel(count) {
   return `${count} visible comment${count === 1 ? "" : "s"}`;
 }
@@ -1594,13 +1594,6 @@ function renderCommentCountLabel(count) {
 function commentAuthorLabel(comment, publicState) {
   const author = publicState.users.find((user) => user.pubkey === comment.author);
   return author?.displayName || author?.username || "User";
-}
-
-function resolveCommentVoteSummary(publicState, commentId) {
-  const summary = publicState?.commentVotes instanceof Map
-    ? publicState.commentVotes.get(String(commentId || "").trim())
-    : null;
-  return summary || emptyCommentVoteSummary();
 }
 
 function resolveUserKarma(publicState, pubkey) {
@@ -1617,69 +1610,10 @@ function formatKarma(value) {
   return score > 0 ? `+${score}` : String(score);
 }
 
-function resolveCurrentVoteForComment(publicState, commentId, viewerPubkey) {
-  const cleanViewer = String(viewerPubkey || "").trim().toLowerCase();
-  if (!cleanViewer) return 0;
-  const summary = resolveCommentVoteSummary(publicState, commentId);
-  return summary.byPubkey instanceof Map
-    ? Number(summary.byPubkey.get(cleanViewer) || 0) || 0
-    : 0;
-}
-
-function emptyCommentVoteSummary() {
-  return {
-    score: 0,
-    upvoteCount: 0,
-    downvoteCount: 0,
-    byPubkey: new Map()
-  };
-}
-
 function commitLocalPublicState(nextPublicState) {
   state.publicState = rememberPublicState(nextPublicState);
   state.publicStateDigest = createPublicStateDigest(state.publicState);
   return state.publicState;
-}
-
-function applyLocalCommentVote(commentId, viewerPubkey, nextValue) {
-  const cleanId = String(commentId || "").trim();
-  const cleanViewer = String(viewerPubkey || "").trim().toLowerCase();
-  if (!cleanId || !cleanViewer || !state.publicState) return;
-  if (!(state.publicState.commentVotes instanceof Map)) {
-    state.publicState.commentVotes = new Map();
-  }
-  const existing = resolveCommentVoteSummary(state.publicState, cleanId);
-  const byPubkey = new Map(existing.byPubkey instanceof Map ? existing.byPubkey : []);
-  const currentValue = Number(byPubkey.get(cleanViewer) || 0) || 0;
-  const summary = {
-    score: Number(existing.score || 0) || 0,
-    upvoteCount: Number(existing.upvoteCount || 0) || 0,
-    downvoteCount: Number(existing.downvoteCount || 0) || 0,
-    byPubkey
-  };
-
-  if (currentValue > 0) {
-    summary.score -= 1;
-    summary.upvoteCount = Math.max(0, summary.upvoteCount - 1);
-  } else if (currentValue < 0) {
-    summary.score += 1;
-    summary.downvoteCount = Math.max(0, summary.downvoteCount - 1);
-  }
-
-  if (nextValue > 0) {
-    summary.score += 1;
-    summary.upvoteCount += 1;
-    byPubkey.set(cleanViewer, 1);
-  } else if (nextValue < 0) {
-    summary.score -= 1;
-    summary.downvoteCount += 1;
-    byPubkey.set(cleanViewer, -1);
-  } else {
-    byPubkey.delete(cleanViewer);
-  }
-
-  state.publicState.commentVotes.set(cleanId, summary);
-  commitLocalPublicState(applyDerivedCommentState(state.publicState));
 }
 
 function updateRenderedCommentVoteState(scope, commentId, publicState, viewerPubkey = "") {

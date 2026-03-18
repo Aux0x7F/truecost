@@ -63,6 +63,10 @@ The shared JS entry points for these primitives belong in `scripts/core`:
 - Replies stay structurally attached to their parent thread.
 - Replies should not be re-ranked in a way that breaks conversation flow.
 - Optimistic comment updates should resolve in place instead of replacing the whole comment surface.
+- Every comment and reply may accumulate karma.
+- Vote controls must update the visible score immediately.
+- Root comment vote changes may rerank the root list.
+- Reply vote changes must not reorder the thread.
 
 ## Editor Rules
 - The editor is the primary authoring surface, not a form with extras.
