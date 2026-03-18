@@ -6,12 +6,9 @@ import {
   deriveIdentity,
   ensureEventToolsLoaded,
   generateSecretKeyHex,
-  getCachedPublicState,
   loadAdminKeyShare,
   loadAdminKeyShares,
   loadInboxSubmissions,
-  loadPublicState,
-  publicStateNeedsRepair,
   lookupUsers,
   loadSubmissionThread,
   normalizeUsername,
@@ -20,13 +17,12 @@ import {
   publishSiteKeyEvent,
   publishSubmissionChat,
   publishTaggedJson,
-  requestPublicStateRepair,
   resolveSitePubkey,
   sanitizeUrl,
-  startPublicStateRepairPeer,
   shortKey,
   uploadPublicBlob
 } from "./core/nostr.js";
+import { createPublicStateStore } from "./core/public-state-store.js";
 import {
   collectRecordBranchIds as collectWorkspaceCommentBranchIds,
   regroupRecordsByKey as regroupComments
@@ -59,10 +55,12 @@ import {
 } from "./core/text-utils.js";
 import { getStoredSession, rebroadcastAccount, signInWithCredentials } from "./core/session.js";
 
+let workspacePublicStateStore = null;
+
 const workspaceState = {
   session: getStoredSession(),
   viewer: null,
-  publicState: getCachedPublicState(),
+  publicState: null,
   siteKeyShares: [],
   siteKeyShare: null,
   inboxSubmissions: [],
@@ -109,13 +107,21 @@ const workspaceState = {
   keyRequestTimer: 0,
   backgroundSyncTimer: 0,
   backgroundSyncInFlight: false,
-  publicStateRepairPeerStarted: false,
-  publicStateRepairInFlight: false,
-  publicStateRepairRequestedAt: 0,
   inboxLoading: false,
   respondedKeyRequests: new Set(),
   keyRequestCache: null
 };
+
+workspacePublicStateStore = createPublicStateStore({
+  getSessionSecretKey: async () => workspaceState.session?.secretKeyHex || "",
+  page: "workspace",
+  refreshDelayMs: () => 0,
+  shouldRefresh: () => false
+});
+workspaceState.publicState = workspacePublicStateStore.value;
+workspacePublicStateStore.subscribe((snapshot) => {
+  workspaceState.publicState = snapshot.value;
+});
 
 document.addEventListener("DOMContentLoaded", () => {
   if (!document.querySelector("[data-workspace-page]")) return;
@@ -605,7 +611,6 @@ async function refreshWorkspace(force = false) {
     renderWorkspaceLoading("Looking up workspace...");
   }
   await ensureEventToolsLoaded();
-  await ensureWorkspaceRepairPeer();
   await hydrateWorkspaceState(force);
   workspaceState.staticSlugs = await loadStaticSlugs().catch(() => []);
   workspaceState.activeTab = chooseInitialTab(workspaceState.activeTab);
@@ -613,7 +618,6 @@ async function refreshWorkspace(force = false) {
   await maybeResolveUserDeepLink();
   maybeResolveCommentDeepLink();
   workspaceState.keyRequestState = "";
-  void maybeRequestWorkspaceStateRepair(workspaceState.publicState, "workspace-load");
   await maybeAutoRespondToKeyRequests().catch(() => {});
   await maybeEnsureCurrentKeyRequest().catch(() => {
     workspaceState.keyRequestState = "error";
@@ -652,12 +656,13 @@ async function hydrateWorkspaceState(force = false) {
     ? deriveIdentity(workspaceState.session.secretKeyHex)
     : null;
   const cachedShares = loadCachedSiteKeyShares();
-  const [publicState, remoteShares] = await Promise.all([
-    loadPublicState(force),
+  const [publicStateResult, remoteShares] = await Promise.all([
+    workspacePublicStateStore.hydrate({ force, reason: force ? "workspace-force" : "workspace-hydrate" }),
     workspaceState.session
       ? loadAdminKeyShares(workspaceState.session.secretKeyHex).catch(() => [])
       : Promise.resolve([])
   ]);
+  const publicState = publicStateResult.value;
   workspaceState.publicState = publicState;
   const activeSitePubkey = resolveSitePubkey(workspaceState.publicState);
   let mergedShares = mergeSiteKeyShares(remoteShares, cachedShares);
@@ -731,9 +736,7 @@ async function syncWorkspaceState(force = true) {
   let didRefresh = false;
   try {
     await ensureEventToolsLoaded();
-    await ensureWorkspaceRepairPeer();
     await hydrateWorkspaceState(force);
-    void maybeRequestWorkspaceStateRepair(workspaceState.publicState, "workspace-sync");
     workspaceState.keyRequestState = "";
     await maybeAutoRespondToKeyRequests().catch(() => {});
     await maybeEnsureCurrentKeyRequest().catch(() => {
@@ -761,38 +764,6 @@ async function syncWorkspaceState(force = true) {
   } finally {
     workspaceState.backgroundSyncInFlight = false;
     if (!didRefresh) scheduleWorkspaceSync();
-  }
-}
-
-async function ensureWorkspaceRepairPeer() {
-  if (workspaceState.publicStateRepairPeerStarted) return;
-  try {
-    await startPublicStateRepairPeer();
-    workspaceState.publicStateRepairPeerStarted = true;
-  } catch {
-    return;
-  }
-}
-
-async function maybeRequestWorkspaceStateRepair(publicState, reason = "") {
-  if (!workspaceState.session || !publicStateNeedsRepair(publicState) || workspaceState.publicStateRepairInFlight) return;
-  const now = Date.now();
-  if (now - workspaceState.publicStateRepairRequestedAt < 45000) return;
-  workspaceState.publicStateRepairInFlight = true;
-  workspaceState.publicStateRepairRequestedAt = now;
-  try {
-    await requestPublicStateRepair(workspaceState.session.secretKeyHex, {
-      reason,
-      page: "workspace",
-      knownEventCount: Array.isArray(publicState?.rawEvents) ? publicState.rawEvents.length : 0
-    });
-    window.setTimeout(() => {
-      void syncWorkspaceState(true);
-    }, 2800);
-  } catch {
-    return;
-  } finally {
-    workspaceState.publicStateRepairInFlight = false;
   }
 }
 

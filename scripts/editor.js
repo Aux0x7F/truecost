@@ -5,14 +5,10 @@ import {
   connectStructuredUnitOverlay,
   deriveIdentity,
   ensureEventToolsLoaded,
-  getCachedPublicState,
-  loadPublicState,
-  publicStateNeedsRepair,
   publishTaggedJson,
-  requestPublicStateRepair,
-  startPublicStateRepairPeer,
   uploadPublicBlob
 } from "./core/nostr.js";
+import { createPublicStateStore } from "./core/public-state-store.js";
 import {
   dedupeStrings as dedupe,
   escapeAttribute,
@@ -26,13 +22,12 @@ import {
   renderEditorShellView
 } from "./surfaces/editor-shell.js";
 
+let editorPublicStateStore = null;
+
 const editorState = {
   session: getStoredSession(),
   viewer: null,
   publicState: null,
-  publicStateRepairPeerStarted: false,
-  publicStateRepairInFlight: false,
-  publicStateRepairRequestedAt: 0,
   staticSlugs: [],
   currentSlug: "",
   relayVersions: [],
@@ -56,6 +51,17 @@ const editorState = {
   pagehideBound: false
 };
 
+editorPublicStateStore = createPublicStateStore({
+  getSessionSecretKey: async () => editorState.session?.secretKeyHex || "",
+  page: "editor",
+  refreshDelayMs: () => 0,
+  shouldRefresh: () => false
+});
+editorState.publicState = editorPublicStateStore.value;
+editorPublicStateStore.subscribe((snapshot) => {
+  editorState.publicState = snapshot.value;
+});
+
 document.addEventListener("DOMContentLoaded", () => {
   if (!document.querySelector("[data-editor-page]")) return;
   void initEditorPage();
@@ -71,17 +77,15 @@ async function initEditorPage(force = false) {
     return;
   }
   await ensureEventToolsLoaded();
-  await ensureEditorRepairPeer();
   editorState.viewer = deriveIdentity(editorState.session.secretKeyHex);
-  const cachedPublicState = !force ? getCachedPublicState() : null;
+  const cachedPublicState = !force ? editorPublicStateStore.value : null;
   if (cachedPublicState && editorUserIsAdmin(cachedPublicState, editorState.viewer?.pubkey)) {
     editorState.publicState = cachedPublicState;
     renderEditorShell();
   } else {
     renderEditorLoading("Looking up editor...");
   }
-  editorState.publicState = await loadPublicState(force);
-  void maybeRequestEditorStateRepair(editorState.publicState, "editor");
+  editorState.publicState = (await editorPublicStateStore.hydrate({ force, reason: "editor-load" })).value;
   editorState.staticSlugs = await loadStaticSlugs().catch(() => []);
   renderEditorShell();
   if (!editorState.pagehideBound) {
@@ -90,41 +94,12 @@ async function initEditorPage(force = false) {
   }
 }
 
-async function ensureEditorRepairPeer() {
-  if (editorState.publicStateRepairPeerStarted) return;
-  try {
-    await startPublicStateRepairPeer();
-    editorState.publicStateRepairPeerStarted = true;
-  } catch {
-    return;
-  }
-}
-
-async function maybeRequestEditorStateRepair(publicState, reason = "") {
-  if (!editorState.session || !publicStateNeedsRepair(publicState) || editorState.publicStateRepairInFlight) return;
-  const now = Date.now();
-  if (now - editorState.publicStateRepairRequestedAt < 45000) return;
-  editorState.publicStateRepairInFlight = true;
-  editorState.publicStateRepairRequestedAt = now;
-  try {
-    await requestPublicStateRepair(editorState.session.secretKeyHex, {
-      reason,
-      page: "editor",
-      knownEventCount: Array.isArray(publicState?.rawEvents) ? publicState.rawEvents.length : 0
-    });
-    window.setTimeout(() => {
-      void refreshEditorPublicStateAfterRepair();
-    }, 2800);
-  } catch {
-    return;
-  } finally {
-    editorState.publicStateRepairInFlight = false;
-  }
-}
-
 async function refreshEditorPublicStateAfterRepair() {
   if (!editorState.session || !editorState.viewer) return;
-  const nextPublicState = await loadPublicState(true).catch(() => null);
+  const nextPublicState = await editorPublicStateStore
+    .hydrate({ force: true, reason: "editor-repair-refresh" })
+    .then((result) => result.value)
+    .catch(() => null);
   if (!nextPublicState) return;
   const priorPublicState = editorState.publicState;
   const hadLiveEditor = document.querySelector("[data-editor-form]") instanceof HTMLFormElement;

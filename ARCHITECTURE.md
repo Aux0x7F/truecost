@@ -44,6 +44,7 @@ The implementation should converge on three layers:
 - `scripts/core`
   - transport wrappers
   - cache and public-state normalization
+  - subscribed public-state store lifecycle
   - reusable rendering helpers for shared controls
 - `scripts/surfaces`
   - composed surface modules that render and update one UI family at a time
@@ -59,13 +60,13 @@ The implementation should converge on three layers:
 
 Page files should compose shared surfaces and helpers. They should not reintroduce duplicate escaping, duplicate comment threading, or duplicate attached-search behavior.
 
-The current branch has already applied this move to navigation, archive, comments, workspace rendering, workspace actions, map shells, and editor-shell rendering. The next refactors should continue reducing page controllers into composed surface modules backed by explicit shared state helpers.
+The current branch has already applied this move to navigation, archive, comments, workspace rendering, workspace actions, map shells, editor-shell rendering, and a shared `public-state-store` boundary for public, workspace, and editor controllers. The next refactors should continue reducing page controllers into composed surface modules backed by explicit shared state helpers.
 
 The next tightening step for the current branch is to finish that move for the remaining highest-churn surfaces:
 
 - notifications and profile-menu state
 - editor side rails and collaboration controls
-- controller/store extraction so page files orchestrate surfaces instead of owning long-lived state logic
+- remaining action-sheet/modal convergence so repeated item actions stop diverging across pages
 
 ## Trust model
 

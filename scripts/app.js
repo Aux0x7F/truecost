@@ -13,22 +13,20 @@ import {
   hasNostrTools,
   connectStaticPageOverlay,
   connectStructuredUnitOverlay,
-  getCachedPublicState,
   loadAdminKeyShare,
   loadInboxSubmissions,
-  loadPublicState,
   loadSubmissionThread,
   loadUserSubmissions,
   publicStateNeedsRepair,
   publishTaggedJson,
-  rememberPublicState,
-  requestPublicStateRepair,
   sanitizeTrustedHtml,
   sanitizeUrl,
-  startPublicStateRepairPeer,
-  stopPublicStateRepairPeer,
-  warmPublicState
+  stopPublicStateRepairPeer
 } from "./core/nostr.js";
+import {
+  createPublicStateDigest,
+  createPublicStateStore
+} from "./core/public-state-store.js";
 import {
   applyCommentVoteToPublicState,
   commentAffectsThreadRanking,
@@ -117,7 +115,13 @@ const STATIC_PAGE_META = Object.freeze({
   editor: { title: "Editor page", path: "./editor.html" }
 });
 const STATIC_EDITABLE_PAGES = new Set(Object.keys(STATIC_PAGE_META));
-const initialPublicState = getCachedPublicState();
+const publicStateStore = createPublicStateStore({
+  getSessionSecretKey: getRequestSignerSecretKey,
+  page: () => document.body.dataset.page || "site",
+  refreshDelayMs: publicStateRefreshDelayMs,
+  shouldRefresh: shouldRefreshPublicState
+});
+const initialPublicState = publicStateStore.value;
 const initialPosts = loadCachedPosts();
 
 const state = {
@@ -125,12 +129,7 @@ const state = {
   guestSession: getStoredGuestSession(),
   viewer: null,
   publicState: initialPublicState,
-  publicStateDigest: createPublicStateDigest(initialPublicState),
-  publicStateRefreshTimer: 0,
-  publicStateRefreshInFlight: false,
-  publicStateRepairPeerStarted: false,
-  publicStateRepairInFlight: false,
-  publicStateRepairRequestedAt: 0,
+  publicStateDigest: publicStateStore.digest,
   posts: initialPosts,
   postsPromise: null,
   commentReply: null,
@@ -157,6 +156,11 @@ const state = {
   mapViewDigest: "",
   highlightedCommentId: ""
 };
+
+publicStateStore.subscribe((snapshot) => {
+  state.publicState = snapshot.value;
+  state.publicStateDigest = snapshot.digest;
+});
 
 document.addEventListener("DOMContentLoaded", () => {
   initExternalLinks();
@@ -324,15 +328,14 @@ async function bootstrapRelayState() {
     if (!state.guestSession) {
       state.guestSession = await getOrCreateGuestSession().catch(() => null);
     }
-    await ensurePublicStateRepairPeer();
-    state.publicState = await loadPublicState();
-    state.publicStateDigest = createPublicStateDigest(state.publicState);
+    const result = await publicStateStore.hydrate({ force: false, reason: "bootstrap" });
+    state.publicState = result.value;
+    state.publicStateDigest = result.digest;
     primeViewerFromSession(true);
   } catch {
-    state.publicState = state.publicState || getCachedPublicState();
+    state.publicState = state.publicState || publicStateStore.value;
   }
   void publishVisitPulse();
-  void maybeRequestPublicStateRepair(state.publicState, "bootstrap");
   void hydrateNotifications();
   renderNavigation();
   schedulePublicStateRefresh();
@@ -341,9 +344,8 @@ async function bootstrapRelayState() {
 function handlePublicVisibilityChange() {
   if (document.visibilityState === "visible") {
     void syncPublicState(true);
-  } else if (state.publicStateRefreshTimer) {
-    window.clearTimeout(state.publicStateRefreshTimer);
-    state.publicStateRefreshTimer = 0;
+  } else {
+    publicStateStore.clearRefresh();
   }
 }
 
@@ -352,10 +354,7 @@ function handlePublicWindowFocus() {
 }
 
 function handlePublicPageHide() {
-  if (state.publicStateRefreshTimer) {
-    window.clearTimeout(state.publicStateRefreshTimer);
-    state.publicStateRefreshTimer = 0;
-  }
+  publicStateStore.clearRefresh();
   destroyStaticPageOverlay();
   destroyLiveInvestigationOverlay();
   stopPublicStateRepairPeer();
@@ -384,7 +383,7 @@ function startBackgroundPrefetch() {
     fetch("./vendor/leaflet.js", { cache: "force-cache" }).catch(() => null);
     fetch("./vendor/leaflet.css", { cache: "force-cache" }).catch(() => null);
     void refreshPosts().catch(() => []);
-    void warmPublicState().catch(() => null);
+    void publicStateStore.hydrate({ force: false, reason: "prefetch", requestRepair: false }).catch(() => null);
     if (state.session?.secretKeyHex) {
       void loadUserSubmissions(state.session.secretKeyHex).catch(() => []);
       void loadAdminKeyShare(state.session.secretKeyHex).catch(() => null);
@@ -1301,7 +1300,7 @@ async function renderComments(postSlug, publicState) {
             action: "hide"
           }
         });
-        state.publicState = await loadPublicState(true);
+        state.publicState = (await publicStateStore.hydrate({ force: true, reason: "comment-hide" })).value;
         await renderComments(postSlug, state.publicState);
       } catch {
         return;
@@ -1331,7 +1330,10 @@ async function renderComments(postSlug, publicState) {
           }
         });
       } catch {
-        state.publicState = await loadPublicState(true).catch(() => state.publicState);
+        state.publicState = await publicStateStore
+          .hydrate({ force: true, reason: "comment-delete-recover" })
+          .then((result) => result.value)
+          .catch(() => state.publicState);
         await renderComments(postSlug, state.publicState);
       }
     });
@@ -1479,8 +1481,8 @@ function formatKarma(value) {
 }
 
 function commitLocalPublicState(nextPublicState) {
-  state.publicState = rememberPublicState(nextPublicState);
-  state.publicStateDigest = createPublicStateDigest(state.publicState);
+  state.publicState = publicStateStore.remember(nextPublicState);
+  state.publicStateDigest = publicStateStore.digest;
   return state.publicState;
 }
 
@@ -2471,7 +2473,7 @@ async function publishReviewDecision(panel, draft, button) {
         review_action: action
       }
     });
-    state.publicState = await loadPublicState(true);
+    state.publicState = (await publicStateStore.hydrate({ force: true, reason: "review-action" })).value;
     state.notifications = [];
     void hydrateNotifications(true);
     if (statusBox instanceof HTMLElement) {
@@ -2813,11 +2815,10 @@ async function getPublicState() {
     if (!state.guestSession) {
       state.guestSession = await getOrCreateGuestSession().catch(() => null);
     }
-    await ensurePublicStateRepairPeer();
-    state.publicState = await loadPublicState();
-    state.publicStateDigest = createPublicStateDigest(state.publicState);
+    const result = await publicStateStore.hydrate({ force: false, reason: "get-public-state" });
+    state.publicState = result.value;
+    state.publicStateDigest = result.digest;
     primeViewerFromSession(true);
-    void maybeRequestPublicStateRepair(state.publicState, "get-public-state");
     if (state.session) {
       void hydrateNotifications();
     }
@@ -2851,72 +2852,23 @@ function shouldRefreshPublicState() {
 }
 
 function schedulePublicStateRefresh(delay = publicStateRefreshDelayMs()) {
-  if (state.publicStateRefreshTimer) {
-    window.clearTimeout(state.publicStateRefreshTimer);
-    state.publicStateRefreshTimer = 0;
-  }
-  if (!shouldRefreshPublicState()) return;
-  state.publicStateRefreshTimer = window.setTimeout(() => {
-    void syncPublicState(true);
-  }, delay);
+  publicStateStore.schedule(delay);
 }
 
 async function syncPublicState(force = true) {
-  if (state.publicStateRefreshInFlight) return;
-  if (!shouldRefreshPublicState()) return;
-  state.publicStateRefreshInFlight = true;
   try {
     await ensureEventToolsLoaded();
     if (!state.guestSession) {
       state.guestSession = await getOrCreateGuestSession().catch(() => null);
     }
-    const nextState = await loadPublicState(force);
-    const nextDigest = createPublicStateDigest(nextState);
-    void maybeRequestPublicStateRepair(nextState, "background-sync");
-    if (nextDigest !== state.publicStateDigest) {
-      state.publicState = nextState;
-      state.publicStateDigest = nextDigest;
+    const result = await publicStateStore.sync({ force, reason: "background-sync" });
+    if (result.changed) {
+      state.publicState = result.value;
+      state.publicStateDigest = result.digest;
       await applyPublicStateRefresh();
     }
   } catch {
     return;
-  } finally {
-    state.publicStateRefreshInFlight = false;
-    schedulePublicStateRefresh();
-  }
-}
-
-async function ensurePublicStateRepairPeer() {
-  if (state.publicStateRepairPeerStarted || !hasNostrTools()) return;
-  try {
-    await startPublicStateRepairPeer();
-    state.publicStateRepairPeerStarted = true;
-  } catch {
-    return;
-  }
-}
-
-async function maybeRequestPublicStateRepair(publicState, reason = "") {
-  if (!publicStateNeedsRepair(publicState) || state.publicStateRepairInFlight) return;
-  const now = Date.now();
-  if (now - state.publicStateRepairRequestedAt < 45000) return;
-  const secretKeyHex = await getRequestSignerSecretKey().catch(() => "");
-  if (!secretKeyHex) return;
-  state.publicStateRepairInFlight = true;
-  state.publicStateRepairRequestedAt = now;
-  try {
-    await requestPublicStateRepair(secretKeyHex, {
-      reason,
-      page: document.body.dataset.page || "site",
-      knownEventCount: Array.isArray(publicState?.rawEvents) ? publicState.rawEvents.length : 0
-    });
-    window.setTimeout(() => {
-      void syncPublicState(true);
-    }, 2800);
-  } catch {
-    return;
-  } finally {
-    state.publicStateRepairInFlight = false;
   }
 }
 
@@ -2971,19 +2923,6 @@ async function refreshVisibleCommentThread() {
   const slug = cleanSlug(params.get("slug") || "");
   if (!slug || !state.publicState) return;
   await renderComments(slug, state.publicState);
-}
-
-function createPublicStateDigest(publicState) {
-  const digest = {
-    admins: [...(publicState?.admins || [])].sort(),
-    users: (publicState?.users || []).map((user) => `${user.pubkey}:${user.isAdmin ? 1 : 0}:${user.commentCount || 0}:${user.submissionCount || 0}`),
-    entities: (publicState?.approvedEntities || []).map((entity) => `${entity.slug}:${entity.status || ""}:${entity.updated_at || entity.created_at || ""}`),
-    drafts: (publicState?.drafts || []).map((draft) => `${draft.id || draft.slug}:${draft.status || ""}:${draft.created_at || ""}`),
-    comments: (publicState?.allComments || []).map((comment) => `${comment.id}:${comment.visibility || "visible"}:${comment.created_at || ""}`),
-    keyRequests: (publicState?.pendingAdminKeyRequests || []).map((request) => `${request.id}:${request.requester_pubkey}:${request.site_pubkey}`),
-    activeSite: publicState?.siteInfo?.activePubkey || ""
-  };
-  return JSON.stringify(digest);
 }
 
 function createMapDataDigest(publicState) {
@@ -3458,7 +3397,7 @@ async function saveStaticEditSnapshot() {
       ],
       content: payload
     });
-    state.publicState = await loadPublicState(true);
+    state.publicState = (await publicStateStore.hydrate({ force: true, reason: "page-snapshot-review" })).value;
     state.notifications = [];
     void hydrateNotifications(true);
     editState.status = `Snapshot saved locally at ${formatLocalTimestamp(savedAt)} and sent to review.`;
