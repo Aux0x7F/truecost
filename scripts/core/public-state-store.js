@@ -7,10 +7,11 @@ import {
   requestPublicStateRepair,
   startPublicStateRepairPeer
 } from "./nostr.js";
+import { normalizeAdminPubkeys } from "./public-state.js";
 
 export function createPublicStateDigest(publicState) {
   const digest = {
-    admins: [...(publicState?.admins || [])].sort(),
+    admins: normalizeAdminPubkeys(publicState).sort(),
     users: (publicState?.users || []).map(
       (user) => `${user.pubkey}:${user.isAdmin ? 1 : 0}:${user.commentCount || 0}:${user.submissionCount || 0}`
     ),

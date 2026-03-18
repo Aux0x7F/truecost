@@ -318,15 +318,15 @@ export function renderSubmitSuggestionMarkup(items, emptyMarkup, deps = {}) {
     .map((item) => {
       if (kind === "location") {
         return `
-          <button class="picker-chip" type="button" data-submit-location-pick="${escapeAttribute(item)}">
+          <button class="workspace-search__option" type="button" data-submit-location-pick="${escapeAttribute(item)}">
             <strong>${escapeHtml(item)}</strong>
           </button>
         `;
       }
       return `
-        <button class="picker-chip" type="button" data-submit-${kind}-pick="${escapeAttribute(item.slug)}">
+        <button class="workspace-search__option" type="button" data-submit-${kind}-pick="${escapeAttribute(item.slug)}">
           <strong>${escapeHtml(item.name)}</strong>
-          <span>${escapeHtml(item.location)}</span>
+          <span class="workspace-search__option-meta">${escapeHtml(item.location)}</span>
         </button>
       `;
     })

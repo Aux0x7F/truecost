@@ -27,6 +27,29 @@ export function isUsablePublicState(publicState) {
   );
 }
 
+export function normalizeAdminPubkeys(publicState) {
+  const values = Array.isArray(publicState?.admins) ? publicState.admins : [];
+  return dedupeValues(
+    values
+      .map((value) => {
+        if (typeof value === "string") return value;
+        if (value && typeof value === "object") return value.pubkey;
+        return "";
+      })
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+export function publicStateHasAdminPubkey(publicState, pubkey = "") {
+  const cleanPubkey = String(pubkey || "").trim().toLowerCase();
+  if (!cleanPubkey) return false;
+  const rootAdminPubkey = String(publicState?.rootAdminPubkey || SITE.nostr.rootAdminPubkey || "")
+    .trim()
+    .toLowerCase();
+  return normalizeAdminPubkeys(publicState).includes(cleanPubkey) || (rootAdminPubkey && rootAdminPubkey === cleanPubkey);
+}
+
 export function normalizePublicState(publicState, previousPublicState) {
   const next = publicState && typeof publicState === "object" ? publicState : null;
   const previous = previousPublicState && typeof previousPublicState === "object" ? previousPublicState : null;
@@ -138,7 +161,9 @@ function mergePublicState(nextState, previousState) {
   merged.metrics = mergeObjects(previousState.metrics, nextState.metrics);
   merged.siteInfo = mergeObjects(previousState.siteInfo, nextState.siteInfo);
   merged.snapshotInfo = mergeObjects(previousState.snapshotInfo, nextState.snapshotInfo);
-  merged.admins = dedupeValues([...(previousState.admins || []), ...(nextState.admins || [])]);
+  merged.admins = normalizeAdminPubkeys({
+    admins: [...(previousState.admins || []), ...(nextState.admins || [])]
+  });
   merged.rawEvents = mergeRecordsByKey(previousState.rawEvents, nextState.rawEvents, (item) => item?.id, compareRecordsByTime);
   merged.users = mergeRecordsByKey(previousState.users, nextState.users, (item) => item?.pubkey, compareRecordsByTime);
   merged.entities = mergeRecordsByKey(previousState.entities, nextState.entities, (item) => item?.slug, compareRecordsByTime);

@@ -967,6 +967,35 @@ h3 {
   z-index: 36;
 }
 
+.workspace-search__option {
+  display: grid;
+  gap: 0.18rem;
+  width: 100%;
+  padding: 0.8rem 0.95rem;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-search__option strong {
+  font-size: 0.98rem;
+}
+
+.workspace-search__option-meta {
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+}
+
+.workspace-search__option:hover,
+.workspace-search__option:focus-visible,
+.workspace-search__option.is-highlighted {
+  background: rgba(156, 29, 24, 0.08);
+  outline: none;
+}
+
 .workspace-search__clear,
 .workspace-search__spinner {
   position: absolute;
@@ -2106,10 +2135,15 @@ h3 {
 
 .submit-search-field .workspace-search__results {
   top: calc(100% + 0.35rem);
+  padding: 0.35rem;
 }
 
 .submit-search-field .workspace-search__input {
   font-weight: 400;
+}
+
+.submit-search-field .workspace-search__option {
+  border-radius: 14px;
 }
 
 .submit-form-note {

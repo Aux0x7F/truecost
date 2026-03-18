@@ -9,6 +9,8 @@ import {
   uploadPublicBlob
 } from "./core/nostr.js";
 import { createPublicStateStore } from "./core/public-state-store.js";
+import { replaceEditorShellMarkup } from "./core/editor-mount.js";
+import { normalizeAdminPubkeys, publicStateHasAdminPubkey } from "./core/public-state.js";
 import {
   dedupeStrings as dedupe,
   escapeAttribute,
@@ -79,7 +81,10 @@ async function initEditorPage(force = false) {
   await ensureEventToolsLoaded();
   editorState.viewer = deriveIdentity(editorState.session.secretKeyHex);
   const cachedPublicState = !force ? editorPublicStateStore.value : null;
-  if (cachedPublicState && editorUserIsAdmin(cachedPublicState, editorState.viewer?.pubkey)) {
+  const renderedFromCachedAdminState = Boolean(
+    cachedPublicState && editorUserIsAdmin(cachedPublicState, editorState.viewer?.pubkey)
+  );
+  if (renderedFromCachedAdminState) {
     editorState.publicState = cachedPublicState;
     renderEditorShell();
   } else {
@@ -87,7 +92,16 @@ async function initEditorPage(force = false) {
   }
   editorState.publicState = (await editorPublicStateStore.hydrate({ force, reason: "editor-load" })).value;
   editorState.staticSlugs = await loadStaticSlugs().catch(() => []);
-  renderEditorShell();
+  const nextIsAdmin = editorUserIsAdmin(editorState.publicState, editorState.viewer?.pubkey);
+  const hasLiveEditor = document.querySelector("[data-editor-form]") instanceof HTMLFormElement;
+  if (!renderedFromCachedAdminState || !nextIsAdmin || !hasLiveEditor) {
+    renderEditorShell();
+  } else {
+    updateMetaPanel();
+    updateHistoryPanels();
+    hydrateEntityResults();
+    void ensureLiveInvestigationOverlay();
+  }
   if (!editorState.pagehideBound) {
     window.addEventListener("pagehide", destroyLiveInvestigationOverlay);
     editorState.pagehideBound = true;
@@ -121,7 +135,7 @@ function renderEditorLoading(message) {
   const shell = document.querySelector("[data-editor-shell]");
   const lede = document.querySelector("[data-editor-lede]");
   if (lede) lede.textContent = message;
-  if (shell) shell.innerHTML = renderEditorLoadingMarkup(message, { renderLoadingState });
+  if (shell) replaceEditorShellMarkup(shell, editorState, renderEditorLoadingMarkup(message, { renderLoadingState }));
 }
 
 function renderEditorShell() {
@@ -140,7 +154,7 @@ function renderEditorShell() {
   });
   title.textContent = view.title;
   lede.textContent = view.lede;
-  shell.innerHTML = view.shellMarkup;
+  replaceEditorShellMarkup(shell, editorState, view.shellMarkup);
 
   if (!editorState.session || !currentUserIsAdmin()) return;
 
@@ -160,11 +174,6 @@ function bindEditorShell() {
   if (!ToastEditor) {
     setEditorStatus("The editor library could not be loaded.", "error");
     return;
-  }
-
-  if (editorState.editor?.destroy) {
-    editorState.editor.destroy();
-    editorState.editor = null;
   }
 
   editorState.editor = new ToastEditor({
@@ -936,15 +945,11 @@ function currentUserIsAdmin() {
 }
 
 function editorUserIsAdmin(publicState, pubkey = "") {
-  const cleanPubkey = String(pubkey || "").trim().toLowerCase();
-  if (!cleanPubkey) return false;
-  const admins = new Set(Array.isArray(publicState?.admins) ? publicState.admins : []);
-  const rootAdminPubkey = String(publicState?.rootAdminPubkey || SITE.nostr.rootAdminPubkey || "").trim().toLowerCase();
-  return admins.has(cleanPubkey) || (rootAdminPubkey && rootAdminPubkey === cleanPubkey);
+  return publicStateHasAdminPubkey(publicState, pubkey);
 }
 
 function trustedAdminPubkeys() {
-  const admins = new Set(Array.isArray(editorState.publicState?.admins) ? editorState.publicState.admins : []);
+  const admins = new Set(normalizeAdminPubkeys(editorState.publicState));
   const rootAdminPubkey = String(editorState.publicState?.rootAdminPubkey || SITE.nostr.rootAdminPubkey || "").trim();
   if (rootAdminPubkey) admins.add(rootAdminPubkey);
   return [...admins];
