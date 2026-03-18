@@ -2790,6 +2790,9 @@ h3 {
 .comment-card__author-button {
   color: var(--ink);
   font-weight: 700;
+  display: inline-flex;
+  justify-self: start;
+  text-align: left;
 }
 
 .comment-card__author-button:hover,
@@ -2859,15 +2862,14 @@ h3 {
 
 .comment-card__shell {
   display: grid;
-  grid-template-columns: 2.75rem minmax(0, 1fr);
-  column-gap: 0.7rem;
-  row-gap: 0.55rem;
-  padding: 0.9rem 0.95rem;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.9rem;
+  padding: 1rem;
 }
 
 .comment-card__main {
   display: grid;
-  gap: 0.6rem;
+  gap: 0.75rem;
 }
 
 .comment-card__body {
