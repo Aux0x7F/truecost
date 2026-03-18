@@ -33,6 +33,8 @@ See [COMPONENTS.md](./COMPONENTS.md) for the expected reusable component familie
 - `picker-results--dropdown`: attached pseudo-dropdown, always anchored to its field
 - `modal-card`: focused tasks, not long-form page replacement
 
+Typography assets are self-hosted. Public pages should not require client font requests to Google or other third-party font CDNs.
+
 Do not create a new card/button/search pattern when one of these can be extended.
 
 The shared JS entry points for these primitives belong in `scripts/core`:

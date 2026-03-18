@@ -19,6 +19,7 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - Workspace filter/search rails and picker suggestion markup now live in dedicated surface modules instead of staying embedded in admin controllers.
 - The framework/template repo now follows the same direction with matching extracted surface families instead of keeping that logic only in one large template controller.
 - `styles.css` is now a small manifest that imports ordered partials in `styles/`, so the stylesheet boundary matches the broader surface-family split instead of living as one multi-thousand-line file.
+- Site fonts are now self-hosted, so public pages no longer need client requests to Google for typography.
 
 ## Near Term
 
