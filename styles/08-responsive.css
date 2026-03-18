@@ -9,7 +9,17 @@
   .card-grid,
   .metric-grid,
   .support-grid,
-  .site-footer__grid {
+  .site-footer__grid,
+  .support-list--columns,
+  .hero-summary,
+  .hero-summary--duo,
+  .workspace-filter-bar,
+  .editor-meta-grid,
+  .tip-form__split,
+  .workspace-grid,
+  .investigation-card--list,
+  .comment-composer,
+  .archive-filters__form {
     grid-template-columns: 1fr;
   }
 
@@ -17,32 +27,11 @@
     grid-column: auto;
   }
 
-  .support-list--columns {
-    grid-template-columns: 1fr;
-  }
-
-  .hero-summary {
-    grid-template-columns: 1fr;
-  }
-
-  .hero-summary--duo {
-    grid-template-columns: 1fr;
-  }
-
-  .workspace-filter-bar {
-    grid-template-columns: 1fr;
-  }
-
   .article-shell .article-image--left,
   .article-shell .article-image--right {
     float: none;
     max-width: 100%;
     margin: 1.1rem 0;
-  }
-
-  .archive-rail {
-    position: static;
-    top: auto;
   }
 
   .archive-layout {
@@ -106,10 +95,6 @@
     text-align: left;
   }
 
-  .editor-meta-grid {
-    grid-template-columns: 1fr;
-  }
-
   .nav-link,
   .nav-group__toggle {
     justify-content: flex-start;
@@ -158,10 +143,6 @@
     border-top: 1px solid var(--line);
   }
 
-  .tip-form__split {
-    grid-template-columns: 1fr;
-  }
-
   .article-aside {
     position: static;
     max-height: none;
@@ -169,39 +150,23 @@
     padding-right: 0;
   }
 
-  .workspace-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .workspace-rail-panel {
+  .archive-rail,
+  .workspace-rail-panel,
+  .workspace-rail-stack {
     position: static;
     top: auto;
   }
 
   .workspace-rail-stack {
-    position: static;
-    top: auto;
     max-height: none;
     overflow: visible;
     padding-right: 0;
-  }
-
-  .workspace-filter-bar {
-    grid-template-columns: 1fr;
-  }
-
-  .investigation-card--list {
-    grid-template-columns: 1fr;
   }
 
   .investigation-card__rail {
     justify-content: flex-start;
     min-width: 0;
     padding-top: 0;
-  }
-
-  .comment-composer {
-    grid-template-columns: 1fr;
   }
 
   .comment-card__shell {
@@ -233,10 +198,6 @@
     padding-top: 2.8rem;
   }
 
-  .archive-filters__form {
-    grid-template-columns: 1fr;
-  }
-
   .hero__actions,
   .surface-panel .button-row,
   .quote-card .button-row {
@@ -250,4 +211,3 @@
     width: 100%;
   }
 }
-

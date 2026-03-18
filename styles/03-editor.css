@@ -1,10 +1,5 @@
 /* Editor Surfaces */
 
-.editor-form {
-  display: grid;
-  gap: 1rem;
-}
-
 .editor-studio {
   display: grid;
   gap: 1.4rem;
@@ -56,11 +51,6 @@
   color: #6b1b16;
 }
 
-.review-stack {
-  display: grid;
-  gap: 1.2rem;
-}
-
 .review-card {
   gap: 0.65rem;
   padding: 1.15rem 1.2rem;
@@ -78,25 +68,12 @@
   color: var(--ink);
 }
 
-[data-investigation-review] {
-  display: grid;
-  gap: 0.9rem;
-}
-
-.editor-field {
-  display: grid;
-  gap: 0.4rem;
-}
-
 .editor-title-input,
 .editor-summary-input,
 .editor-meta-grid input {
   width: 100%;
-  border: 1px solid var(--line);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.82);
-  color: var(--ink);
-  font: inherit;
 }
 
 .editor-title-input {
@@ -115,13 +92,6 @@
   line-height: 1.65;
 }
 
-.editor-title-input::placeholder,
-.editor-summary-input::placeholder,
-.editor-meta-grid input::placeholder,
-.editor-markdown-field textarea::placeholder {
-  color: rgba(74, 71, 66, 0.72);
-}
-
 .editor-meta-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -131,14 +101,6 @@
 .editor-field--compact input {
   padding: 0.95rem 1rem;
   min-height: 3.4rem;
-}
-
-.editor-field--wide {
-  grid-column: 1 / -1;
-}
-
-.editor-picker {
-  position: relative;
 }
 
 .editor-markdown-field {
@@ -192,46 +154,20 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: auto;
-  min-width: 0;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.editor-markdown-field .toastui-editor-defaultUI-toolbar button:hover,
-.editor-markdown-field .toastui-editor-defaultUI-toolbar button:focus-visible {
-  background: transparent;
-  border: 0;
-  border-color: transparent;
-  box-shadow: none;
-}
-
-.editor-markdown-field .toastui-editor-defaultUI-toolbar button:not(:disabled):hover {
-  border: 0;
-}
-
-.editor-markdown-field .toastui-editor-toolbar-icons,
-.editor-markdown-field .toastui-editor-toolbar-icons.last {
-  border-radius: 0;
-  border: 0;
-  background-color: transparent;
-  background-image: none !important;
-  color: var(--ink);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   width: auto !important;
   min-width: 0;
   height: 100% !important;
+  margin: 0;
   padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none;
+  color: var(--ink);
   text-indent: 0 !important;
   white-space: nowrap;
   overflow: visible;
-  box-shadow: none;
   font-family: "IBM Plex Sans", sans-serif;
   font-size: 0.98rem !important;
   font-weight: 600;
@@ -239,65 +175,40 @@
   line-height: 1;
 }
 
-.editor-markdown-field .toastui-editor-toolbar-icons::before,
-.editor-markdown-field .toastui-editor-toolbar-icons.last::before {
+.editor-markdown-field .toastui-editor-defaultUI-toolbar button::before {
   content: none;
-  font-size: 0.74rem;
-  font-weight: 600;
-  letter-spacing: 0.01em;
 }
 
-.editor-markdown-field .toastui-editor-toolbar-icons:hover,
-.editor-markdown-field .toastui-editor-toolbar-icons.last:hover {
-  background-color: transparent;
-  border-color: transparent;
+.editor-markdown-field .toastui-editor-defaultUI-toolbar button:is(:hover, :focus-visible) {
   color: rgba(18, 18, 18, 0.72);
   text-decoration: none;
+  outline: none;
 }
 
-.editor-markdown-field .toastui-editor-toolbar-icons.active,
-.editor-markdown-field .toastui-editor-toolbar-icons.last.active {
+.editor-markdown-field .toastui-editor-defaultUI-toolbar button.active {
   color: var(--accent-deep);
 }
 
-.editor-markdown-field .toastui-editor-toolbar-divider {
-  display: none;
+.editor-markdown-field :is(.toastui-editor-toolbar-divider, .toastui-editor-tooltip, .toastui-editor-md-tab-container, .toastui-editor-tabs, .toastui-editor-mode-switch) {
+  display: none !important;
 }
 
-.editor-markdown-field .toastui-editor-tooltip {
-  display: none !important;
+.editor-markdown-field :is(.toastui-editor-main, .toastui-editor-main-container, .toastui-editor-md-container, .toastui-editor-ww-container, .toastui-editor-ww-container .ProseMirror, .toastui-editor-md-container .toastui-editor-md-preview) {
+  background: #fff;
 }
 
 .editor-markdown-field .toastui-editor-main {
   min-height: 34rem;
   border: 0;
-  background: #fff;
-}
-
-.editor-markdown-field .toastui-editor-main-container,
-.editor-markdown-field .toastui-editor-md-container,
-.editor-markdown-field .toastui-editor-ww-container {
-  background: #fff;
-}
-
-.editor-markdown-field .toastui-editor-md-tab-container,
-.editor-markdown-field .toastui-editor-tabs {
-  display: none !important;
-}
-
-.editor-markdown-field .toastui-editor-ww-container .ProseMirror,
-.editor-markdown-field .toastui-editor-md-container .toastui-editor-md-preview {
-  padding: 1.6rem 1.8rem 2.2rem;
-  min-height: 34rem;
-  background: #fff;
-}
-
-.editor-markdown-field .toastui-editor-mode-switch {
-  display: none;
 }
 
 .editor-markdown-field .toastui-editor-ww-container {
   border-top: 0 !important;
+}
+
+.editor-markdown-field :is(.toastui-editor-ww-container .ProseMirror, .toastui-editor-md-container .toastui-editor-md-preview) {
+  padding: 1.6rem 1.8rem 2.2rem;
+  min-height: 34rem;
 }
 
 .editor-markdown-field .toastui-editor-ww-container .ProseMirror {
@@ -324,12 +235,6 @@
   background: rgba(255, 255, 255, 0.98);
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.96rem;
-}
-
-.editor-markdown-field .toastui-editor-contents h1,
-.editor-markdown-field .toastui-editor-contents h2,
-.editor-markdown-field .toastui-editor-contents h3 {
-  color: var(--ink);
 }
 
 .editor-markdown-field .toastui-editor-contents h1,
@@ -377,7 +282,8 @@
   border-color: rgba(18, 18, 18, 0.08);
 }
 
-.editor-entity-form {
+.editor-entity-form,
+.editor-image-form {
   margin-top: 1rem;
 }
 
@@ -388,18 +294,10 @@
   width: 100%;
   padding: 0.95rem 1rem;
   border-radius: 16px;
-  border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.9);
-  color: var(--ink);
-  font: inherit;
 }
 
 .editor-entity-form textarea {
   min-height: 7rem;
   resize: vertical;
 }
-
-.editor-image-form {
-  margin-top: 1rem;
-}
-

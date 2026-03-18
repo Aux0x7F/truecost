@@ -137,11 +137,6 @@
   gap: 1rem;
 }
 
-.hero__evidence {
-  display: grid;
-  gap: 0.9rem;
-}
-
 .hero__evidence li {
   list-style: none;
   margin: 0;

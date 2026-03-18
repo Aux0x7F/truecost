@@ -51,16 +51,6 @@
   padding-right: 0.1rem;
 }
 
-.workspace-rail-panel {
-  display: grid;
-  gap: 0.9rem;
-}
-
-.workspace-rail-panel .workspace-search,
-.workspace-rail-panel .workspace-select {
-  width: 100%;
-}
-
 .workspace-rail-copy {
   display: grid;
   gap: 0.35rem;
@@ -116,10 +106,6 @@
   text-align: left;
 }
 
-.workspace-user-link strong {
-  color: var(--ink);
-}
-
 .workspace-user__avatar {
   display: inline-flex;
   align-items: center;
@@ -160,8 +146,6 @@
 }
 
 .comment-note-field {
-  display: grid;
-  gap: 0.4rem;
   margin-top: 0.6rem;
   font-weight: 600;
 }
@@ -196,22 +180,12 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.9rem;
-  width: 100%;
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
 }
 
 .picker-chip {
   padding: 0.7rem 0.9rem;
-  border-radius: 14px;
   border: 1px solid rgba(18, 18, 18, 0.08);
   background: rgba(255, 255, 255, 0.78);
-}
-
-.picker-chip strong,
-.picker-create strong {
-  font-size: 0.95rem;
 }
 
 .picker-chip.is-highlighted {
@@ -249,7 +223,6 @@
 
 .picker-create {
   padding: 0.8rem 0.95rem;
-  border-radius: 14px;
   border: 1px dashed rgba(156, 29, 24, 0.3);
   background: rgba(156, 29, 24, 0.06);
 }
@@ -257,11 +230,6 @@
 .picker-create span {
   color: var(--accent-deep);
   font-size: 0.84rem;
-}
-
-.picker-chip span {
-  color: var(--ink-soft);
-  font-size: 0.88rem;
 }
 
 .picker-hint {

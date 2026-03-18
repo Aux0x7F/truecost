@@ -19,12 +19,14 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - Workspace filter/search rails and picker suggestion markup now live in dedicated surface modules instead of staying embedded in admin controllers.
 - The framework/template repo now follows the same direction with matching extracted surface families instead of keeping that logic only in one large template controller.
 - `styles.css` is now a small manifest that imports ordered partials in `styles/`, so the stylesheet boundary matches the broader surface-family split instead of living as one multi-thousand-line file.
+- The first real stylesheet reduction pass is in: shared foundation selector families now absorb repeated control, dropdown, editor, comment, workspace, and responsive rules, cutting the total CSS partial set by roughly 300 lines instead of only repartitioning it.
 - Site fonts are now self-hosted, so public pages no longer need client requests to Google for typography.
 
 ## Near Term
 
 - Expand the normalized collaborative shell into editor presence, quote-linked discussion, and broader live-unit coverage for entities and the archive.
-- Keep trimming duplicated rules inside the new stylesheet partials so the structural split is followed by real reduction in total CSS bulk, not only a smaller manifest file.
+- Keep tightening the remaining large CSS families, especially `02-content.css` and the still-heavy shared foundation layer, so reduction continues after the first broad pass.
+- Start the same direct reduction work on the still-heavy JS controllers, beginning with `app.js`, so normalization continues in code size and responsibility split instead of stopping at CSS.
 - Extend the live collaborative layer from static pages and investigation detail/editor flows into the archive and entity records without regressing the static-first baseline.
 - Add clearer history and conflict handling for live collaborative units before each bakedown cycle, so operators can see what will ship and why.
 - Expand end-to-end browser validation around submissions, moderation, publishing, comment handling, and browser-compat fallbacks before each release.

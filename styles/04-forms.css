@@ -1,29 +1,14 @@
 /* Forms And Shared Controls */
 
-.map-shell,
-.admin-grid {
-  display: grid;
-  gap: 1.2rem;
-}
-
 .map-shell {
   grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
   align-items: start;
-}
-
-.tip-form {
-  display: grid;
-  gap: 1rem;
 }
 
 .tip-form label {
   display: grid;
   gap: 0.45rem;
   font-weight: 600;
-}
-
-.tip-form span {
-  font-size: 0.95rem;
 }
 
 .tip-form input,
@@ -63,13 +48,6 @@
   gap: 1rem;
 }
 
-.submit-form-field {
-  display: grid;
-  gap: 0.45rem;
-  min-width: 0;
-  align-content: start;
-}
-
 .submit-form-field__label {
   font-size: 0.95rem;
   font-weight: 600;
@@ -90,10 +68,6 @@
   font-weight: 400;
 }
 
-.submit-search-field .workspace-search__option {
-  border-radius: 14px;
-}
-
 .submit-form-note,
 .status-box {
   padding: var(--control-padding);
@@ -103,10 +77,6 @@
 .submit-form-note {
   background: var(--control-panel-bg);
   color: var(--ink-soft);
-}
-
-:where(.record-item, .review-card, .roster-item) {
-  display: grid;
 }
 
 .checkbox {
@@ -170,7 +140,7 @@
 
 .checkbox__input:checked + .checkbox__indicator {
   border-color: rgba(156, 29, 24, 0.9);
-  background: linear-gradient(180deg, rgba(156, 29, 24, 0.95), rgba(111, 13, 9, 0.95));
+  background: var(--accent-gradient);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
     0 10px 20px rgba(156, 29, 24, 0.2);

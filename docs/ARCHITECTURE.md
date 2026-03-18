@@ -71,6 +71,7 @@ The CSS now follows the same split:
   - import manifest only
 - `styles/`
   - ordered partials by shared foundation, surface family, and responsive override layer
+  - shared control, dropdown, comment, workspace, editor, and responsive selector families should collapse into the early partials instead of being recopied per surface
 
 That keeps the CSS boundary closer to the JS surface split instead of letting one root stylesheet keep absorbing every component family.
 

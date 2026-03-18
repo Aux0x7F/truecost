@@ -12,6 +12,7 @@
   --line-strong: rgba(255, 255, 255, 0.12);
   --accent: #9c1d18;
   --accent-deep: #6f0d09;
+  --accent-gradient: linear-gradient(135deg, rgba(156, 29, 24, 0.95), rgba(111, 13, 9, 0.95));
   --shadow: 0 24px 60px rgba(18, 18, 18, 0.12);
   --radius: 22px;
   --radius-small: 14px;
@@ -120,6 +121,95 @@ h3 {
   font-size: 0.92rem;
 }
 
+:where(.story-list, .article-stack, .editor-form, .tip-form, .user-profile-modal) {
+  display: grid;
+  gap: 1rem;
+}
+
+:where(.support-stack, .review-stack, .map-shell, .admin-grid) {
+  display: grid;
+  gap: 1.2rem;
+}
+
+:where(.archive-map-card, .article-aside-panel, [data-investigation-review], .workspace-rail-panel, .hero__evidence) {
+  display: grid;
+  gap: 0.9rem;
+}
+
+:where(.brand__text, .comment-card__meta div) {
+  display: grid;
+  gap: 0.2rem;
+}
+
+:where(.submit-form-field, .editor-field, .comment-note-field) {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+:where(.page-layout > :only-child, .editor-field--wide) {
+  grid-column: 1 / -1;
+}
+
+:where(.workspace-user-link strong, .comment-card__meta strong, .user-profile-modal__copy strong, .comment-reply-form__head strong, .record-item strong, .profile-menu__notice-item :is(strong, span, .profile-menu__notice-label), .profile-menu__notification-toggle-copy strong) {
+  color: var(--ink);
+}
+
+:where(.muted-text, .record-item small, .site-footer__grid :is(p, a)) {
+  color: var(--ink-soft);
+}
+
+:where(.comment-composer__avatar, .comment-card__avatar, .workspace-user__avatar, .user-profile-modal__avatar-wrap .user-profile-modal__avatar) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+:where(.comment-composer__avatar, .user-profile-modal__avatar-wrap .user-profile-modal__avatar) {
+  background: var(--accent-gradient);
+  color: #fff8f5;
+  font-weight: 700;
+}
+
+:where(.comment-composer__avatar--image, .comment-card__avatar--image, .user-profile-modal__avatar-wrap .user-profile-modal__avatar--image) {
+  padding: 0;
+}
+
+:where(.nav-group__panel a, .profile-menu__panel a, .profile-menu__panel button, .workspace-search__option, .archive-status-menu__option, .picker-chip, .picker-create) {
+  width: 100%;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+:where(.nav-group__panel a, .profile-menu__panel a, .profile-menu__panel button, .profile-menu__notice-item, .profile-menu__notification-toggle, .workspace-search__option, .archive-status-menu__option, .picker-chip, .picker-create) {
+  border-radius: 14px;
+}
+
+:where(.profile-menu__notification-toggle-copy span, .picker-chip span) {
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+}
+
+:where(.tip-form span, .picker-chip strong, .picker-create strong, .static-edit-bar__copy strong) {
+  font-size: 0.95rem;
+}
+
+:where(.tag-row--compact, .archive-map-card__tags, .card-summary, .support-card--row p, .comment-card__body > *) {
+  margin: 0;
+}
+
+:where(.article-shell :is(ul, ol), .comment-card__body :is(ul, ol)) {
+  padding-left: 1.2rem;
+}
+
+:where(.comment-reply-form__head, .static-edit-bar__copy) {
+  display: grid;
+  gap: 0.18rem;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -186,11 +276,6 @@ h3 {
   font-size: 0.95rem;
   letter-spacing: 0.16em;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
-}
-
-.brand__text {
-  display: grid;
-  gap: 0.2rem;
 }
 
 .brand__text strong {
@@ -288,7 +373,9 @@ h3 {
 }
 
 .nav-group,
-.profile-menu {
+.profile-menu,
+.archive-status-menu,
+.editor-picker {
   position: relative;
 }
 
@@ -300,7 +387,7 @@ h3 {
   padding: 0.7rem 1rem;
   border-radius: 999px;
   border: 1px solid rgba(18, 18, 18, 0.08);
-  background: linear-gradient(135deg, rgba(156, 29, 24, 0.95), rgba(111, 13, 9, 0.95));
+  background: var(--accent-gradient);
   color: #fff8f5;
   text-decoration: none;
   font-weight: 700;
@@ -336,13 +423,9 @@ h3 {
 .profile-menu__panel button {
   display: block;
   padding: 0.75rem 0.9rem;
-  border-radius: 14px;
-  color: var(--ink);
   text-decoration: none;
   background: transparent;
   border: 0;
-  text-align: left;
-  cursor: pointer;
 }
 
 .nav-group__panel a:hover,
@@ -362,7 +445,7 @@ h3 {
   padding: 0 0.55rem;
   border-radius: 999px;
   border: 1px solid rgba(18, 18, 18, 0.08);
-  background: linear-gradient(135deg, rgba(156, 29, 24, 0.95), rgba(111, 13, 9, 0.95));
+  background: var(--accent-gradient);
   color: #fff8f5;
   font-weight: 700;
   cursor: pointer;
@@ -467,15 +550,8 @@ h3 {
   display: grid;
   gap: 0.18rem;
   padding: 0.75rem 0.9rem;
-  border-radius: 14px;
   text-decoration: none;
   background: rgba(18, 18, 18, 0.04);
-}
-
-.profile-menu__notice-item strong,
-.profile-menu__notice-item span,
-.profile-menu__notice-item .profile-menu__notice-label {
-  color: var(--ink);
 }
 
 .profile-menu__notice-label {
@@ -499,15 +575,11 @@ h3 {
   align-items: center;
   justify-content: space-between;
   gap: 0.8rem;
-  width: 100%;
   padding: 0.75rem 0.9rem;
   border: 0;
-  border-radius: 14px;
   background: rgba(18, 18, 18, 0.04);
   color: var(--ink);
   font: inherit;
-  text-align: left;
-  cursor: pointer;
 }
 
 .profile-menu__notification-toggle.is-open {
@@ -517,15 +589,6 @@ h3 {
 .profile-menu__notification-toggle-copy {
   display: grid;
   gap: 0.12rem;
-}
-
-.profile-menu__notification-toggle-copy strong {
-  color: var(--ink);
-}
-
-.profile-menu__notification-toggle-copy span {
-  color: var(--ink-soft);
-  font-size: 0.88rem;
 }
 
 .profile-menu__notification-head {
@@ -564,11 +627,6 @@ h3 {
   font-weight: 600;
   text-align: left;
   cursor: pointer;
-}
-
-.profile-menu__notification-empty {
-  color: var(--ink-soft);
-  font-size: 0.92rem;
 }
 
 .draft-note {

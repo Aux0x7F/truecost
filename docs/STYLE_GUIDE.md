@@ -50,7 +50,8 @@ The stylesheet follows the same idea:
 
 - `styles.css` is the ordered manifest
 - `styles/00-foundation.css` through `styles/08-responsive.css` hold the actual surface-family rules
-- repeated control, dropdown, panel, and grid behavior should converge in the earlier shared partials before another surface copies it again
+- repeated control, dropdown, panel, grid, and text-layout behavior should converge in the earlier shared partials before another surface copies it again
+- a stylesheet reduction pass is not complete when rules are only moved; duplicated behavior should be collapsed into shared selector families so the total CSS footprint actually drops
 
 Current extracted surface families:
 

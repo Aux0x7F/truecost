@@ -85,21 +85,20 @@
   background: rgba(18, 18, 18, 0.06);
 }
 
-.comment-composer__input,
-.comment-form textarea {
+:where(.comment-composer__input, .comment-form textarea, .comment-reply-form textarea) {
   width: 100%;
-  min-height: 8rem;
-  padding: 1rem 1.05rem;
-  border-radius: 18px;
-  border: 1px solid rgba(18, 18, 18, 0.1);
   background: #fffdfb;
-  font: inherit;
-  color: var(--ink);
   resize: vertical;
 }
 
-.comment-composer__input:focus,
-.comment-form textarea:focus {
+.comment-composer__input,
+.comment-form textarea {
+  min-height: 8rem;
+  padding: 1rem 1.05rem;
+  border-radius: 18px;
+}
+
+:where(.comment-composer__input, .comment-form textarea, .comment-reply-form textarea):focus {
   outline: 2px solid rgba(156, 29, 24, 0.18);
   border-color: rgba(156, 29, 24, 0.28);
 }
@@ -114,18 +113,11 @@
 
 .comment-composer__avatar,
 .comment-card__avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   width: 3rem;
   height: 3rem;
-  border-radius: 999px;
-  background: linear-gradient(135deg, rgba(156, 29, 24, 0.95), rgba(111, 13, 9, 0.95));
   color: #fff8f5;
-  font-weight: 700;
   font-size: 0.88rem;
   text-transform: uppercase;
-  overflow: hidden;
   flex: 0 0 auto;
 }
 
@@ -163,11 +155,6 @@
 .comment-card__avatar-button:hover,
 .user-link:hover {
   opacity: 0.82;
-}
-
-.comment-composer__avatar--image,
-.comment-card__avatar--image {
-  padding: 0;
 }
 
 .comment-card {
@@ -234,15 +221,6 @@
   gap: 0.65rem;
 }
 
-.comment-card__body > * {
-  margin: 0;
-}
-
-.comment-card__body ul,
-.comment-card__body ol {
-  padding-left: 1.2rem;
-}
-
 .comment-card__body code {
   padding: 0.12rem 0.34rem;
   border-radius: 8px;
@@ -271,12 +249,6 @@
 }
 
 .comment-card__meta div {
-  display: grid;
-  gap: 0.2rem;
-}
-
-.comment-card__meta strong {
-  color: var(--ink);
 }
 
 .comment-card__actions {
@@ -348,11 +320,6 @@
   margin-top: 0.25rem;
 }
 
-.user-profile-modal {
-  display: grid;
-  gap: 1rem;
-}
-
 .user-profile-modal__hero {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -367,19 +334,9 @@
 .user-profile-modal__avatar-wrap .user-profile-modal__avatar {
   width: 4.75rem;
   height: 4.75rem;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, rgba(156, 29, 24, 0.95), rgba(111, 13, 9, 0.95));
   color: #fff8f5;
   font-size: 1.2rem;
   font-weight: 700;
-  overflow: hidden;
-}
-
-.user-profile-modal__avatar-wrap .user-profile-modal__avatar--image {
-  padding: 0;
 }
 
 .user-profile-modal__avatar-wrap .user-profile-modal__avatar img {
@@ -389,16 +346,7 @@
   border-radius: 999px;
 }
 
-.user-profile-modal__copy {
-  display: grid;
-  gap: 0.45rem;
-}
-
-.user-profile-modal__copy strong {
-  color: var(--ink);
-}
-
-.user-profile-modal__links {
+:where(.user-profile-modal__copy, .user-profile-modal__links) {
   display: grid;
   gap: 0.45rem;
 }
@@ -413,29 +361,9 @@
 }
 
 .comment-reply-form textarea {
-  width: 100%;
   min-height: 6.8rem;
   padding: 0.9rem 1rem;
   border-radius: 16px;
-  border: 1px solid rgba(18, 18, 18, 0.1);
-  background: #fffdfb;
-  font: inherit;
-  color: var(--ink);
-  resize: vertical;
-}
-
-.comment-reply-form textarea:focus {
-  outline: 2px solid rgba(156, 29, 24, 0.18);
-  border-color: rgba(156, 29, 24, 0.28);
-}
-
-.comment-reply-form__head {
-  display: grid;
-  gap: 0.18rem;
-}
-
-.comment-reply-form__head strong {
-  color: var(--ink);
 }
 
 .comment-card--reply {
@@ -530,15 +458,6 @@ body.is-static-editing [data-static-edit]:focus {
   display: flex;
 }
 
-.static-edit-bar__copy {
-  display: grid;
-  gap: 0.18rem;
-}
-
-.static-edit-bar__copy strong {
-  font-size: 0.95rem;
-}
-
 .static-edit-bar__copy span {
   color: rgba(251, 246, 239, 0.78);
   font-size: 0.9rem;
@@ -593,11 +512,6 @@ body.is-static-editing [data-static-edit]:focus {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) repeat(2, minmax(180px, 0.6fr));
   gap: 1.5rem;
-}
-
-.site-footer__grid p,
-.site-footer__grid a {
-  color: var(--ink-soft);
 }
 
 .site-footer h3 {
