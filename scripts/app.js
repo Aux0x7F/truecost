@@ -1240,7 +1240,7 @@ async function renderComments(postSlug, publicState) {
         const result = await publishTaggedJson({
           kind: SITE.nostr.kinds.comment,
           secretKeyHex: state.session.secretKeyHex,
-          tags: [["d", createCommentDraftKey()], ["a", postSlug]],
+          tags: [["a", postSlug]],
           content: {
             post_slug: postSlug,
             markdown,
@@ -1314,7 +1314,6 @@ async function renderComments(postSlug, publicState) {
           kind: SITE.nostr.kinds.comment,
           secretKeyHex: state.session.secretKeyHex,
           tags: [
-            ["d", createCommentDraftKey()],
             ["a", postSlug],
             ["e", parentId],
             ["parent", parentId],
@@ -1616,13 +1615,6 @@ function resolveUserKarma(publicState, pubkey) {
 function formatKarma(value) {
   const score = Number(value || 0) || 0;
   return score > 0 ? `+${score}` : String(score);
-}
-
-function createCommentDraftKey() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `comment-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
-  }
-  return `comment-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function resolveCurrentVoteForComment(publicState, commentId, viewerPubkey) {
