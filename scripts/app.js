@@ -1485,15 +1485,29 @@ function animateRootCommentReorder(panel, previousPositions) {
   if (!moved.length) return;
   for (const item of moved) {
     item.card.classList.add("comment-card--reordering");
+    item.card.getAnimations?.().forEach((animation) => animation.cancel());
+    item.card.style.transform = "";
+  }
+  for (const item of moved) {
+    if (typeof item.card.animate === "function") {
+      item.card.animate(
+        [
+          { transform: `translate(${item.deltaX}px, ${item.deltaY}px)` },
+          { transform: "translate(0px, 0px)" }
+        ],
+        {
+          duration: 320,
+          easing: "cubic-bezier(0.22, 1, 0.36, 1)"
+        }
+      );
+      continue;
+    }
     item.card.style.transition = "none";
     item.card.style.transform = `translate(${item.deltaX}px, ${item.deltaY}px)`;
+    void item.card.offsetWidth;
+    item.card.style.transition = "transform 320ms cubic-bezier(0.22, 1, 0.36, 1)";
+    item.card.style.transform = "";
   }
-  window.requestAnimationFrame(() => {
-    for (const item of moved) {
-      item.card.style.transition = "transform 320ms cubic-bezier(0.22, 1, 0.36, 1)";
-      item.card.style.transform = "";
-    }
-  });
   window.setTimeout(() => {
     for (const item of moved) {
       item.card.classList.remove("comment-card--reordering");

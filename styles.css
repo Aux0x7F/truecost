@@ -2810,7 +2810,6 @@ h3 {
 .comment-card {
   padding: 0;
   overflow: hidden;
-  transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .comment-card--focus {
