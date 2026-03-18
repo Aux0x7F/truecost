@@ -119,21 +119,20 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
     await page.waitForSelector("[data-submission-form]", { timeout: 15000 });
 
     const resultsClosedBeforeTyping = await page.evaluate(() => {
-      const host = document.querySelector("[data-submit-location-results]");
+      const host = document.querySelector("[data-submit-suggested-entity-results]");
       return host instanceof HTMLElement ? host.getAttribute("data-open") !== "yes" : false;
     });
 
-    await page.fill("[data-submit-location-input]", "ph");
+    await page.fill("[data-submit-suggested-entity-input]", "Test");
     await page.waitForFunction(
-      () => document.querySelector("[data-submit-location-results]")?.getAttribute("data-open") === "yes",
+      () => document.querySelector("[data-submit-suggested-entity-results]")?.getAttribute("data-open") === "yes",
       { timeout: 5000 }
     );
 
-    const locationFieldMetrics = await page.evaluate(() => {
-      const input = document.querySelector("[data-submit-location-input]");
-      const host = document.querySelector("[data-submit-location-results]");
+    const attachedFieldMetrics = await page.evaluate(() => {
+      const input = document.querySelector("[data-submit-suggested-entity-input]");
+      const host = document.querySelector("[data-submit-suggested-entity-results]");
       const wrapper = input?.closest(".workspace-search");
-      const option = host?.querySelector("button");
       if (!(input instanceof HTMLElement) || !(host instanceof HTMLElement) || !(wrapper instanceof HTMLElement)) return null;
       const inputRect = input.getBoundingClientRect();
       const hostRect = host.getBoundingClientRect();
@@ -143,7 +142,38 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
         hostTop: hostRect.top,
         hostWidth: hostRect.width,
         wrapperWidth: wrapperRect.width,
-        optionClass: option?.className || ""
+        openHintVisible: host.textContent.includes("No existing entity matches")
+      };
+    });
+
+    await page.press("[data-submit-suggested-entity-input]", "Enter");
+    await page.waitForFunction(
+      () => document.querySelector("[data-submit-suggested-entity-results]")?.getAttribute("data-open") !== "yes",
+      { timeout: 5000 }
+    );
+
+    await page.focus("[data-submit-suggested-entity-input]");
+    await page.waitForFunction(
+      () => document.querySelector("[data-submit-suggested-entity-results]")?.getAttribute("data-open") === "yes",
+      { timeout: 5000 }
+    );
+    await page.focus("[name=\"suggestedEntityNotes\"]");
+    await page.waitForFunction(
+      () => document.querySelector("[data-submit-suggested-entity-results]")?.getAttribute("data-open") !== "yes",
+      { timeout: 5000 }
+    );
+
+    const checkboxState = await page.evaluate(() => {
+      const label = document.querySelector(".checkbox--panel");
+      const input = document.querySelector(".checkbox__input");
+      const indicator = document.querySelector(".checkbox__indicator");
+      if (!(label instanceof HTMLElement) || !(input instanceof HTMLInputElement) || !(indicator instanceof HTMLElement)) {
+        return null;
+      }
+      label.click();
+      return {
+        checkedAfterClick: input.checked,
+        indicatorPresent: indicator instanceof HTMLElement
       };
     });
 
@@ -154,11 +184,13 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
 
     assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(" | ")}`);
     assert.deepEqual(consoleErrors, [], `console errors: ${consoleErrors.join(" | ")}`);
-    assert.equal(resultsClosedBeforeTyping, true, "location suggestions should stay closed until the field has input");
-    assert.ok(locationFieldMetrics, "location field metrics should be available");
-    assert.ok(locationFieldMetrics.hostTop >= locationFieldMetrics.inputBottom - 2, "location suggestions should attach below the input");
-    assert.ok(locationFieldMetrics.hostWidth <= locationFieldMetrics.wrapperWidth + 2, "location suggestions should stay within the field width");
-    assert.match(locationFieldMetrics.optionClass, /workspace-search__option/, "location suggestions should use normalized autocomplete rows");
+    assert.equal(resultsClosedBeforeTyping, true, "attached suggestions should stay closed until the field has input");
+    assert.ok(attachedFieldMetrics, "attached field metrics should be available");
+    assert.ok(attachedFieldMetrics.hostTop >= attachedFieldMetrics.inputBottom - 2, "attached suggestions should render below the input");
+    assert.ok(attachedFieldMetrics.hostWidth <= attachedFieldMetrics.wrapperWidth + 2, "attached suggestions should stay within the field width");
+    assert.equal(attachedFieldMetrics.openHintVisible, true, "attached dropdown should render its empty-state hint in place");
+    assert.ok(checkboxState?.indicatorPresent, "consent checkbox should render a styled indicator");
+    assert.equal(checkboxState?.checkedAfterClick, true, "consent checkbox should toggle from the panel control");
   } finally {
     await browser.close();
     await new Promise((resolve) => server.close(resolve));

@@ -2,6 +2,28 @@ import { renderSearchField } from "../core/search-controls.js";
 
 export function renderSubmitPageView({ submitState, deps = {} } = {}) {
   const renderLoadingState = deps.renderLoadingState || ((value) => String(value || ""));
+  if (submitState.loading && submitState.session) {
+    return {
+      lede: submitState.loadingMessage || "Looking up your submissions...",
+      shellMarkup: `
+        <section class="surface-panel">
+          <div class="workspace-list__row">
+            <div>
+              <div class="eyebrow">Submit</div>
+              <h2>Your submissions</h2>
+            </div>
+            <button class="button" type="button" data-open-submission-modal="new">Add submission</button>
+          </div>
+          <div class="roster-list">
+            ${renderLoadingState(submitState.loadingMessage || "Looking up your submissions...")}
+          </div>
+        </section>
+        ${renderSubmissionModal(submitState, deps)}
+        ${renderSubmissionChatModal(submitState, deps)}
+      `
+    };
+  }
+
   if (submitState.loading) {
     return {
       lede: submitState.loadingMessage || "Looking up your submissions...",
@@ -242,7 +264,8 @@ export function renderSubmissionModal(submitState, deps = {}) {
             </label>
           </div>
           <label class="checkbox checkbox--panel">
-            <input name="consent" type="checkbox" value="yes" ${payload.consent_to_follow_up ? "checked" : ""}>
+            <input class="checkbox__input" name="consent" type="checkbox" value="yes" ${payload.consent_to_follow_up ? "checked" : ""}>
+            <span class="checkbox__indicator" aria-hidden="true"></span>
             <span class="checkbox__copy">
               <strong>Allow follow-up</strong>
               <small>We may contact you if a quick clarification would help.</small>
@@ -313,18 +336,20 @@ export function renderSubmitSuggestionMarkup(items, emptyMarkup, deps = {}) {
   const escapeAttribute = deps.escapeAttribute || ((value) => String(value || ""));
   const escapeHtml = deps.escapeHtml || ((value) => String(value || ""));
   const kind = deps.kind || "entity";
+  const highlightedIndex = Number.isInteger(deps.highlightedIndex) ? deps.highlightedIndex : -1;
   if (!items.length) return emptyMarkup;
   return items
-    .map((item) => {
+    .map((item, index) => {
+      const highlightedClass = highlightedIndex === index ? " is-highlighted" : "";
       if (kind === "location") {
         return `
-          <button class="workspace-search__option" type="button" data-submit-location-pick="${escapeAttribute(item)}">
+          <button class="workspace-search__option${highlightedClass}" type="button" data-submit-location-pick="${escapeAttribute(item)}" aria-selected="${highlightedIndex === index ? "true" : "false"}">
             <strong>${escapeHtml(item)}</strong>
           </button>
         `;
       }
       return `
-        <button class="workspace-search__option" type="button" data-submit-${kind}-pick="${escapeAttribute(item.slug)}">
+        <button class="workspace-search__option${highlightedClass}" type="button" data-submit-${kind}-pick="${escapeAttribute(item.slug)}" aria-selected="${highlightedIndex === index ? "true" : "false"}">
           <strong>${escapeHtml(item.name)}</strong>
           <span class="workspace-search__option-meta">${escapeHtml(item.location)}</span>
         </button>

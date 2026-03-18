@@ -45,6 +45,8 @@ Component behavior that spans a whole UI family should live in `scripts/surfaces
 - Search, lookup, and filter controls should use one attached pattern.
 - Submit modal entity and location fields are part of the same pattern, not a separate form-specific widget family.
 - Suggestions open from the field itself and overlay what sits below.
+- Suggestions close on `Enter` and when the field loses focus.
+- Refocusing a field with a current value may reopen its attached suggestions.
 - Fields support:
   - `ArrowUp`
   - `ArrowDown`
@@ -53,6 +55,12 @@ Component behavior that spans a whole UI family should live in `scripts/surfaces
   - clear `x` inside the field
 - Clearing the field must clear the active filter state, not only the visible text.
 - Loading belongs in the field itself when the field is the active surface.
+
+### Checkbox controls
+
+- Checkboxes should render as intentional controls, not default browser boxes dropped into otherwise custom panels.
+- When a checkbox is presented as a full-width consent or settings row, the whole row should act as the control.
+- The checked and focus states must remain obvious without relying on browser-default styling.
 
 ## Workspace surfaces
 

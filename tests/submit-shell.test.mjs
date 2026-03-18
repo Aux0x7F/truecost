@@ -17,10 +17,11 @@ const deps = {
 
 test("submit shell renders cache-first loading and sessionless states distinctly", () => {
   const loadingView = renderSubmitPageView({
-    submitState: { loading: true, loadingMessage: "Looking up your submissions..." },
+    submitState: { loading: true, loadingMessage: "Looking up your submissions...", session: { username: "aux" } },
     deps
   });
   assert.match(loadingView.shellMarkup, /data-loading/);
+  assert.match(loadingView.shellMarkup, /data-open-submission-modal="new"/);
 
   const gateView = renderSubmitPageView({
     submitState: { loading: false, session: null, submissions: [] },
@@ -54,6 +55,7 @@ test("submit shell renders attached search fields and consent copy inside the mo
   assert.match(view.shellMarkup, /data-submit-suggested-entity-results/);
   assert.match(view.shellMarkup, /data-submit-location-results/);
   assert.match(view.shellMarkup, /Allow follow-up/);
+  assert.match(view.shellMarkup, /checkbox__indicator/);
 });
 
 test("submit suggestion markup keeps attached dropdown semantics for each field kind", () => {
@@ -77,8 +79,9 @@ test("submit suggestion markup keeps attached dropdown semantics for each field 
   const locationMarkup = renderSubmitSuggestionMarkup(
     ["Phoenix, Arizona"],
     "",
-    { kind: "location", escapeAttribute: deps.escapeAttribute, escapeHtml: deps.escapeHtml }
+    { kind: "location", escapeAttribute: deps.escapeAttribute, escapeHtml: deps.escapeHtml, highlightedIndex: 0 }
   );
   assert.match(locationMarkup, /data-submit-location-pick="Phoenix, Arizona"/);
   assert.match(locationMarkup, /workspace-search__option/);
+  assert.match(locationMarkup, /is-highlighted/);
 });

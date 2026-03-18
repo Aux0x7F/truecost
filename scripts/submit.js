@@ -22,6 +22,7 @@ import {
   escapeHtml,
   lastCommaValue
 } from "./core/text-utils.js";
+import { closeSearchResults, cycleHighlightIndex } from "./core/search-controls.js";
 import { getStoredSession } from "./core/session.js";
 import {
   renderSubmitPageView,
@@ -39,7 +40,12 @@ const submitState = {
   loading: false,
   loadingMessage: "",
   formModal: null,
-  chatModal: null
+  chatModal: null,
+  searchUi: {
+    entityRefs: { highlight: -1, closedValue: "" },
+    location: { highlight: -1, closedValue: "" },
+    suggestedEntity: { highlight: -1, closedValue: "" }
+  }
 };
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -120,13 +126,42 @@ function bindSubmitPage() {
   shell.addEventListener("input", (event) => {
     const target = event.target;
     if (!(target instanceof Element)) return;
-    if (
-      target.matches(
-        "[data-submit-entity-input], [data-submit-location-input], [data-submit-suggested-entity-input]"
-      )
-    ) {
-      hydrateSubmissionEnhancements();
-    }
+    const fieldKey = resolveSubmitSearchFieldKey(target);
+    if (!fieldKey) return;
+    resetSubmitSearchField(fieldKey, readSubmitSearchValue(fieldKey));
+    hydrateSubmissionEnhancements();
+  });
+
+  shell.addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const fieldKey = resolveSubmitSearchFieldKey(target);
+    if (!fieldKey) return;
+    handleSubmitSearchKeydown(event, fieldKey);
+  });
+
+  shell.addEventListener("focusin", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const fieldKey = resolveSubmitSearchFieldKey(target);
+    if (!fieldKey) return;
+    const value = readSubmitSearchValue(fieldKey);
+    if (!String(value || "").trim()) return;
+    const uiState = submitSearchUiState(fieldKey);
+    uiState.closedValue = "";
+    hydrateSubmissionEnhancements();
+  });
+
+  shell.addEventListener("focusout", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const fieldKey = resolveSubmitSearchFieldKey(target);
+    if (!fieldKey) return;
+    const wrapper = target.closest(".workspace-search");
+    window.setTimeout(() => {
+      if (wrapper instanceof HTMLElement && wrapper.contains(document.activeElement)) return;
+      closeSubmitSearchField(fieldKey);
+    }, 0);
   });
 }
 
@@ -375,92 +410,115 @@ function hydrateSubmissionEnhancements() {
 }
 
 function renderEntityResults() {
-  const host = document.querySelector("[data-submit-entity-results]");
-  const input = document.querySelector("[data-submit-entity-input]");
+  const host = submitSearchHost("entityRefs");
+  const input = submitSearchInput("entityRefs");
   if (!(host instanceof HTMLElement) || !(input instanceof HTMLInputElement)) return;
   const query = lastCommaValue(input.value);
-  const matches = matchEntities(query).slice(0, 6);
-  if (!query) {
-    host.innerHTML = "";
-    host.removeAttribute("data-open");
+  if (!query || submitSearchUiState("entityRefs").closedValue === query) {
+    closeSearchResults(host);
     return;
   }
+  const matches = matchEntities(query).slice(0, 6);
   host.setAttribute("data-open", "yes");
   host.innerHTML = renderSubmitSuggestionMarkup(
     matches,
     `<div class="picker-hint">No existing entity matches. Use the suggested entity fields to add a new one for review.</div>`,
-    { kind: "entity", escapeAttribute, escapeHtml }
+    {
+      kind: "entity",
+      escapeAttribute,
+      escapeHtml,
+      highlightedIndex: submitSearchUiState("entityRefs").highlight
+    }
   );
 }
 
 function renderLocationResults() {
-  const host = document.querySelector("[data-submit-location-results]");
-  const input = document.querySelector("[data-submit-location-input]");
+  const host = submitSearchHost("location");
+  const input = submitSearchInput("location");
   if (!(host instanceof HTMLElement) || !(input instanceof HTMLInputElement)) return;
-  const query = input.value.trim().toLowerCase();
-  if (!query) {
-    host.innerHTML = "";
-    host.removeAttribute("data-open");
+  const rawValue = input.value.trim();
+  const query = rawValue.toLowerCase();
+  if (!query || submitSearchUiState("location").closedValue === rawValue) {
+    closeSearchResults(host);
     return;
   }
   const matches = uniqueLocations()
     .filter((location) => location.toLowerCase().includes(query))
     .slice(0, 6);
   if (!matches.length) {
-    host.innerHTML = "";
-    host.removeAttribute("data-open");
+    closeSearchResults(host);
     return;
   }
   host.setAttribute("data-open", "yes");
   host.innerHTML = renderSubmitSuggestionMarkup(
     matches,
     `<div class="picker-hint">No known location matches. Keep the typed value to propose a new one.</div>`,
-    { kind: "location", escapeAttribute, escapeHtml }
+    {
+      kind: "location",
+      escapeAttribute,
+      escapeHtml,
+      highlightedIndex: submitSearchUiState("location").highlight
+    }
   );
 }
 
 function renderSuggestedEntityResults() {
-  const host = document.querySelector("[data-submit-suggested-entity-results]");
-  const input = document.querySelector("[data-submit-suggested-entity-input]");
+  const host = submitSearchHost("suggestedEntity");
+  const input = submitSearchInput("suggestedEntity");
   if (!(host instanceof HTMLElement) || !(input instanceof HTMLInputElement)) return;
   const query = input.value.trim();
-  const matches = matchEntities(query).slice(0, 6);
-  if (!query) {
-    host.innerHTML = "";
-    host.removeAttribute("data-open");
+  if (!query || submitSearchUiState("suggestedEntity").closedValue === query) {
+    closeSearchResults(host);
     return;
   }
+  const matches = matchEntities(query).slice(0, 6);
   host.setAttribute("data-open", "yes");
   host.innerHTML = renderSubmitSuggestionMarkup(
     matches,
     `<div class="picker-hint">No existing entity matches. Keep the typed name to suggest a new one.</div>`,
-    { kind: "suggested-entity", escapeAttribute, escapeHtml }
+    {
+      kind: "suggested-entity",
+      escapeAttribute,
+      escapeHtml,
+      highlightedIndex: submitSearchUiState("suggestedEntity").highlight
+    }
   );
 }
 
 function applyEntityPick(button) {
-  const slug = button.getAttribute("data-submit-entity-pick") || "";
-  const entity = resolveEntityByNameOrSlug(slug);
-  const input = document.querySelector("[data-submit-entity-input]");
-  if (!entity || !(input instanceof HTMLInputElement)) return;
-  const existing = resolveEntityRefs(input.value);
-  input.value = dedupe([...existing, entity.slug]).map(resolveEntityDisplayValue).join(", ");
-  hydrateSubmissionEnhancements();
+  applyEntityPickValue(button.getAttribute("data-submit-entity-pick") || "");
 }
 
 function applyLocationPick(button) {
-  const value = button.getAttribute("data-submit-location-pick") || "";
-  const input = document.querySelector("[data-submit-location-input]");
-  if (!(input instanceof HTMLInputElement)) return;
-  input.value = value;
-  hydrateSubmissionEnhancements();
+  applyLocationValue(button.getAttribute("data-submit-location-pick") || "");
 }
 
 function applySuggestedEntityPick(button) {
-  const slug = button.getAttribute("data-submit-suggested-entity-pick") || "";
+  applySuggestedEntityValue(button.getAttribute("data-submit-suggested-entity-pick") || "");
+}
+
+function applyEntityPickValue(slug) {
   const entity = resolveEntityByNameOrSlug(slug);
-  const nameInput = document.querySelector("[data-submit-suggested-entity-input]");
-  const locationInput = document.querySelector("[data-submit-location-input]");
+  const input = submitSearchInput("entityRefs");
+  if (!entity || !(input instanceof HTMLInputElement)) return;
+  const existing = resolveEntityRefs(input.value);
+  input.value = `${dedupe([...existing, entity.slug]).map(resolveEntityDisplayValue).join(", ")}, `;
+  closeSubmitSearchField("entityRefs");
+  hydrateSubmissionEnhancements();
+}
+
+function applyLocationValue(value) {
+  const input = submitSearchInput("location");
+  if (!(input instanceof HTMLInputElement)) return;
+  input.value = value;
+  closeSubmitSearchField("location");
+  hydrateSubmissionEnhancements();
+}
+
+function applySuggestedEntityValue(slug) {
+  const entity = resolveEntityByNameOrSlug(slug);
+  const nameInput = submitSearchInput("suggestedEntity");
+  const locationInput = submitSearchInput("location");
   const typeInput = document.querySelector('[name="suggestedEntityType"]');
   const notesInput = document.querySelector('[name="suggestedEntityNotes"]');
   if (!(nameInput instanceof HTMLInputElement) || !entity) return;
@@ -468,6 +526,8 @@ function applySuggestedEntityPick(button) {
   if (locationInput instanceof HTMLInputElement) locationInput.value = entity.location || "";
   if (typeInput instanceof HTMLInputElement) typeInput.value = entity.type || "";
   if (notesInput instanceof HTMLInputElement) notesInput.value = entity.notes || "";
+  closeSubmitSearchField("suggestedEntity");
+  closeSubmitSearchField("location");
   hydrateSubmissionEnhancements();
 }
 
@@ -475,7 +535,134 @@ function clearSubmissionField(fieldName) {
   const input = document.querySelector(`[name="${fieldName}"]`);
   if (!(input instanceof HTMLInputElement)) return;
   input.value = "";
+  const fieldKey = clearableSubmitFieldKey(fieldName);
+  if (fieldKey) resetSubmitSearchField(fieldKey, "");
   hydrateSubmissionEnhancements();
+}
+
+function handleSubmitSearchKeydown(event, fieldKey) {
+  const suggestions = submitSuggestions(fieldKey);
+  if (!suggestions.length && event.key !== "Escape" && event.key !== "Enter") return;
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    submitSearchUiState(fieldKey).highlight = cycleHighlightIndex(submitSearchUiState(fieldKey).highlight, suggestions.length, 1);
+    hydrateSubmissionEnhancements();
+    return;
+  }
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    submitSearchUiState(fieldKey).highlight = cycleHighlightIndex(submitSearchUiState(fieldKey).highlight, suggestions.length, -1);
+    hydrateSubmissionEnhancements();
+    return;
+  }
+  if (event.key === "Enter") {
+    const host = submitSearchHost(fieldKey);
+    const isOpen = host instanceof HTMLElement && host.getAttribute("data-open") === "yes";
+    if (!isOpen) return;
+    event.preventDefault();
+    const highlight = submitSearchUiState(fieldKey).highlight;
+    if (highlight >= 0 && suggestions[highlight] !== undefined) {
+      commitSubmitSuggestion(fieldKey, suggestions[highlight]);
+      submitSearchInput(fieldKey)?.blur();
+      return;
+    }
+    closeSubmitSearchField(fieldKey);
+    submitSearchInput(fieldKey)?.blur();
+    return;
+  }
+  if (event.key === "Escape") {
+    closeSubmitSearchField(fieldKey);
+  }
+}
+
+function commitSubmitSuggestion(fieldKey, suggestion) {
+  if (fieldKey === "entityRefs") {
+    applyEntityPickValue(suggestion?.slug || "");
+    return;
+  }
+  if (fieldKey === "location") {
+    applyLocationValue(String(suggestion || ""));
+    return;
+  }
+  if (fieldKey === "suggestedEntity") {
+    applySuggestedEntityValue(suggestion?.slug || "");
+  }
+}
+
+function submitSearchUiState(fieldKey) {
+  return submitState.searchUi[fieldKey];
+}
+
+function resetSubmitSearchField(fieldKey, currentValue = "") {
+  const state = submitSearchUiState(fieldKey);
+  if (!state) return;
+  state.highlight = -1;
+  if (state.closedValue && state.closedValue !== String(currentValue || "").trim()) {
+    state.closedValue = "";
+  }
+}
+
+function closeSubmitSearchField(fieldKey) {
+  const state = submitSearchUiState(fieldKey);
+  const host = submitSearchHost(fieldKey);
+  const value = readSubmitSearchValue(fieldKey);
+  if (state) {
+    state.highlight = -1;
+    state.closedValue = value;
+  }
+  closeSearchResults(host);
+}
+
+function resolveSubmitSearchFieldKey(target) {
+  if (!(target instanceof Element)) return "";
+  if (target.matches("[data-submit-entity-input]")) return "entityRefs";
+  if (target.matches("[data-submit-location-input]")) return "location";
+  if (target.matches("[data-submit-suggested-entity-input]")) return "suggestedEntity";
+  return "";
+}
+
+function clearableSubmitFieldKey(fieldName) {
+  return {
+    entityRefs: "entityRefs",
+    suggestedEntityName: "suggestedEntity",
+    suggestedEntityLocation: "location"
+  }[fieldName] || "";
+}
+
+function submitSearchInput(fieldKey) {
+  const selector = {
+    entityRefs: "[data-submit-entity-input]",
+    location: "[data-submit-location-input]",
+    suggestedEntity: "[data-submit-suggested-entity-input]"
+  }[fieldKey];
+  return selector ? document.querySelector(selector) : null;
+}
+
+function submitSearchHost(fieldKey) {
+  const selector = {
+    entityRefs: "[data-submit-entity-results]",
+    location: "[data-submit-location-results]",
+    suggestedEntity: "[data-submit-suggested-entity-results]"
+  }[fieldKey];
+  return selector ? document.querySelector(selector) : null;
+}
+
+function readSubmitSearchValue(fieldKey) {
+  const input = submitSearchInput(fieldKey);
+  if (!(input instanceof HTMLInputElement)) return "";
+  if (fieldKey === "entityRefs") return lastCommaValue(input.value).trim();
+  return input.value.trim();
+}
+
+function submitSuggestions(fieldKey) {
+  if (fieldKey === "entityRefs") return matchEntities(readSubmitSearchValue(fieldKey)).slice(0, 6);
+  if (fieldKey === "location") {
+    const query = readSubmitSearchValue(fieldKey).toLowerCase();
+    if (!query) return [];
+    return uniqueLocations().filter((location) => location.toLowerCase().includes(query)).slice(0, 6);
+  }
+  if (fieldKey === "suggestedEntity") return matchEntities(readSubmitSearchValue(fieldKey)).slice(0, 6);
+  return [];
 }
 
 function buildSuggestedEntity(formData, existingEntity) {
