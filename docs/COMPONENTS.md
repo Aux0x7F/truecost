@@ -120,12 +120,17 @@ Do not blank useful content while waiting for background state.
 
 Current extraction targets:
 
+- `scripts/core/page-drafts.js`
+- `scripts/core/rendering.js`
 - `scripts/core/navigation-state.js`
 - `scripts/core/notification-state.js`
 - `scripts/surfaces/navigation.js`
 - `scripts/surfaces/profile-overlays.js`
 - `scripts/surfaces/comments.js`
 - `scripts/surfaces/archive.js`
+- `scripts/surfaces/review-preview.js`
+- `scripts/surfaces/investigation-detail.js`
+- `scripts/surfaces/static-page-edit.js`
 - `scripts/surfaces/submit-shell.js`
 - `scripts/surfaces/workspace.js`
 - `scripts/surfaces/workspace-filters.js`
@@ -137,6 +142,7 @@ The next convergence targets are:
 
 - editor collaboration rail behavior when that feature lands
 - narrower selectors behind the remaining admin controller flows
+- any remaining page-controller-owned notification or moderation detail that still has not moved into shared surfaces
 
 ## Modals and action sheets
 

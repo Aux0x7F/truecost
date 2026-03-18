@@ -17,6 +17,9 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - Notification state and profile-menu UI state now live in dedicated core modules instead of page-controller sprawl.
 - Public profile overlays and submit-shell rendering now live in dedicated surface modules, so the full modal family follows the same surface pattern.
 - Workspace filter/search rails and picker suggestion markup now live in dedicated surface modules instead of staying embedded in admin controllers.
+- Shared page-draft/review helpers now live in `scripts/core/page-drafts.js` instead of being reimplemented per controller.
+- Shared loading, tag-link, markdown, TOC, and truncation helpers now live in `scripts/core/rendering.js` instead of staying in the main public controller.
+- `app.js` has now had its largest remaining lifecycle families pulled out: investigation detail/live overlay and static page editing now live in dedicated surface modules instead of the page controller.
 - The framework/template repo now follows the same direction with matching extracted surface families instead of keeping that logic only in one large template controller.
 - `styles.css` is now a small manifest that imports ordered partials in `styles/`, so the stylesheet boundary matches the broader surface-family split instead of living as one multi-thousand-line file.
 - The first real stylesheet reduction pass is in: shared foundation selector families now absorb repeated control, dropdown, editor, comment, workspace, and responsive rules, cutting the total CSS partial set by roughly 300 lines instead of only repartitioning it.
@@ -26,7 +29,7 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 
 - Expand the normalized collaborative shell into editor presence, quote-linked discussion, and broader live-unit coverage for entities and the archive.
 - Keep tightening the remaining large CSS families, especially `02-content.css` and the still-heavy shared foundation layer, so reduction continues after the first broad pass.
-- Start the same direct reduction work on the still-heavy JS controllers, beginning with `app.js`, so normalization continues in code size and responsibility split instead of stopping at CSS.
+- Continue the same direct reduction work on the still-heavy JS controllers, with `admin.js` now the next obvious target after the `app.js` reduction pass.
 - Extend the live collaborative layer from static pages and investigation detail/editor flows into the archive and entity records without regressing the static-first baseline.
 - Add clearer history and conflict handling for live collaborative units before each bakedown cycle, so operators can see what will ship and why.
 - Expand end-to-end browser validation around submissions, moderation, publishing, comment handling, and browser-compat fallbacks before each release.

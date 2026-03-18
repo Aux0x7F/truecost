@@ -28,6 +28,17 @@ import {
 } from "./core/public-state-store.js";
 import { normalizeAdminPubkeys, publicStateHasAdminPubkey } from "./core/public-state.js";
 import {
+  draftOwnerPubkey,
+  draftReviewAction,
+  draftStatusLabel,
+  investigationDrafts,
+  isPageDraft,
+  normalizeDraftStatus,
+  pageDraftHref,
+  reviewActionMessage,
+  reviewStatusForAction
+} from "./core/page-drafts.js";
+import {
   clampNotificationsPanel,
   closeProfileMenu,
   createNavigationUiState,
@@ -39,6 +50,7 @@ import {
   countNotificationItems,
   createNotificationState
 } from "./core/notification-state.js";
+import { createSiteNotificationBuilder } from "./core/notification-builders.js";
 import {
   applyCommentVoteToPublicState,
   commentAffectsThreadRanking,
@@ -58,6 +70,14 @@ import {
   escapeHtml
 } from "./core/text-utils.js";
 import { clearSession, getOrCreateGuestSession, getStoredGuestSession, getStoredSession } from "./core/session.js";
+import {
+  buildToc,
+  renderError,
+  renderLoadingState,
+  renderMarkedHtml,
+  renderMiniMarkdown,
+  renderTagList
+} from "./core/rendering.js";
 import {
   animateRootCommentReorder,
   captureRootCommentPositions,
@@ -85,6 +105,7 @@ import {
   renderAuthoringLeadCard,
   renderLeafletPreviewMap
 } from "./surfaces/archive.js";
+import { createInvestigationDetailSurface } from "./surfaces/investigation-detail.js";
 import {
   bindMapEntityCards as bindMapSurfaceEntityCards,
   destroyLeafletMap as destroySurfaceLeafletMap,
@@ -95,6 +116,7 @@ import {
   requestedMapEntity,
   scheduleMapEntityFocus as scheduleSurfaceMapEntityFocus
 } from "./surfaces/map.js";
+import { createStaticPageEditSurface } from "./surfaces/static-page-edit.js";
 
 const NAV_KEYS = {
   home: ["home"],
@@ -114,20 +136,6 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", {
   year: "numeric"
 });
 
-const STATIC_PAGE_META = Object.freeze({
-  home: { title: "Home page", path: "./index.html" },
-  investigations: { title: "Investigations page", path: "./investigations.html" },
-  investigation: { title: "Investigation page", path: "./investigation.html" },
-  guide: { title: "Guide page", path: "./guide.html" },
-  submit: { title: "Submit page", path: "./submit.html" },
-  "get-involved": { title: "Get involved page", path: "./get-involved.html" },
-  about: { title: "About page", path: "./about.html" },
-  merch: { title: "Merch page", path: "./merch.html" },
-  map: { title: "Map page", path: "./map.html" },
-  workspace: { title: "Workspace page", path: "./admin.html" },
-  editor: { title: "Editor page", path: "./editor.html" }
-});
-const STATIC_EDITABLE_PAGES = new Set(Object.keys(STATIC_PAGE_META));
 const publicStateStore = createPublicStateStore({
   getSessionSecretKey: getRequestSignerSecretKey,
   page: () => document.body.dataset.page || "site",
@@ -169,13 +177,81 @@ const state = {
   highlightedCommentId: ""
 };
 
+const investigationDetailSurface = createInvestigationDetailSurface({
+  site: SITE,
+  state,
+  deps: {
+    cleanSlug,
+    archiveEntitiesForEntries,
+    buildArticleMetaLine,
+    connectStructuredUnitOverlay,
+    destroyLeafletPreview,
+    editorEntryAllowed,
+    enrichArticleEntities,
+    formatDate,
+    getPublicState,
+    getRequestSignerSecretKey,
+    loadDraftBySlug,
+    publishReviewDecision,
+    queueLeafletBoundsFit,
+    refreshPosts,
+    renderComments,
+    renderError,
+    renderInvestigationCard,
+    renderLeafletPreviewMap,
+    renderLoadingState,
+    renderMarkdown,
+    renderRecordList,
+    renderTagList,
+    setText,
+    trustedAdminPubkeys
+  }
+});
+
+const staticPageEditSurface = createStaticPageEditSurface({
+  site: SITE,
+  state,
+  deps: {
+    afterSnapshotReview: async () => {
+      state.publicState = (await publicStateStore.hydrate({ force: true, reason: "page-snapshot-review" })).value;
+      notificationState.reset();
+      void hydrateNotifications(true);
+    },
+    connectStaticPageOverlay,
+    editorEntryAllowed,
+    formatDate,
+    formatLocalTimestamp,
+    getPublicState,
+    getRequestSignerSecretKey,
+    loadDraftBySlug,
+    publishReviewDecision,
+    publishTaggedJson,
+    sanitizeTrustedHtml,
+    trustedAdminPubkeys
+  }
+});
+
+const buildSiteNotifications = createSiteNotificationBuilder({
+  deps: {
+    loadAdminKeyShare,
+    loadInboxSubmissions,
+    loadSubmissionThread,
+    loadUserSubmissions,
+    publicStateHasAdminPubkey
+  }
+});
+
 const notificationState = createNotificationState({
   storageNamespace: SITE.nostr.storageNamespace,
   onChange: () => renderNavigation(),
   getSession: () => state.session,
   getViewerPubkey: () => state.viewer?.pubkey || "",
   getPublicState: (force) => getPublicState(force),
-  buildNotifications: ({ publicState, force }) => buildNotifications(publicState, force)
+  buildNotifications: ({ publicState }) => buildSiteNotifications({
+    publicState,
+    viewer: state.viewer,
+    sessionSecretKeyHex: state.session?.secretKeyHex || ""
+  })
 });
 
 publicStateStore.subscribe((snapshot) => {
@@ -189,11 +265,11 @@ document.addEventListener("DOMContentLoaded", () => {
   initLinkPrefetch();
   bindGlobalSiteInteractions();
   initInvestigationCards();
-  void initInvestigationDetail();
+  void investigationDetailSurface.init();
   void initMarkdownArticles();
   void initMapPage();
   void initAuthoringEntry();
-  void initStaticPageEditing();
+  void staticPageEditSurface.init();
   startBackgroundPrefetch();
   window.addEventListener("truecost:session-changed", handleSessionChanged);
   document.addEventListener("visibilitychange", handlePublicVisibilityChange);
@@ -375,8 +451,8 @@ function handlePublicWindowFocus() {
 
 function handlePublicPageHide() {
   publicStateStore.clearRefresh();
-  destroyStaticPageOverlay();
-  destroyLiveInvestigationOverlay();
+  staticPageEditSurface.destroyOverlay();
+  investigationDetailSurface.destroy();
   stopPublicStateRepairPeer();
 }
 
@@ -447,12 +523,13 @@ function handleSessionChanged() {
   primeViewerFromSession(hasNostrTools());
   renderNavigation();
   renderGlobalOverlays();
-  destroyStaticPageOverlay();
+  staticPageEditSurface.destroyOverlay();
+  investigationDetailSurface.destroy();
   state.staticEdit = null;
   if (state.session) {
     void hydrateNotifications(true);
   }
-  void initStaticPageEditing();
+  void staticPageEditSurface.init();
 }
 
 function renderNavigation() {
@@ -599,87 +676,6 @@ async function initAuthoringEntry() {
   host.innerHTML = `<a class="button" href="./editor.html">Create investigation</a>`;
 }
 
-async function initStaticPageEditing() {
-  const pageId = document.body.dataset.page || "";
-  if (!STATIC_EDITABLE_PAGES.has(pageId) || state.pageOverlay) return;
-  const editableElements = [...document.querySelectorAll("[data-static-edit]")].filter(
-    (node) => node instanceof HTMLElement
-  );
-  if (!editableElements.length) return;
-
-  const publicState = await getPublicState().catch(() => null);
-  if (!publicState) return;
-
-  const committedContent = collectStaticEditContent(editableElements);
-  const publishedDraft = latestApprovedPageDraft(publicState, pageId);
-  const publishedContent = publishedDraft?.page_content && typeof publishedDraft.page_content === "object"
-    ? mergeStaticEditContent(publishedDraft.page_content, committedContent)
-    : cloneStaticEditContent(committedContent);
-  applyStaticEditContent(editableElements, publishedContent, committedContent);
-
-  const params = new URLSearchParams(window.location.search);
-  const draftSlug = cleanSlug(params.get("draft") || "");
-  if (draftSlug && editorEntryAllowed(publicState)) {
-    const localPreviewDraft = findPageDraftPreview(publicState, pageId, draftSlug);
-    const targetedDraft = localPreviewDraft ? null : await loadDraftBySlug(draftSlug);
-    const previewDraft = localPreviewDraft || (
-      targetedDraft &&
-      isPageDraft(targetedDraft) &&
-      cleanSlug(targetedDraft.page_id || "") === pageId
-        ? targetedDraft
-        : null
-    );
-    if (previewDraft) {
-      applyStaticEditContent(editableElements, previewDraft.page_content || {}, publishedContent);
-      renderStaticPageReviewPreview(previewDraft);
-      return;
-    }
-  }
-
-  state.pageOverlay = {
-    pageId,
-    elements: editableElements,
-    committedContent: cloneStaticEditContent(committedContent),
-    publishedContent: cloneStaticEditContent(publishedContent),
-    currentContent: cloneStaticEditContent(publishedContent),
-    liveContent: null,
-    controller: null,
-    status: "idle",
-  };
-
-  void connectLiveStaticPageOverlay();
-
-  if (!editorEntryAllowed(publicState)) return;
-
-  const storedSnapshot = loadStaticEditSnapshot(pageId);
-  const savedContent = cloneStaticEditContent(storedSnapshot?.content || state.pageOverlay.currentContent);
-  state.staticEdit = {
-    pageId,
-    elements: editableElements,
-    originalContent: cloneStaticEditContent(state.pageOverlay.currentContent),
-    savedContent,
-    history: [cloneStaticEditContent(savedContent)],
-    historyIndex: 0,
-    enabled: false,
-    status: storedSnapshot?.savedAt
-      ? `Local snapshot ready from ${formatLocalTimestamp(storedSnapshot.savedAt)}. Press Ctrl+Shift+E to resume it.`
-      : "Press Ctrl+Shift+E to edit this page.",
-    savedAt: Number(storedSnapshot?.savedAt || 0),
-    saveState: storedSnapshot?.savedAt ? "saved" : "idle",
-    pendingLiveContent: null,
-    livePublishTimer: 0,
-  };
-
-  renderStaticEditBar();
-  if (!state.staticEditListenersBound) {
-    document.addEventListener("keydown", handleStaticEditShortcut);
-    document.addEventListener("input", handleStaticEditInput, true);
-    document.addEventListener("paste", handleStaticEditPaste, true);
-    document.addEventListener("click", handleStaticEditInteraction, true);
-    state.staticEditListenersBound = true;
-  }
-}
-
 function hydrateArchiveSummaryLinks(posts, publicState) {
   const hosts = [...document.querySelectorAll("[data-archive-summary]")];
   if (!hosts.length) return;
@@ -714,332 +710,6 @@ function hydrateArchiveSummaryLinks(posts, publicState) {
   for (const host of hosts) {
     if (host instanceof HTMLElement) host.innerHTML = markup;
   }
-}
-
-async function initInvestigationDetail() {
-  const article = document.querySelector("[data-investigation-article]");
-  if (!article) return;
-  destroyLiveInvestigationOverlay();
-  const commentPanel = document.querySelector("[data-comment-panel]");
-  const reviewShell = document.querySelector("[data-investigation-review-shell]");
-  const tagsShell = document.querySelector("[data-investigation-tags-shell]");
-  const tagsHost = document.querySelector("[data-investigation-tags]");
-  const recordsShell = document.querySelector("[data-investigation-records-shell]");
-  const mapShell = document.querySelector("[data-investigation-map-shell]");
-  const mapCanvas = document.querySelector("[data-investigation-map-canvas]");
-  const params = new URLSearchParams(window.location.search);
-  const slug = cleanSlug(params.get("slug") || "");
-  const draftSlug = cleanSlug(params.get("draft") || "");
-  const cachedPosts = clonePosts(state.posts);
-  const cachedPublicState = state.publicState;
-
-  if (!draftSlug && cachedPosts.length) {
-    const cachedPost = cachedPosts.find((item) => item.slug === slug) || cachedPosts[0] || null;
-    if (cachedPost) {
-      if (commentPanel instanceof HTMLElement) commentPanel.innerHTML = "";
-      await renderInvestigationDetailState({
-        article,
-        commentPanel,
-        reviewShell,
-        tagsShell,
-        tagsHost,
-        recordsShell,
-        mapShell,
-        mapCanvas,
-        publicState: cachedPublicState || {
-          approvedEntities: [],
-          commentsByPost: new Map(),
-          commentIndex: new Map(),
-          commentThreadsByPost: new Map(),
-          users: []
-        },
-        posts: cachedPosts,
-        isDraftPreview: false,
-        draft: null
-      }, cachedPost, {
-        refreshComments: true
-      });
-    } else {
-      article.innerHTML = renderLoadingState("Looking up article...");
-      if (commentPanel) commentPanel.innerHTML = renderLoadingState("Looking up discussion...");
-    }
-  } else {
-    article.innerHTML = renderLoadingState("Looking up article...");
-    if (commentPanel) commentPanel.innerHTML = renderLoadingState("Looking up discussion...");
-  }
-
-  try {
-    const posts = await refreshPosts();
-    const publicState = await getPublicState();
-    const canReview = editorEntryAllowed(publicState);
-    let draft = draftSlug
-      ? investigationDrafts(publicState.drafts || []).find((item) => item.slug === draftSlug) || null
-      : null;
-    if (!draft && draftSlug && canReview) {
-      const targetedDraft = await loadDraftBySlug(draftSlug);
-      if (targetedDraft && !isPageDraft(targetedDraft)) draft = targetedDraft;
-    }
-    const isDraftPreview = Boolean(draft && canReview);
-    if (draftSlug && !isDraftPreview) {
-      throw new Error("Draft preview unavailable.");
-    }
-    const post = isDraftPreview
-      ? draftToInvestigationPreview(draft)
-      : posts.find((item) => item.slug === slug) || posts[0];
-    if (!post) throw new Error("No investigations found.");
-
-    state.investigationOverlay = {
-      documentId: investigationDocumentId(draftSlug || post.slug || slug),
-      slug: cleanSlug(draftSlug || post.slug || slug),
-      baselinePost: cloneInvestigationPost(post),
-      currentPost: cloneInvestigationPost(post),
-      liveContent: null,
-      liveFingerprint: "",
-      controller: null,
-      pollTimer: 0,
-      status: "idle",
-      posts,
-      publicState,
-      isDraftPreview,
-      draft,
-      article,
-      commentPanel,
-      reviewShell,
-      tagsShell,
-      tagsHost,
-      recordsShell,
-      mapShell,
-      mapCanvas
-    };
-
-    void connectLiveInvestigationDetailOverlay();
-    await renderInvestigationDetailState(state.investigationOverlay, state.investigationOverlay.currentPost, {
-      refreshComments: true
-    });
-  } catch {
-    renderError(article, "This case file could not be loaded.");
-    destroyLiveInvestigationOverlay();
-    if (reviewShell instanceof HTMLElement) {
-      reviewShell.hidden = true;
-      reviewShell.innerHTML = "";
-    }
-    if (tagsShell instanceof HTMLElement) tagsShell.hidden = true;
-    if (recordsShell instanceof HTMLElement) recordsShell.hidden = true;
-    if (mapShell instanceof HTMLElement) mapShell.hidden = true;
-    if (mapCanvas instanceof HTMLElement) {
-      destroyLeafletPreview(mapCanvas);
-      mapCanvas.innerHTML = "";
-    }
-  }
-}
-
-async function renderInvestigationDetailState(overlayState, post, options = {}) {
-  if (!overlayState || !post) return;
-  const {
-    article,
-    commentPanel,
-    reviewShell,
-    tagsShell,
-    tagsHost,
-    recordsShell,
-    mapShell,
-    mapCanvas,
-    publicState,
-    posts,
-    isDraftPreview,
-    draft
-  } = overlayState;
-  const refreshComments = Boolean(options.refreshComments);
-
-  renderMarkdown(article, post.body);
-  setText("[data-investigation-title]", post.title);
-  setText("[data-investigation-summary]", post.summary);
-  setText("[data-investigation-meta]", buildArticleMetaLine(post));
-  const tags = document.querySelector("[data-investigation-kicker]");
-  if (tags) tags.innerHTML = renderTagList(post.tags);
-  if (tagsHost instanceof HTMLElement && tagsShell instanceof HTMLElement) {
-    const hasTags = Array.isArray(post.tags) && post.tags.length;
-    tagsHost.innerHTML = hasTags ? renderTagList(post.tags) : "";
-    tagsShell.hidden = !hasTags;
-  }
-  const records = document.querySelector("[data-investigation-records]");
-  if (records) {
-    const hasRecords = Array.isArray(post.records) && post.records.length;
-    records.innerHTML = renderRecordList(post.records);
-    if (recordsShell instanceof HTMLElement) recordsShell.hidden = !hasRecords;
-  }
-  const related = document.querySelector("[data-investigation-related]");
-  if (related) {
-    related.innerHTML = isDraftPreview
-      ? ""
-      : posts
-          .filter((item) => item.slug !== post.slug)
-          .slice(0, 2)
-          .map((item) => renderInvestigationCard(item, true))
-          .join("");
-  }
-
-  enrichArticleEntities(article, publicState);
-  if (reviewShell instanceof HTMLElement) {
-    if (isDraftPreview && draft) {
-      reviewShell.hidden = false;
-      reviewShell.innerHTML = renderReviewPreviewPanel(draft);
-      bindReviewPreviewPanel(reviewShell, draft);
-    } else {
-      reviewShell.hidden = true;
-      reviewShell.innerHTML = "";
-    }
-  }
-  if (mapShell instanceof HTMLElement && mapCanvas instanceof HTMLElement) {
-    const detailEntities = archiveEntitiesForEntries([post], publicState);
-    const mappedEntities = detailEntities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng));
-    if (mappedEntities.length) {
-      mapShell.hidden = false;
-      renderLeafletPreviewMap(mapCanvas, mappedEntities, queueLeafletBoundsFit);
-    } else {
-      mapShell.hidden = true;
-      destroyLeafletPreview(mapCanvas);
-      mapCanvas.innerHTML = "";
-    }
-  }
-  if (commentPanel instanceof HTMLElement) {
-    commentPanel.hidden = isDraftPreview;
-    if (refreshComments && !isDraftPreview) {
-      await renderComments(post.slug, publicState);
-    } else if (isDraftPreview) {
-      commentPanel.innerHTML = "";
-    }
-  }
-  document.title = `${post.title} | ${SITE.shortName}`;
-}
-
-async function connectLiveInvestigationDetailOverlay() {
-  const overlayState = state.investigationOverlay;
-  if (!overlayState?.documentId || overlayState.controller) return;
-
-  try {
-    const secretKeyHex = await getRequestSignerSecretKey();
-    if (!secretKeyHex) return;
-    overlayState.controller = await connectStructuredUnitOverlay({
-      documentId: overlayState.documentId,
-      secretKeyHex,
-      kind: SITE.nostr.kinds.collabDocument,
-      getTrustedPubkeys: () => trustedAdminPubkeys(state.publicState),
-      canPublish: () => false,
-      onRemoteContent: (content, detail) => {
-        void handleLiveInvestigationContent(content, detail);
-      },
-      onStatus: (detail) => handleLiveInvestigationStatus(detail),
-    });
-    const initialContent = overlayState.controller?.getContent?.() || {};
-    if (Object.keys(initialContent).length) {
-      await handleLiveInvestigationContent(initialContent, {
-        documentId: overlayState.documentId,
-        hasLiveContent: true,
-        origin: "initial"
-      });
-    }
-    startLiveInvestigationPolling(overlayState);
-  } catch {
-    return;
-  }
-}
-
-function destroyLiveInvestigationOverlay() {
-  if (state.investigationOverlay?.pollTimer) {
-    window.clearInterval(state.investigationOverlay.pollTimer);
-    state.investigationOverlay.pollTimer = 0;
-  }
-  try {
-    state.investigationOverlay?.controller?.destroy?.();
-  } catch {
-    return;
-  } finally {
-    state.investigationOverlay = null;
-  }
-}
-
-function handleLiveInvestigationStatus(detail) {
-  if (!state.investigationOverlay || detail?.documentId !== state.investigationOverlay.documentId) return;
-  state.investigationOverlay.status = String(detail?.state || "idle");
-}
-
-async function handleLiveInvestigationContent(content, detail) {
-  const overlayState = state.investigationOverlay;
-  if (!overlayState || detail?.documentId !== overlayState.documentId) return;
-  overlayState.liveFingerprint = detail?.hasLiveContent ? JSON.stringify(content || {}) : "";
-  const nextPost = detail?.hasLiveContent
-    ? mergeInvestigationPostOverlay(overlayState.baselinePost, content)
-    : cloneInvestigationPost(overlayState.baselinePost);
-  overlayState.liveContent = detail?.hasLiveContent ? cloneInvestigationPost(content) : null;
-  overlayState.currentPost = cloneInvestigationPost(nextPost);
-  await renderInvestigationDetailState(overlayState, overlayState.currentPost, {
-    refreshComments: false
-  });
-}
-
-function startLiveInvestigationPolling(overlayState) {
-  if (!overlayState?.controller || overlayState.pollTimer) return;
-  overlayState.pollTimer = window.setInterval(() => {
-    const current = overlayState.controller?.getContent?.() || {};
-    const fingerprint = Object.keys(current).length ? JSON.stringify(current) : "";
-    if (fingerprint === overlayState.liveFingerprint) return;
-    void handleLiveInvestigationContent(current, {
-      documentId: overlayState.documentId,
-      hasLiveContent: Boolean(fingerprint),
-      origin: "poll"
-    });
-  }, 1500);
-}
-
-function investigationDocumentId(value) {
-  const slug = cleanSlug(value || "");
-  return slug ? `investigation:${slug}` : "";
-}
-
-function mergeInvestigationPostOverlay(basePost, liveContent) {
-  const base = cloneInvestigationPost(basePost);
-  const live = liveContent && typeof liveContent === "object" ? liveContent : {};
-  const next = {
-    ...base,
-    body: Object.prototype.hasOwnProperty.call(live, "markdown")
-      ? String(live.markdown || "")
-      : Object.prototype.hasOwnProperty.call(live, "body")
-        ? String(live.body || "")
-        : base.body,
-    markdown: Object.prototype.hasOwnProperty.call(live, "markdown")
-      ? String(live.markdown || "")
-      : Object.prototype.hasOwnProperty.call(live, "body")
-        ? String(live.body || "")
-        : String(base.markdown || base.body || "")
-  };
-  for (const key of ["title", "date", "summary", "location", "status", "statusLabel", "author_pubkey"]) {
-    if (Object.prototype.hasOwnProperty.call(live, key)) {
-      next[key] = String(live[key] ?? "");
-    }
-  }
-  if (Object.prototype.hasOwnProperty.call(live, "tags")) {
-    next.tags = normalizeLiveArray(live.tags);
-  }
-  if (Object.prototype.hasOwnProperty.call(live, "entity_refs")) {
-    next.entity_refs = normalizeLiveArray(live.entity_refs);
-  }
-  if (Object.prototype.hasOwnProperty.call(live, "records")) {
-    next.records = Array.isArray(live.records) ? JSON.parse(JSON.stringify(live.records)) : [];
-  }
-  if (Object.prototype.hasOwnProperty.call(live, "featured")) {
-    next.featured = Boolean(live.featured);
-  }
-  return next;
-}
-
-function cloneInvestigationPost(post) {
-  return JSON.parse(JSON.stringify(post || {}));
-}
-
-function normalizeLiveArray(value) {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => String(item ?? "").trim()).filter(Boolean);
 }
 
 async function initMarkdownArticles() {
@@ -1171,7 +841,12 @@ async function renderComments(postSlug, publicState) {
                 comment,
                 publicState,
                 { isAdmin, canReply: isLoggedIn, canVote: isLoggedIn, replyTargetId, viewerPubkey },
-                { formatDateTime, renderAvatarBadge, renderInlineReplyForm, renderMiniMarkdown }
+                {
+                  formatDateTime,
+                  renderAvatarBadge,
+                  renderInlineReplyForm,
+                  renderMiniMarkdown: (markdown) => renderMiniMarkdown(markdown, sanitizeTrustedHtml)
+                }
               )
             )
             .join("")}</div>`
@@ -2005,116 +1680,6 @@ function destroyLeafletMap() {
   destroySurfaceLeafletMap(state);
 }
 
-function normalizeDraftStatus(status) {
-  return String(status || "").trim().toLowerCase();
-}
-
-function isPageDraft(draft) {
-  return String(draft?.content_type || "").trim().toLowerCase() === "page" &&
-    STATIC_EDITABLE_PAGES.has(cleanSlug(draft?.page_id || ""));
-}
-
-function investigationDrafts(drafts) {
-  return (Array.isArray(drafts) ? drafts : []).filter((draft) => !isPageDraft(draft));
-}
-
-function pageDrafts(drafts) {
-  return (Array.isArray(drafts) ? drafts : []).filter((draft) => isPageDraft(draft));
-}
-
-function staticPageMeta(pageId) {
-  return STATIC_PAGE_META[cleanSlug(pageId || "")] || { title: "Static page", path: "./index.html" };
-}
-
-function staticPageDraftSlug(pageId) {
-  return `page-${cleanSlug(pageId || "")}`;
-}
-
-function staticPageSummary(content) {
-  const plainText = Object.values(content || {})
-    .map((value) => stripHtml(String(value || "")).trim())
-    .filter(Boolean);
-  return trimmed(plainText.find((value) => value.length > 40) || plainText.join(" "), 180);
-}
-
-function stripHtml(value) {
-  return String(value || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function buildStaticPageDraftPayload(pageId, content) {
-  const cleanPageId = cleanSlug(pageId || "");
-  const meta = staticPageMeta(cleanPageId);
-  const titleKey = cleanPageId === "home" ? "home.hero.title" : `${cleanPageId}.hero.title`;
-  const ledeKey = cleanPageId === "home" ? "home.hero.lede" : `${cleanPageId}.hero.lede`;
-  const title = stripHtml(content?.[titleKey] || meta.title) || meta.title;
-  const summary = stripHtml(content?.[ledeKey] || staticPageSummary(content));
-  return {
-    slug: staticPageDraftSlug(cleanPageId),
-    content_type: "page",
-    page_id: cleanPageId,
-    page_path: meta.path,
-    title,
-    summary: summary || `${meta.title} update`,
-    status: "candidate",
-    date: new Date().toISOString().slice(0, 10),
-    markdown: "",
-    tags: [],
-    entity_refs: [],
-    page_content: cloneStaticEditContent(content),
-    author_pubkey: state.viewer?.pubkey || ""
-  };
-}
-
-function findPageDraftPreview(publicState, pageId, draftSlug) {
-  const cleanPageId = cleanSlug(pageId || "");
-  return pageDrafts(publicState?.drafts || []).find(
-    (draft) => draft.slug === draftSlug && cleanSlug(draft.page_id || "") === cleanPageId
-  ) || null;
-}
-
-function latestApprovedPageDraft(publicState, pageId) {
-  const cleanPageId = cleanSlug(pageId || "");
-  const history = publicState?.draftHistoryBySlug?.get?.(staticPageDraftSlug(cleanPageId)) || [];
-  return history.find(
-    (draft) => isPageDraft(draft) && cleanSlug(draft.page_id || "") === cleanPageId && normalizeDraftStatus(draft.status) === "approved"
-  ) || null;
-}
-
-function pageDraftHref(draft, statusOverride = "") {
-  const pageId = cleanSlug(draft?.page_id || "");
-  const meta = staticPageMeta(pageId);
-  const status = normalizeDraftStatus(statusOverride || draft?.status);
-  if (["revision", "approved", "denied"].includes(status)) return meta.path;
-  return `${meta.path}?draft=${encodeURIComponent(draft.slug)}`;
-}
-
-function pageDraftActionLabel(draft, statusOverride = "") {
-  const status = normalizeDraftStatus(statusOverride || draft?.status);
-  return ["revision", "approved", "denied"].includes(status) ? "Open page" : "Open preview";
-}
-
-function pageDraftLabel(draft) {
-  const meta = staticPageMeta(draft?.page_id || "");
-  return meta.title;
-}
-
-function draftReviewAction(draft) {
-  const tag = Array.isArray(draft?._event?.tags)
-    ? draft._event.tags.find((item) => Array.isArray(item) && item[0] === "review")
-    : null;
-  return String(tag?.[1] || "").trim().toLowerCase();
-}
-
-function draftStatusLabel(status, reviewAction = "") {
-  const clean = normalizeDraftStatus(status);
-  const action = String(reviewAction || "").trim().toLowerCase();
-  if (["candidate", "review", "submitted"].includes(clean)) return "Submitted";
-  if (clean === "approved") return "Approved";
-  if (clean === "revision" || action === "revise") return "Revision requested";
-  if (clean === "denied" || action === "deny") return "Denied";
-  return "Draft";
-}
-
 function renderRecordList(records) {
   if (!Array.isArray(records) || !records.length) {
     return `<div class="empty-state">No structured notes attached to this post.</div>`;
@@ -2132,7 +1697,7 @@ function renderRecordList(records) {
 }
 
 function renderMarkdown(node, markdown) {
-  node.innerHTML = renderMarkedHtml(markdown, { breaks: false, articleImages: true });
+  node.innerHTML = renderMarkedHtml(markdown, { breaks: false, articleImages: true }, sanitizeTrustedHtml);
 
   for (const heading of node.querySelectorAll("h2, h3")) {
     heading.id = heading.id || slugify(heading.textContent || "section");
@@ -2150,24 +1715,6 @@ function renderMarkdown(node, markdown) {
 function enrichArticleEntities(scope, publicState) {
   if (!scope || !publicState?.approvedEntities?.length) return;
   enrichEntityReferences(scope, publicState.approvedEntities);
-}
-
-function buildToc(article, target) {
-  if (!target) return;
-  const items = [...article.querySelectorAll("h2, h3")];
-  if (!items.length) {
-    target.innerHTML = "<p>No sections available.</p>";
-    return;
-  }
-  target.innerHTML = items
-    .map(
-      (item) => `
-        <a class="toc-link toc-link--${item.tagName.toLowerCase()}" href="#${escapeAttribute(item.id)}">
-          ${escapeHtml(item.textContent || "")}
-        </a>
-      `
-    )
-    .join("");
 }
 
 async function loadPosts() {
@@ -2353,104 +1900,6 @@ function buildEntityUsage(posts, entities) {
   return usage;
 }
 
-function draftOwnerPubkey(draft) {
-  const revisions = Array.isArray(draft?.revisions) ? draft.revisions : [];
-  const oldest = revisions.length ? revisions[revisions.length - 1] : null;
-  return String(oldest?.author || draft?.author || "").trim().toLowerCase();
-}
-
-function draftToInvestigationPreview(draft) {
-  const reviewAction = draftReviewAction(draft);
-  return {
-    ...draft,
-    body: draft.markdown || "",
-    statusLabel: draftStatusLabel(draft.status, reviewAction),
-    records: [],
-    tags: Array.isArray(draft.tags) ? draft.tags : [],
-    title: draft.title || "Untitled investigation",
-    summary: draft.summary || "No summary added yet.",
-    location: draft.location || "Draft location pending"
-  };
-}
-
-function renderReviewPreviewPanel(draft) {
-  const status = normalizeDraftStatus(draft.status);
-  const owner = state.publicState?.users?.find((user) => user.pubkey === draftOwnerPubkey(draft)) || null;
-  const ownerLabel = owner?.displayName || owner?.username || shortReviewKey(draftOwnerPubkey(draft));
-  const reviewAction = draftReviewAction(draft);
-  const canReview = ["candidate", "review", "submitted"].includes(status);
-  const isPage = isPageDraft(draft);
-  const previewLabel = isPage ? "Page review" : "Review preview";
-  const openHref = isPage
-    ? pageDraftHref(draft, draft.status)
-    : normalizeDraftStatus(draft.status) === "revision"
-      ? `./editor.html?slug=${encodeURIComponent(draft.slug)}`
-      : "./investigations.html";
-  const openLabel = isPage
-    ? pageDraftActionLabel(draft, draft.status)
-    : normalizeDraftStatus(draft.status) === "revision"
-      ? "Open in editor"
-      : "Back to investigations";
-  return `
-    <div class="eyebrow">${escapeHtml(previewLabel)}</div>
-    <h3>${escapeHtml(draftStatusLabel(status, reviewAction))}</h3>
-    <p class="muted-text">Submitted by ${escapeHtml(ownerLabel)}. This view is read-only so the review decision happens against what was actually submitted.</p>
-    <div class="tag-row">
-      <span class="tag">${escapeHtml(isPage ? pageDraftLabel(draft) : "Investigation")}</span>
-      <span class="tag">${escapeHtml(draftStatusLabel(status, reviewAction))}</span>
-      <span class="tag">${escapeHtml(formatDate(draft.date))}</span>
-    </div>
-    <div class="button-row button-row--tight">
-      ${
-        canReview
-          ? `
-            <button class="button" type="button" data-review-action="approve" data-draft-slug="${escapeAttribute(draft.slug)}">Approve</button>
-            <button class="button-ghost" type="button" data-review-action="revise" data-draft-slug="${escapeAttribute(draft.slug)}">Request revision</button>
-            <button class="button-ghost" type="button" data-review-action="deny" data-draft-slug="${escapeAttribute(draft.slug)}">Deny</button>
-          `
-          : `<a class="button-ghost" href="${escapeAttribute(openHref)}">${escapeHtml(openLabel)}</a>`
-      }
-    </div>
-    ${
-      canReview
-        ? ""
-        : `<p class="muted-text">${
-            normalizeDraftStatus(draft.status) === "revision"
-              ? isPage
-                ? "Revision has been requested on this page update."
-                : "Revision has been requested on this investigation."
-              : isPage
-                ? "This page update is not waiting for review right now."
-                : "This investigation is not waiting for review right now."
-          }</p>`
-    }
-  `;
-}
-
-function bindReviewPreviewPanel(panel, draft) {
-  const buttons = panel.querySelectorAll("[data-review-action]");
-  for (const button of buttons) {
-    button.addEventListener("click", async () => {
-      await publishReviewDecision(panel, draft, button);
-    });
-  }
-}
-
-function renderStaticPageReviewPreview(draft) {
-  const main = document.querySelector(".page-shell main");
-  if (!(main instanceof HTMLElement)) return;
-  let shell = document.querySelector("[data-static-review-shell]");
-  if (!(shell instanceof HTMLElement)) {
-    shell = document.createElement("section");
-    shell.className = "section section--tight";
-    shell.setAttribute("data-static-review-shell", "");
-    main.prepend(shell);
-  }
-  shell.innerHTML = `<div class="wrap"><div class="surface-panel" data-static-review-panel>${renderReviewPreviewPanel(draft)}</div></div>`;
-  const panel = shell.querySelector("[data-static-review-panel]");
-  if (panel instanceof HTMLElement) bindReviewPreviewPanel(panel, draft);
-}
-
 async function publishReviewDecision(panel, draft, button) {
   const action = button.getAttribute("data-review-action") || "";
   let statusBox = panel.querySelector("[data-review-status]");
@@ -2509,199 +1958,10 @@ async function publishReviewDecision(panel, draft, button) {
   }
 }
 
-function reviewStatusForAction(action) {
-  if (action === "approve") return "approved";
-  if (action === "deny") return "denied";
-  return "revision";
-}
-
-function reviewActionMessage(action, draft = null) {
-  if (isPageDraft(draft)) {
-    if (action === "approve") return "Page update approved for publish.";
-    if (action === "deny") return "Page update denied.";
-    return "Revision requested on this page update.";
-  }
-  if (action === "approve") return "Investigation approved for publish.";
-  if (action === "deny") return "Investigation denied.";
-  return "Revision requested.";
-}
-
 async function hydrateNotifications(force = false) {
   const publicState = await getPublicState();
   primeViewerFromSession(false);
   await notificationState.hydrate({ publicState, force });
-}
-
-async function buildNotifications(publicState) {
-  const viewer = state.viewer;
-  if (!viewer) return [];
-  const notifications = [];
-  const isAdmin = publicStateHasAdminPubkey(publicState, viewer.pubkey);
-  const commentMap = new Map((publicState.allComments || []).map((comment) => [comment.id, comment]));
-
-  for (const comment of publicState.comments || []) {
-    if (!comment.parent_id || comment.author === viewer.pubkey) continue;
-    const parent = commentMap.get(comment.parent_id);
-    if (!parent || parent.author !== viewer.pubkey) continue;
-    notifications.push({
-      id: `comment-reply:${comment.id}`,
-      createdAt: comment.created_at,
-      href: `./investigation.html?slug=${encodeURIComponent(comment.post_slug)}#comment-${encodeURIComponent(comment.id)}`,
-      label: "Comment reply",
-      title: "Someone replied to your comment",
-      detail: trimmed(comment.markdown, 100)
-    });
-  }
-
-  for (const status of publicState.submissionStatuses?.values?.() || []) {
-    if (status.author_pubkey !== viewer.pubkey || status.by === viewer.pubkey) continue;
-    notifications.push({
-      id: `submission-status:${status.submission_id}:${status.updated_at}`,
-      createdAt: status.updated_at,
-      href: "./submit.html",
-      label: "Submission update",
-      title: `Submission ${status.status}`,
-      detail: status.note || "A submission you sent has a new status."
-    });
-  }
-
-  for (const draft of publicState.drafts || []) {
-    const reviewAction = draftReviewAction(draft);
-    const ownerPubkey = draftOwnerPubkey(draft);
-    const isPending = ["candidate", "review", "submitted"].includes(normalizeDraftStatus(draft.status));
-    const isPage = isPageDraft(draft);
-    const reviewHref = isPage
-      ? pageDraftHref(draft, draft.status)
-      : normalizeDraftStatus(draft.status) === "revision"
-        ? `./editor.html?slug=${encodeURIComponent(draft.slug)}`
-        : `./investigation.html?draft=${encodeURIComponent(draft.slug)}`;
-    const reviewLabel = isPage ? "Page review" : "Investigation review";
-    const reviewDetail = isPage ? pageDraftLabel(draft) : draft.title;
-    if (ownerPubkey === viewer.pubkey && ["approve", "revise", "deny"].includes(reviewAction)) {
-      notifications.push({
-        id: `draft-review:${draft.slug}:${draft.created_at}`,
-        createdAt: draft.created_at,
-        href: reviewHref,
-        label: reviewLabel,
-        title: reviewNotificationTitle(reviewAction, isPage),
-        detail: reviewDetail
-      });
-    }
-    if (isAdmin && isPending) {
-      notifications.push({
-        id: `pending-draft:${draft.slug}:${draft.created_at}`,
-        createdAt: draft.created_at,
-        href: isPage ? pageDraftHref(draft, "candidate") : `./investigation.html?draft=${encodeURIComponent(draft.slug)}`,
-        label: "Review queue",
-        title: isPage ? "New page update pending review" : "New investigation pending review",
-        detail: reviewDetail
-      });
-    }
-  }
-
-  if (isAdmin) {
-    for (const comment of publicState.comments || []) {
-      if (comment.author === viewer.pubkey) continue;
-      notifications.push({
-        id: `post-comment:${comment.id}`,
-        createdAt: comment.created_at,
-        href: `./investigation.html?slug=${encodeURIComponent(comment.post_slug)}#comment-${encodeURIComponent(comment.id)}`,
-        label: "Post reply",
-        title: "New comment on a published investigation",
-        detail: trimmed(comment.markdown, 100)
-      });
-    }
-  }
-
-  const submissionNotifications = await loadSubmissionNotifications(publicState, viewer.pubkey, isAdmin);
-  notifications.push(...submissionNotifications);
-
-  return notifications
-    .sort((left, right) => right.createdAt - left.createdAt)
-    .filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index);
-}
-
-async function loadSubmissionNotifications(publicState, viewerPubkey, isAdmin) {
-  if (!state.session?.secretKeyHex) return [];
-  const notifications = [];
-  const knownSitePubkeys = notificationSitePubkeys(publicState);
-  const ownSubmissions = await loadUserSubmissions(state.session.secretKeyHex).catch(() => []);
-  const ownThreads = await Promise.all(
-    ownSubmissions.slice(0, 8).map(async (submission) => ({
-      submissionId: submission.id,
-      messages: await loadSubmissionThread(state.session.secretKeyHex, submission.id, knownSitePubkeys).catch(() => [])
-    }))
-  );
-  for (const thread of ownThreads) {
-    for (const message of thread.messages) {
-      if (message.author === viewerPubkey) continue;
-      notifications.push({
-        id: `submission-chat:${thread.submissionId}:${message.id}`,
-        createdAt: Number(message.event?.created_at || 0),
-        href: `./submit.html?chat=${encodeURIComponent(thread.submissionId)}`,
-        label: "Submission chat",
-        title: "New message in a submission thread",
-        detail: trimmed(message.payload?.body || "", 100)
-      });
-    }
-  }
-  if (isAdmin) {
-    const activeSitePubkey = state.publicState?.siteInfo?.activePubkey || "";
-    const share = activeSitePubkey
-      ? await loadAdminKeyShare(state.session.secretKeyHex, activeSitePubkey).catch(() => null)
-      : null;
-    if (share?.siteSecretKeyHex) {
-      const inboxSubmissions = await loadInboxSubmissions(share.siteSecretKeyHex).catch(() => []);
-      const inboxThreads = await Promise.all(
-        inboxSubmissions.slice(0, 8).map(async (submission) => ({
-          submissionId: submission.id,
-          messages: await loadSubmissionThread(share.siteSecretKeyHex, submission.id, [submission.author]).catch(() => [])
-        }))
-      );
-      for (const thread of inboxThreads) {
-        for (const message of thread.messages) {
-          if (message.author === viewerPubkey) continue;
-          notifications.push({
-            id: `admin-chat:${thread.submissionId}:${message.id}`,
-            createdAt: Number(message.event?.created_at || 0),
-            href: `./admin.html?tab=submissions&chat=${encodeURIComponent(thread.submissionId)}&with=${encodeURIComponent(submissionAuthor(thread.submissionId, inboxSubmissions))}`,
-            label: "Submission chat",
-            title: "New submission message in the shared inbox",
-            detail: trimmed(message.payload?.body || "", 100)
-          });
-        }
-      }
-    }
-  }
-  return notifications;
-}
-
-function submissionAuthor(submissionId, submissions) {
-  return submissions.find((submission) => submission.id === submissionId)?.author || "";
-}
-
-function notificationSitePubkeys(publicState) {
-  return dedupe([
-    publicState?.siteInfo?.activePubkey || "",
-    publicState?.siteInfo?.fallbackPubkey || "",
-    ...((publicState?.siteInfo?.events || []).map((event) => event.site_pubkey || ""))
-  ]);
-}
-
-function reviewNotificationTitle(action, isPage = false) {
-  if (isPage) {
-    if (action === "approve") return "Your page update was approved";
-    if (action === "deny") return "A page update was denied";
-    return "Revision was requested on your page update";
-  }
-  if (action === "approve") return "Your investigation was approved";
-  if (action === "deny") return "An investigation was denied";
-  return "Revision was requested on your investigation";
-}
-
-function shortReviewKey(value) {
-  const clean = String(value || "").trim();
-  return clean.length > 12 ? `${clean.slice(0, 8)}...${clean.slice(-4)}` : clean || "Editor";
 }
 
 function renderEntityCard(entity, posts) {
@@ -3016,522 +2276,6 @@ async function fetchText(path) {
   return response.text();
 }
 
-async function connectLiveStaticPageOverlay() {
-  const overlayState = state.pageOverlay;
-  if (!overlayState?.pageId || overlayState.controller) return;
-
-  try {
-    const secretKeyHex = await getRequestSignerSecretKey();
-    if (!secretKeyHex) return;
-    overlayState.controller = await connectStaticPageOverlay({
-      pageId: overlayState.pageId,
-      secretKeyHex,
-      kind: SITE.nostr.kinds.collabDocument,
-      getTrustedPubkeys: () => trustedAdminPubkeys(state.publicState),
-      canPublish: () => editorEntryAllowed(state.publicState),
-      onRemoteContent: (content, detail) => handleLiveStaticPageContent(content, detail),
-      onStatus: (detail) => handleLiveStaticPageStatus(detail),
-    });
-  } catch {
-    return;
-  }
-}
-
-function destroyStaticPageOverlay() {
-  try {
-    state.pageOverlay?.controller?.destroy?.();
-  } catch {
-    return;
-  } finally {
-    state.pageOverlay = null;
-  }
-}
-
-function handleLiveStaticPageStatus(detail) {
-  if (!state.pageOverlay || detail?.pageId !== state.pageOverlay.pageId) return;
-  state.pageOverlay.status = String(detail?.state || "idle");
-}
-
-function handleLiveStaticPageContent(content, detail) {
-  const overlayState = state.pageOverlay;
-  if (!overlayState || detail?.pageId !== overlayState.pageId) return;
-
-  const fallback = overlayState.publishedContent || overlayState.committedContent;
-  const nextContent = detail?.hasLiveContent
-    ? cloneStaticEditContent(content)
-    : cloneStaticEditContent(fallback);
-
-  overlayState.liveContent = detail?.hasLiveContent ? cloneStaticEditContent(content) : null;
-  overlayState.currentContent = cloneStaticEditContent(nextContent);
-
-  if (state.staticEdit?.enabled) {
-    if (!staticEditContentMatches(state.staticEdit.history[state.staticEdit.historyIndex], nextContent)) {
-      state.staticEdit.pendingLiveContent = cloneStaticEditContent(nextContent);
-      state.staticEdit.status = "New live page updates are available. Snapshot or leave edit mode to refresh.";
-      renderStaticEditBar();
-    }
-    return;
-  }
-
-  applyStaticEditContent(overlayState.elements, nextContent, fallback);
-
-  if (state.staticEdit) {
-    state.staticEdit.originalContent = cloneStaticEditContent(nextContent);
-    if (!state.staticEdit.savedAt) {
-      state.staticEdit.savedContent = cloneStaticEditContent(nextContent);
-      state.staticEdit.history = [cloneStaticEditContent(nextContent)];
-      state.staticEdit.historyIndex = 0;
-      state.staticEdit.saveState = "idle";
-    }
-    if (!state.staticEdit.enabled) {
-      state.staticEdit.status = state.staticEdit.savedAt
-        ? `Local snapshot ready from ${formatLocalTimestamp(state.staticEdit.savedAt)}. Press Ctrl+Shift+E to resume it.`
-        : "Press Ctrl+Shift+E to edit this page.";
-      renderStaticEditBar();
-    }
-  }
-}
-
-function queueStaticEditLivePublish() {
-  const editState = state.staticEdit;
-  const overlayState = state.pageOverlay;
-  if (!editState?.enabled || !overlayState?.controller) return;
-  if (editState.livePublishTimer) window.clearTimeout(editState.livePublishTimer);
-  editState.livePublishTimer = window.setTimeout(async () => {
-    editState.livePublishTimer = 0;
-    try {
-      const nextContent = collectStaticEditContent(editState.elements);
-      const changed = await overlayState.controller.setContent(nextContent);
-      if (changed) {
-        await overlayState.controller.flush?.().catch(() => null);
-        overlayState.currentContent = cloneStaticEditContent(nextContent);
-      }
-    } catch {
-      return;
-    }
-  }, 220);
-}
-
-function renderStaticEditBar() {
-  const editState = state.staticEdit;
-  if (!editState) return;
-  let bar = document.querySelector("[data-static-edit-bar]");
-  if (!(bar instanceof HTMLElement)) {
-    bar = document.createElement("div");
-    bar.className = "static-edit-bar";
-    bar.setAttribute("data-static-edit-bar", "");
-    document.body.append(bar);
-  }
-  bar.classList.toggle("is-visible", editState.enabled);
-  bar.innerHTML = `
-    <div class="static-edit-bar__copy">
-      <strong>Page edit mode</strong>
-      <span>${escapeHtml(editState.status || "Edit directly on the page.")}</span>
-    </div>
-    <div class="static-edit-bar__actions">
-      <button class="button-ghost static-edit-bar__button" type="button" data-static-edit-close>Close</button>
-      <button class="button-ghost static-edit-bar__button" type="button" data-static-edit-revert>Revert</button>
-      <button class="button-ghost static-edit-bar__button" type="button" data-static-edit-undo ${editState.historyIndex > 0 ? "" : "disabled"}>Undo</button>
-      <button class="button-ghost static-edit-bar__button" type="button" data-static-edit-redo ${editState.historyIndex < editState.history.length - 1 ? "" : "disabled"}>Redo</button>
-      <button class="button static-edit-bar__button" type="button" data-static-edit-snapshot>Snapshot</button>
-    </div>
-  `;
-}
-
-function handleStaticEditShortcut(event) {
-  if (!state.staticEdit) return;
-  if (event.key === "Escape" && state.staticEdit.enabled) {
-    event.preventDefault();
-    cancelStaticEditChanges();
-    return;
-  }
-  if (!event.ctrlKey || !event.shiftKey || event.key.toLowerCase() !== "e") return;
-  event.preventDefault();
-  toggleStaticEditMode();
-}
-
-function toggleStaticEditMode(force) {
-  const editState = state.staticEdit;
-  if (!editState) return;
-  const next = typeof force === "boolean" ? force : !editState.enabled;
-  if (next && editState.savedAt) {
-    applyStaticEditContent(editState.elements, editState.savedContent, editState.originalContent);
-  }
-  editState.enabled = next;
-  document.body.classList.toggle("is-static-editing", next);
-  for (const element of editState.elements) {
-    element.contentEditable = next ? "true" : "false";
-    element.spellcheck = next;
-    element.classList.toggle("static-edit-target", next);
-  }
-  if (!next && editState.pendingLiveContent) {
-    applyStaticEditContent(editState.elements, editState.pendingLiveContent, editState.originalContent);
-    editState.originalContent = cloneStaticEditContent(editState.pendingLiveContent);
-    editState.pendingLiveContent = null;
-  }
-  editState.status = next
-    ? editState.savedAt
-      ? `Editing local snapshot from ${formatLocalTimestamp(editState.savedAt)}.`
-      : "Editing this page directly. Snapshot when ready."
-    : editState.savedAt
-      ? `Local snapshot saved ${formatLocalTimestamp(editState.savedAt)}.`
-      : "Press Ctrl+Shift+E to edit this page.";
-  renderStaticEditBar();
-}
-
-function handleStaticEditInteraction(event) {
-  const editState = state.staticEdit;
-  if (!editState) return;
-  const target = event.target;
-  if (!(target instanceof Element)) return;
-
-  const action = target.closest("[data-static-edit-snapshot], [data-static-edit-undo], [data-static-edit-redo], [data-static-edit-revert], [data-static-edit-close]");
-  if (action instanceof HTMLElement) {
-    event.preventDefault();
-    if (action.hasAttribute("data-static-edit-close")) {
-      cancelStaticEditChanges();
-      return;
-    }
-    if (action.hasAttribute("data-static-edit-snapshot")) {
-      void saveStaticEditSnapshot();
-      return;
-    }
-    if (action.hasAttribute("data-static-edit-undo")) {
-      stepStaticEditHistory(-1);
-      return;
-    }
-    if (action.hasAttribute("data-static-edit-redo")) {
-      stepStaticEditHistory(1);
-      return;
-    }
-    if (action.hasAttribute("data-static-edit-revert")) {
-      revertStaticEditToPublished();
-    }
-    return;
-  }
-
-  if (!editState.enabled) return;
-  const editable = target.closest("[data-static-edit]");
-  if (!(editable instanceof HTMLElement)) return;
-  const link = target.closest("a");
-  if (link) {
-    event.preventDefault();
-  }
-}
-
-function handleStaticEditInput(event) {
-  const editState = state.staticEdit;
-  if (!editState?.enabled) return;
-  const target = event.target;
-  if (!(target instanceof HTMLElement) || !target.matches("[data-static-edit]")) return;
-  queueStaticEditHistory();
-  queueStaticEditLivePublish();
-}
-
-function handleStaticEditPaste(event) {
-  const editState = state.staticEdit;
-  if (!editState?.enabled) return;
-  const target = event.target;
-  if (!(target instanceof HTMLElement) || !target.matches("[data-static-edit]")) return;
-  event.preventDefault();
-  const text = event.clipboardData?.getData("text/plain") || "";
-  if (!text) return;
-  document.execCommand("insertText", false, text);
-}
-
-function queueStaticEditHistory() {
-  const editState = state.staticEdit;
-  if (!editState) return;
-  if (editState.historyTimer) window.clearTimeout(editState.historyTimer);
-  editState.historyTimer = window.setTimeout(() => {
-    editState.historyTimer = 0;
-    const nextContent = collectStaticEditContent(editState.elements);
-    const currentContent = editState.history[editState.historyIndex] || editState.originalContent;
-    if (staticEditContentMatches(currentContent, nextContent)) return;
-    editState.history = editState.history.slice(0, editState.historyIndex + 1);
-    editState.history.push(cloneStaticEditContent(nextContent));
-    editState.historyIndex = editState.history.length - 1;
-    editState.saveState = "dirty";
-    editState.status = "Unsaved page edits.";
-    renderStaticEditBar();
-  }, 120);
-}
-
-function stepStaticEditHistory(direction) {
-  const editState = state.staticEdit;
-  if (!editState) return;
-  const nextIndex = editState.historyIndex + direction;
-  if (nextIndex < 0 || nextIndex >= editState.history.length) return;
-  editState.historyIndex = nextIndex;
-  applyStaticEditContent(editState.elements, editState.history[nextIndex], editState.originalContent);
-  editState.saveState = staticEditContentMatches(editState.history[nextIndex], editState.originalContent) ? "idle" : "dirty";
-  editState.status = direction < 0 ? "Undid the last page edit." : "Restored the next page edit.";
-  renderStaticEditBar();
-}
-
-function revertStaticEditToPublished() {
-  const editState = state.staticEdit;
-  if (!editState) return;
-  clearStaticEditSnapshot(editState.pageId);
-  applyStaticEditContent(editState.elements, editState.originalContent, editState.originalContent);
-  editState.savedContent = cloneStaticEditContent(editState.originalContent);
-  editState.history = [cloneStaticEditContent(editState.originalContent)];
-  editState.historyIndex = 0;
-  editState.savedAt = 0;
-  editState.saveState = "idle";
-  editState.status = "Reverted to the published page.";
-  renderStaticEditBar();
-}
-
-function cancelStaticEditChanges() {
-  const editState = state.staticEdit;
-  if (!editState) return;
-  if (editState.historyTimer) {
-    window.clearTimeout(editState.historyTimer);
-    editState.historyTimer = 0;
-  }
-  if (editState.livePublishTimer) {
-    window.clearTimeout(editState.livePublishTimer);
-    editState.livePublishTimer = 0;
-  }
-  const baseline = cloneStaticEditContent(editState.pendingLiveContent || editState.originalContent);
-  applyStaticEditContent(editState.elements, baseline, editState.originalContent);
-  editState.history = [cloneStaticEditContent(editState.savedContent || baseline)];
-  editState.historyIndex = 0;
-  editState.saveState = editState.savedAt ? "saved" : "idle";
-  editState.enabled = false;
-  editState.pendingLiveContent = null;
-  document.body.classList.remove("is-static-editing");
-  for (const element of editState.elements) {
-    element.contentEditable = "false";
-    element.spellcheck = false;
-    element.classList.remove("static-edit-target");
-  }
-  editState.status = editState.savedAt
-    ? `Discarded unsaved changes. Local snapshot is still ready from ${formatLocalTimestamp(editState.savedAt)}.`
-    : "Discarded unsaved changes and returned to the published page.";
-  renderStaticEditBar();
-}
-
-async function saveStaticEditSnapshot() {
-  const editState = state.staticEdit;
-  if (!editState) return;
-  const content = collectStaticEditContent(editState.elements);
-  try {
-    if (editState.livePublishTimer) {
-      window.clearTimeout(editState.livePublishTimer);
-      editState.livePublishTimer = 0;
-    }
-    if (state.pageOverlay?.controller) {
-      await state.pageOverlay.controller.setContent(content).catch(() => false);
-      await state.pageOverlay.controller.flush?.().catch(() => null);
-      state.pageOverlay.currentContent = cloneStaticEditContent(content);
-      editState.originalContent = cloneStaticEditContent(content);
-    }
-  } catch {
-    // Snapshot review should still work even if the live overlay publish path is unavailable.
-  }
-  const savedAt = Date.now();
-  persistStaticEditSnapshot(editState.pageId, savedAt, content);
-  editState.savedContent = cloneStaticEditContent(content);
-  editState.savedAt = savedAt;
-  editState.saveState = "saved";
-  editState.status = `Snapshot saved locally at ${formatLocalTimestamp(savedAt)}. Sending it to review...`;
-  if (!staticEditContentMatches(editState.history[editState.historyIndex], content)) {
-    editState.history.push(cloneStaticEditContent(content));
-    editState.historyIndex = editState.history.length - 1;
-  }
-  renderStaticEditBar();
-  try {
-    if (!state.session?.secretKeyHex) throw new Error("Log in with an admin account first.");
-    const payload = buildStaticPageDraftPayload(editState.pageId, content);
-    await publishTaggedJson({
-      kind: SITE.nostr.kinds.draft,
-      secretKeyHex: state.session.secretKeyHex,
-      tags: [
-        ["d", payload.slug],
-        ["status", payload.status],
-        ["content", payload.content_type],
-        ["page", payload.page_id]
-      ],
-      content: payload
-    });
-    state.publicState = (await publicStateStore.hydrate({ force: true, reason: "page-snapshot-review" })).value;
-    notificationState.reset();
-    void hydrateNotifications(true);
-    editState.status = `Snapshot saved locally at ${formatLocalTimestamp(savedAt)} and sent to review.`;
-  } catch (error) {
-    editState.status = `Snapshot saved locally at ${formatLocalTimestamp(savedAt)}. Review handoff failed: ${String(error?.message || error || "Unknown error")}`;
-    editState.saveState = "dirty";
-  }
-  renderStaticEditBar();
-}
-
-function persistStaticEditSnapshot(pageId, savedAt, content) {
-  window.localStorage.setItem(staticEditStorageKey(pageId), JSON.stringify({
-    pageId,
-    savedAt,
-    content
-  }));
-}
-
-function collectStaticEditContent(elements) {
-  return Object.fromEntries(
-    (Array.isArray(elements) ? elements : []).map((element) => [
-      element.getAttribute("data-static-edit") || "",
-      sanitizeTrustedHtml(element.innerHTML)
-    ])
-  );
-}
-
-function applyStaticEditContent(elements, content, fallback = {}) {
-  for (const element of Array.isArray(elements) ? elements : []) {
-    const key = element.getAttribute("data-static-edit") || "";
-    const primaryValue = resolveStaticEditValue(content, key);
-    element.innerHTML = primaryValue.length
-      ? sanitizeTrustedHtml(primaryValue)
-      : sanitizeTrustedHtml(resolveStaticEditValue(fallback, key));
-  }
-}
-
-function mergeStaticEditContent(content, fallback = {}) {
-  const merged = cloneStaticEditContent(fallback);
-  for (const [key, value] of Object.entries(content && typeof content === "object" ? content : {})) {
-    const resolved = resolveStaticEditValue({ [key]: value }, key);
-    if (resolved.length) {
-      merged[key] = resolved;
-    }
-  }
-  return merged;
-}
-
-function resolveStaticEditValue(content, key) {
-  if (!Object.prototype.hasOwnProperty.call(content || {}, key)) return "";
-  const raw = String(content[key] ?? "");
-  return hasMeaningfulStaticEditValue(raw) ? raw : "";
-}
-
-function hasMeaningfulStaticEditValue(value) {
-  return stripHtml(String(value || "").replace(/&nbsp;/gi, " ").replace(/<br\s*\/?>/gi, " ")).length > 0;
-}
-
-function loadStaticEditSnapshot(pageId) {
-  try {
-    const raw = window.localStorage.getItem(staticEditStorageKey(pageId));
-    const parsed = raw ? JSON.parse(raw) : null;
-    return parsed && parsed.content ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function clearStaticEditSnapshot(pageId) {
-  window.localStorage.removeItem(staticEditStorageKey(pageId));
-}
-
-function staticEditStorageKey(pageId) {
-  return `${SITE.nostr.storageNamespace}.static-edit.${pageId}`;
-}
-
-function staticEditContentMatches(left, right) {
-  return JSON.stringify(left || {}) === JSON.stringify(right || {});
-}
-
-function cloneStaticEditContent(content) {
-  return JSON.parse(JSON.stringify(content || {}));
-}
-
-function renderError(node, message) {
-  if (!node) return;
-  node.innerHTML = `<div class="empty-state">${escapeHtml(message)}</div>`;
-}
-
-function renderLoadingState(message) {
-  const reloadHref = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  return `
-    <div class="loading-state loading-state--panel" role="status" aria-live="polite">
-      <div class="loading-state__message">
-        <span class="loading-spinner" aria-hidden="true"></span>
-        <span>${escapeHtml(message)}</span>
-      </div>
-      <div class="loading-state__slow">
-        <span>This is taking longer than expected.</span>
-        <a class="button-ghost loading-state__reload" href="${escapeAttribute(reloadHref)}">Reload</a>
-      </div>
-    </div>
-  `;
-}
-
-function renderTagList(tags) {
-  return (Array.isArray(tags) ? tags : [])
-    .map((tag) => `<a class="tag tag--link" href="./investigations.html?tag=${encodeURIComponent(String(tag || "").trim())}">${escapeHtml(String(tag))}</a>`)
-    .join("");
-}
-
-function renderMiniMarkdown(markdown) {
-  return renderMarkedHtml(markdown, { breaks: true });
-}
-
-function renderMarkedHtml(markdown, options = {}) {
-  const source = String(markdown || "").trim();
-  if (!source) return "";
-  if (window.marked) {
-    window.marked.setOptions({ gfm: true, breaks: Boolean(options.breaks) });
-    const html = window.marked.parse(source);
-    return sanitizeTrustedHtml(options.articleImages ? transformArticleImageMarkup(html) : html);
-  }
-  return sanitizeTrustedHtml(renderBasicMarkdown(source, options));
-}
-
-function transformArticleImageMarkup(rawHtml) {
-  if (typeof document === "undefined") return String(rawHtml || "");
-  const template = document.createElement("template");
-  template.innerHTML = String(rawHtml || "");
-  for (const image of template.content.querySelectorAll("img")) {
-    const parent = image.parentElement;
-    if (!(parent instanceof HTMLElement) || parent.tagName !== "P") continue;
-    const onlyImage = [...parent.childNodes].every((node) => {
-      if (node === image) return true;
-      return node.nodeType === Node.TEXT_NODE && !String(node.textContent || "").trim();
-    });
-    if (!onlyImage) continue;
-    const spec = parseArticleImageSpec(image.getAttribute("title") || "");
-    const figure = document.createElement("figure");
-    figure.className = `article-image article-image--${spec.align}`;
-    image.loading = "lazy";
-    image.decoding = "async";
-    image.removeAttribute("title");
-    figure.append(image);
-    if (spec.caption) {
-      const caption = document.createElement("figcaption");
-      caption.textContent = spec.caption;
-      figure.append(caption);
-    }
-    parent.replaceWith(figure);
-  }
-  return template.innerHTML;
-}
-
-function parseArticleImageSpec(rawTitle) {
-  const title = String(rawTitle || "").trim();
-  if (!title) return { align: "full", caption: "" };
-  const [alignPart, ...captionParts] = title.split("|");
-  const alignMatch = String(alignPart || "").trim().match(/^align:(left|right|full)$/i);
-  return {
-    align: alignMatch ? alignMatch[1].toLowerCase() : "full",
-    caption: captionParts.join("|").trim()
-  };
-}
-
-function renderBasicMarkdown(markdown, options = {}) {
-  const escaped = escapeHtml(String(markdown || ""));
-  const paragraphs = escaped
-    .split(/\n{2,}/)
-    .map((block) => `<p>${block.replace(/\n/g, options.breaks ? "<br>" : " ")}</p>`)
-    .join("");
-  return paragraphs;
-}
-
 function setText(selector, value) {
   const node = document.querySelector(selector);
   if (node) node.textContent = value;
@@ -3581,9 +2325,4 @@ function sortDateValue(item) {
   if (Number.isFinite(parsed)) return parsed;
   const createdAt = Number(item?.created_at || 0);
   return Number.isFinite(createdAt) ? createdAt * 1000 : 0;
-}
-
-function trimmed(value, length) {
-  const text = String(value || "").trim();
-  return text.length > length ? `${text.slice(0, Math.max(0, length - 1))}...` : text;
 }
