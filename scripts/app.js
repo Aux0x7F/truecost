@@ -1413,11 +1413,13 @@ async function renderComments(postSlug, publicState) {
       const currentValue = resolveCurrentVoteForComment(publicState, commentId, viewerPubkey);
       const nextValue = currentValue === requestedValue ? 0 : requestedValue;
       const reranksRoots = commentAffectsThreadRanking(state.publicState, commentId);
+      const rootPositions = reranksRoots ? captureRootCommentPositions(panel) : null;
       try {
         button.disabled = true;
         commitLocalPublicState(applyCommentVoteToPublicState(state.publicState, commentId, viewerPubkey, nextValue));
         if (reranksRoots) {
           await renderComments(postSlug, state.publicState);
+          animateRootCommentReorder(panel, rootPositions);
         } else {
           updateRenderedCommentVoteState(panel, commentId, state.publicState, viewerPubkey);
         }
@@ -1439,6 +1441,7 @@ async function renderComments(postSlug, publicState) {
         commitLocalPublicState(applyCommentVoteToPublicState(state.publicState, commentId, viewerPubkey, currentValue));
         if (reranksRoots) {
           await renderComments(postSlug, state.publicState);
+          animateRootCommentReorder(panel, rootPositions);
         } else {
           updateRenderedCommentVoteState(panel, commentId, state.publicState, viewerPubkey);
         }
@@ -1449,6 +1452,55 @@ async function renderComments(postSlug, publicState) {
   }
 
   focusRequestedComment(postSlug);
+}
+
+function captureRootCommentPositions(panel) {
+  if (!(panel instanceof HTMLElement)) return new Map();
+  const positions = new Map();
+  for (const card of panel.querySelectorAll('.comment-list > .comment-card[data-comment-root="true"]')) {
+    if (!(card instanceof HTMLElement)) continue;
+    const id = String(card.getAttribute("data-comment-id") || "").trim();
+    if (!id) continue;
+    const rect = card.getBoundingClientRect();
+    positions.set(id, { top: rect.top, left: rect.left });
+  }
+  return positions;
+}
+
+function animateRootCommentReorder(panel, previousPositions) {
+  if (!(panel instanceof HTMLElement) || !(previousPositions instanceof Map) || !previousPositions.size) return;
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
+  const moved = [];
+  for (const card of panel.querySelectorAll('.comment-list > .comment-card[data-comment-root="true"]')) {
+    if (!(card instanceof HTMLElement)) continue;
+    const id = String(card.getAttribute("data-comment-id") || "").trim();
+    const prior = previousPositions.get(id);
+    if (!prior) continue;
+    const nextRect = card.getBoundingClientRect();
+    const deltaY = prior.top - nextRect.top;
+    const deltaX = prior.left - nextRect.left;
+    if (Math.abs(deltaY) < 1 && Math.abs(deltaX) < 1) continue;
+    moved.push({ card, deltaX, deltaY });
+  }
+  if (!moved.length) return;
+  for (const item of moved) {
+    item.card.classList.add("comment-card--reordering");
+    item.card.style.transition = "none";
+    item.card.style.transform = `translate(${item.deltaX}px, ${item.deltaY}px)`;
+  }
+  window.requestAnimationFrame(() => {
+    for (const item of moved) {
+      item.card.style.transition = "";
+      item.card.style.transform = "";
+    }
+  });
+  window.setTimeout(() => {
+    for (const item of moved) {
+      item.card.classList.remove("comment-card--reordering");
+      item.card.style.transition = "";
+      item.card.style.transform = "";
+    }
+  }, 340);
 }
 
 function renderComment(comment, publicState, options = {}, depth = 0) {
@@ -1462,7 +1514,7 @@ function renderComment(comment, publicState, options = {}, depth = 0) {
     ? renderInlineReplyForm(comment, publicState)
     : "";
   return `
-    <article class="comment-card ${depth ? "comment-card--reply" : ""}" id="comment-${escapeAttribute(comment.id)}" data-comment-id="${escapeAttribute(comment.id)}">
+    <article class="comment-card ${depth ? "comment-card--reply" : ""}" id="comment-${escapeAttribute(comment.id)}" data-comment-id="${escapeAttribute(comment.id)}" data-comment-root="${depth ? "false" : "true"}">
       <div class="comment-card__shell">
         <button class="comment-card__avatar-button" type="button" data-open-user="${escapeAttribute(comment.author)}" aria-label="Open ${escapeAttribute(authorLabel)}">
           ${renderAvatarBadge(author, authorLabel, "comment-card__avatar")}

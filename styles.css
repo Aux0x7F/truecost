@@ -2810,11 +2810,17 @@ h3 {
 .comment-card {
   padding: 0;
   overflow: hidden;
+  transition: transform 260ms ease, box-shadow 260ms ease, background-color 260ms ease;
 }
 
 .comment-card--focus {
   outline: 2px solid rgba(156, 29, 24, 0.25);
   outline-offset: 0.25rem;
+}
+
+.comment-card--reordering {
+  box-shadow: 0 14px 32px rgba(18, 18, 18, 0.12);
+  background: rgba(255, 255, 255, 0.92);
 }
 
 .comment-card__shell {

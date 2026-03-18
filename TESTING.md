@@ -21,6 +21,7 @@ Where applicable, cover:
 - nested thread integrity
 - visible control effect after local mutation
 - ranking and ordering rules when local mutation changes score or status
+- manual verification for motion where visual continuity is part of the interaction contract
 
 ## Current commands
 
