@@ -4,6 +4,8 @@ This file describes the component families that `truecost` should keep convergin
 
 It exists so repeated UI patterns are implemented once, reused, and tested against a stable expectation.
 
+Component behavior that spans a whole UI family should live in `scripts/surfaces`, not be rebuilt inside page controllers.
+
 ## Global shell
 
 ### Header and navigation
@@ -56,6 +58,7 @@ It exists so repeated UI patterns are implemented once, reused, and tested again
 ### Comment thread view
 
 - Comments are rendered from a derived thread structure, not ad hoc nesting.
+- The shared renderer and motion behavior belong in one surface module, not parallel page-local copies.
 - Root comments may rerank by karma.
 - Replies stay attached to their parent thread and keep thread-local order.
 - Orphans never promote to roots.
@@ -89,6 +92,20 @@ Expected behavior:
 3. patch in place
 
 Do not blank useful content while waiting for background state.
+
+## Surface modules
+
+Current extraction targets:
+
+- `scripts/surfaces/comments.js`
+- `scripts/surfaces/archive.js`
+
+The next convergence targets are:
+
+- workspace lists
+- action sheets and moderation modals
+- map shells
+- editor side rails
 
 ## Modals and action sheets
 

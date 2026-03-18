@@ -10,10 +10,11 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - Comment votes and karma now have an explicit contract: all comments and replies can receive karma, only roots rerank, and root reranks use readable motion.
 - Browser compatibility is now a documented contract, with current fallbacks in place for blur, scrollbar reservation, and static accessible nav labels.
 - Branch-purpose-squash is now the documented contribution pattern.
+- The first surface split is in place: archive and comments now have dedicated modules instead of living only inside `app.js`.
 
 ## Near Term
 
-- Finish the surface/module split so archive, comments, workspace lists, and action sheets are composed from shared state and rendering primitives instead of page-controller sprawl.
+- Finish the surface/module split so workspace lists, action sheets, map shells, and editor side rails are composed from shared state and rendering primitives instead of page-controller sprawl.
 - Extend the live collaborative layer from static pages and investigation detail/editor flows into the archive and entity records without regressing the static-first baseline.
 - Add clearer history and conflict handling for live collaborative units before each bakedown cycle, so operators can see what will ship and why.
 - Expand end-to-end browser validation around submissions, moderation, publishing, comment handling, and browser-compat fallbacks before each release.

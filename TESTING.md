@@ -28,6 +28,7 @@ Where applicable, cover:
 ## Current commands
 
 - `node --check <file>`
+- `node --test tests/archive-surface.test.mjs`
 - `node --test tests/comment-refresh.test.mjs`
 - `node --test tests/comment-vote-ranking.test.mjs`
 

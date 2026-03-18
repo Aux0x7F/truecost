@@ -45,7 +45,8 @@ The implementation should converge on three layers:
   - transport wrappers
   - cache and public-state normalization
   - reusable rendering helpers for shared controls
-- page surfaces
+- `scripts/surfaces`
+  - composed surface modules that render and update one UI family at a time
   - archive
   - comments
   - map
@@ -57,13 +58,13 @@ The implementation should converge on three layers:
 
 Page files should compose shared surfaces and helpers. They should not reintroduce duplicate escaping, duplicate comment threading, or duplicate attached-search behavior.
 
-The next refactors should reduce page controllers into composed surface modules backed by explicit shared state helpers.
+The current branch has already started this move with extracted archive and comment surface modules. The next refactors should continue reducing page controllers into composed surface modules backed by explicit shared state helpers.
 
 The next tightening step for the current branch is to finish that move for the highest-churn surfaces:
 
-- threads and comments
-- archive results, filters, and rails
 - workspace lists and action sheets
+- map shells that still sit in page controllers
+- editor side rails and collaboration controls
 
 ## Trust model
 

@@ -41,17 +41,35 @@ import {
   dedupeRecordsById as dedupeCommentList
 } from "./core/comment-utils.js";
 import { applyDerivedCommentState } from "./core/public-state.js";
-import {
-  cycleHighlightIndex,
-  renderSearchField,
-  renderSearchSuggestions
-} from "./core/search-controls.js";
+import { cycleHighlightIndex } from "./core/search-controls.js";
 import {
   dedupeStrings as dedupe,
   escapeAttribute,
   escapeHtml
 } from "./core/text-utils.js";
 import { clearSession, getOrCreateGuestSession, getStoredGuestSession, getStoredSession } from "./core/session.js";
+import {
+  animateRootCommentReorder,
+  captureRootCommentPositions,
+  renderComment,
+  renderCommentCountLabel,
+  updateRenderedCommentVoteState
+} from "./surfaces/comments.js";
+import {
+  archiveEntitiesForEntries,
+  archiveEntryEntityOptions,
+  archiveFilterSuggestions,
+  archiveHasActiveFilters,
+  archiveStatusLabel,
+  destroyLeafletPreview,
+  filterArchiveEntries,
+  getCurrentArchiveFilters,
+  renderArchiveFiltersPanel,
+  renderArchiveMapPanel,
+  renderArchiveSuggestionPanel,
+  renderAuthoringLeadCard,
+  renderLeafletPreviewMap
+} from "./surfaces/archive.js";
 
 const NAV_KEYS = {
   home: ["home"],
@@ -70,14 +88,6 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", {
   day: "numeric",
   year: "numeric"
 });
-
-const ARCHIVE_STATUS_OPTIONS = [
-  { value: "", label: "All statuses" },
-  { value: "draft", label: "Draft" },
-  { value: "submitted", label: "In review" },
-  { value: "approved", label: "Approved" },
-  { value: "posted", label: "Posted" }
-];
 
 const STATIC_PAGE_META = Object.freeze({
   home: { title: "Home page", path: "./index.html" },
@@ -942,7 +952,7 @@ async function renderInvestigationDetailState(overlayState, post, options = {}) 
     const mappedEntities = detailEntities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng));
     if (mappedEntities.length) {
       mapShell.hidden = false;
-      renderLeafletPreviewMap(mapCanvas, mappedEntities);
+      renderLeafletPreviewMap(mapCanvas, mappedEntities, queueLeafletBoundsFit);
     } else {
       mapShell.hidden = true;
       destroyLeafletPreview(mapCanvas);
@@ -1222,7 +1232,16 @@ async function renderComments(postSlug, publicState) {
     }
     ${
       threadedComments.length
-        ? `<div class="comment-list">${threadedComments.map((comment) => renderComment(comment, publicState, { isAdmin, canReply: isLoggedIn, canVote: isLoggedIn, replyTargetId, viewerPubkey })).join("")}</div>`
+        ? `<div class="comment-list">${threadedComments
+            .map((comment) =>
+              renderComment(
+                comment,
+                publicState,
+                { isAdmin, canReply: isLoggedIn, canVote: isLoggedIn, replyTargetId, viewerPubkey },
+                { formatDateTime, renderAvatarBadge, renderInlineReplyForm, renderMiniMarkdown }
+              )
+            )
+            .join("")}</div>`
         : isLoggedIn
           ? `<div class="comment-list"><div class="empty-state">No comments yet. Start the discussion.</div></div>`
           : ""
@@ -1456,143 +1475,6 @@ async function renderComments(postSlug, publicState) {
   focusRequestedComment(postSlug);
 }
 
-function captureRootCommentPositions(panel) {
-  if (!(panel instanceof HTMLElement)) return new Map();
-  const positions = new Map();
-  for (const card of panel.querySelectorAll('.comment-list > .comment-card[data-comment-root="true"]')) {
-    if (!(card instanceof HTMLElement)) continue;
-    const id = String(card.getAttribute("data-comment-id") || "").trim();
-    if (!id) continue;
-    const rect = card.getBoundingClientRect();
-    positions.set(id, { top: rect.top, left: rect.left });
-  }
-  return positions;
-}
-
-function animateRootCommentReorder(panel, previousPositions, anchorCommentId = "") {
-  if (!(panel instanceof HTMLElement) || !(previousPositions instanceof Map) || !previousPositions.size) return;
-  if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) return;
-  const anchorId = String(anchorCommentId || "").trim();
-  const moved = [];
-  for (const card of panel.querySelectorAll('.comment-list > .comment-card[data-comment-root="true"]')) {
-    if (!(card instanceof HTMLElement)) continue;
-    const id = String(card.getAttribute("data-comment-id") || "").trim();
-    const prior = previousPositions.get(id);
-    if (!prior) continue;
-    const nextRect = card.getBoundingClientRect();
-    const deltaY = prior.top - nextRect.top;
-    const deltaX = prior.left - nextRect.left;
-    if (Math.abs(deltaY) < 1 && Math.abs(deltaX) < 1) continue;
-    moved.push({ card, deltaX, deltaY });
-  }
-  if (!moved.length) return;
-  for (const item of moved) {
-    item.card.classList.add("comment-card--reordering");
-    item.card.classList.toggle("comment-card--reordering-target", item.card.getAttribute("data-comment-id") === anchorId);
-    item.card.getAnimations?.().forEach((animation) => animation.cancel());
-    item.card.style.transform = "";
-  }
-  for (const item of moved) {
-    if (typeof item.card.animate === "function") {
-      item.card.animate(
-        [
-          { transform: `translate(${item.deltaX}px, ${item.deltaY}px)` },
-          { transform: "translate(0px, 0px)" }
-        ],
-        {
-          duration: 680,
-          easing: "cubic-bezier(0.16, 1, 0.3, 1)",
-          fill: "both"
-        }
-      );
-      continue;
-    }
-    item.card.style.transition = "none";
-    item.card.style.transform = `translate(${item.deltaX}px, ${item.deltaY}px)`;
-    void item.card.offsetWidth;
-    item.card.style.transition = "transform 680ms cubic-bezier(0.16, 1, 0.3, 1)";
-    item.card.style.transform = "";
-  }
-  window.setTimeout(() => {
-    for (const item of moved) {
-      item.card.classList.remove("comment-card--reordering");
-      item.card.classList.remove("comment-card--reordering-target");
-      item.card.style.transition = "";
-      item.card.style.transform = "";
-    }
-    if (anchorId) {
-      const anchor = panel.querySelector(`[data-comment-id="${CSS.escape(anchorId)}"]`);
-      if (anchor instanceof HTMLElement) {
-        anchor.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-    }
-  }, 760);
-}
-
-function renderComment(comment, publicState, options = {}, depth = 0) {
-  const author = publicState.users.find((user) => user.pubkey === comment.author);
-  const authorLabel = author?.displayName || author?.username || "User";
-  const replies = Array.isArray(comment.replies) ? comment.replies : [];
-  const voteSummary = resolveCommentVoteSummary(publicState, comment.id);
-  const viewerVote = options.viewerPubkey ? resolveCurrentVoteForComment(publicState, comment.id, options.viewerPubkey) : 0;
-  const canDelete = Boolean(options.viewerPubkey) && comment.author === options.viewerPubkey;
-  const replyForm = options.canReply && options.replyTargetId === comment.id
-    ? renderInlineReplyForm(comment, publicState)
-    : "";
-  return `
-    <article class="comment-card ${depth ? "comment-card--reply" : ""}" id="comment-${escapeAttribute(comment.id)}" data-comment-id="${escapeAttribute(comment.id)}" data-comment-root="${depth ? "false" : "true"}">
-      <div class="comment-card__shell">
-        <button class="comment-card__avatar-button" type="button" data-open-user="${escapeAttribute(comment.author)}" aria-label="Open ${escapeAttribute(authorLabel)}">
-          ${renderAvatarBadge(author, authorLabel, "comment-card__avatar")}
-        </button>
-        <div class="comment-card__main">
-          <div class="comment-card__meta">
-            <div>
-              <button class="comment-card__author-button" type="button" data-open-user="${escapeAttribute(comment.author)}">${escapeHtml(authorLabel)}</button>
-              <span>${formatDateTime(comment.created_at)}</span>
-            </div>
-          </div>
-          <div class="comment-card__body">${renderMiniMarkdown(comment.markdown)}</div>
-          <div class="comment-card__toolbar">
-            <div class="comment-card__votes" aria-label="Comment score">
-              <button
-                type="button"
-                class="comment-vote ${viewerVote > 0 ? "is-active" : ""}"
-                data-comment-vote="${escapeAttribute(comment.id)}"
-                data-comment-vote-value="1"
-                aria-label="Upvote comment"
-                aria-pressed="${viewerVote > 0 ? "true" : "false"}"
-                ${options.canVote ? "" : "disabled"}
-              >▲</button>
-              <span class="comment-card__score" data-comment-score-value="${escapeAttribute(comment.id)}">${voteSummary.score}</span>
-              <button
-                type="button"
-                class="comment-vote ${viewerVote < 0 ? "is-active" : ""}"
-                data-comment-vote="${escapeAttribute(comment.id)}"
-                data-comment-vote-value="-1"
-                aria-label="Downvote comment"
-                aria-pressed="${viewerVote < 0 ? "true" : "false"}"
-                ${options.canVote ? "" : "disabled"}
-              >▼</button>
-            </div>
-            <div class="comment-card__actions">
-              ${options.canReply ? `<button type="button" class="button-ghost" data-reply-comment="${escapeAttribute(comment.id)}">Reply</button>` : ""}
-              ${canDelete ? `<button type="button" class="button-ghost" data-delete-comment="${escapeAttribute(comment.id)}">Delete</button>` : ""}
-              ${options.isAdmin ? `<button type="button" class="button-ghost" data-hide-comment="${escapeAttribute(comment.id)}">Hide</button>` : ""}
-            </div>
-          </div>
-          ${replyForm}
-          ${
-            replies.length
-              ? `<div class="comment-card__children">${replies.map((reply) => renderComment(reply, publicState, options, depth + 1)).join("")}</div>`
-              : ""
-          }
-        </div>
-      </div>
-    </article>
-  `;
-}
-
 function countRenderedCommentNodes(nodes) {
   return (Array.isArray(nodes) ? nodes : []).reduce(
     (total, node) => total + 1 + countRenderedCommentNodes(node?.replies || []),
@@ -1665,10 +1547,6 @@ function closeUserProfileModal() {
   document.querySelector("[data-user-modal]")?.remove();
 }
 
-function renderCommentCountLabel(count) {
-  return `${count} visible comment${count === 1 ? "" : "s"}`;
-}
-
 function commentAuthorLabel(comment, publicState) {
   const author = publicState.users.find((user) => user.pubkey === comment.author);
   return author?.displayName || author?.username || "User";
@@ -1692,23 +1570,6 @@ function commitLocalPublicState(nextPublicState) {
   state.publicState = rememberPublicState(nextPublicState);
   state.publicStateDigest = createPublicStateDigest(state.publicState);
   return state.publicState;
-}
-
-function updateRenderedCommentVoteState(scope, commentId, publicState, viewerPubkey = "") {
-  const container = scope instanceof HTMLElement
-    ? scope.querySelector(`[data-comment-id="${CSS.escape(String(commentId || "").trim())}"]`)
-    : null;
-  if (!(container instanceof HTMLElement)) return;
-  const summary = resolveCommentVoteSummary(publicState, commentId);
-  const currentVote = resolveCurrentVoteForComment(publicState, commentId, viewerPubkey);
-  const score = container.querySelector(`[data-comment-score-value="${CSS.escape(String(commentId || "").trim())}"]`);
-  if (score instanceof HTMLElement) score.textContent = String(summary.score);
-  for (const button of container.querySelectorAll(`[data-comment-vote="${CSS.escape(String(commentId || "").trim())}"]`)) {
-    const value = Number(button.getAttribute("data-comment-vote-value") || 0);
-    const active = currentVote === value && value !== 0;
-    button.classList.toggle("is-active", active);
-    button.setAttribute("aria-pressed", active ? "true" : "false");
-  }
 }
 
 function safeAvatarUrl(value) {
@@ -1819,107 +1680,8 @@ function buildInvestigationArchiveEntries(posts, drafts) {
     });
 }
 
-function renderAuthoringLeadCard() {
-  return `
-    <article class="surface-panel authoring-card">
-      <div class="eyebrow">For editors</div>
-      <h3>Write in the full editor</h3>
-      <p>Drafts save as you work, submitted investigations open in review preview, and approved posts roll into the next bakedown.</p>
-      <div class="button-row"><a class="button" href="./editor.html">Create investigation</a></div>
-    </article>
-  `;
-}
-
-function currentArchiveFilters(canEdit = false) {
-  const params = new URLSearchParams(window.location.search);
-  return {
-    tag: String(params.get("tag") || "").trim(),
-    entity: String(params.get("entity") || "").trim(),
-    status: canEdit ? String(params.get("status") || "").trim().toLowerCase() : "",
-    author: String(params.get("author") || "").trim().toLowerCase()
-  };
-}
-
 function activeArchiveFilters() {
   return state.archiveFilters || { tag: "", entity: "", status: "", author: "" };
-}
-
-function archiveHasActiveFilters(filters = activeArchiveFilters()) {
-  return Boolean(filters.tag || filters.entity || filters.status || filters.author);
-}
-
-function renderArchiveFiltersPanel(entries, publicState, filters, canEdit) {
-  return `
-    <section class="surface-panel archive-filters">
-      <div class="archive-filters__head">
-        <button class="text-link archive-filters__clear" type="button" data-clear-investigation-filters ${archiveHasActiveFilters(filters) ? "" : "hidden"}>Clear</button>
-      </div>
-      <div class="archive-filters__form" data-investigation-filters>
-        ${
-          canEdit
-            ? `
-              <div class="archive-status-menu${state.archiveStatusMenuOpen ? " is-open" : ""}" data-status-menu>
-                <button
-                  class="archive-status-menu__toggle"
-                  type="button"
-                  data-status-toggle
-                  aria-expanded="${state.archiveStatusMenuOpen ? "true" : "false"}"
-                  aria-haspopup="listbox"
-                >
-                  <span data-status-current>${escapeHtml(archiveStatusLabel(filters.status))}</span>
-                </button>
-                <div class="archive-status-menu__panel" data-status-panel role="listbox" ${state.archiveStatusMenuOpen ? "" : "hidden"}>
-                  ${ARCHIVE_STATUS_OPTIONS.map((option) => renderArchiveStatusOption(option, filters.status)).join("")}
-                </div>
-              </div>
-            `
-            : ""
-        }
-        ${renderSearchField({
-          wrapperClass: "archive-filters__field",
-          wrapperAttributes: { "data-filter-field": "tag" },
-          srLabel: "Search tags",
-          inputAttributes: {
-            name: "tag",
-            type: "text",
-            placeholder: "Search tags",
-            value: filters.tag,
-            autocomplete: "off",
-            "data-filter-input": "tag"
-          },
-          clearButton: filters.tag
-            ? {
-                className: "workspace-search__clear archive-filters__clear-button",
-                attributes: { "data-clear-archive-field": "tag" },
-                ariaLabel: "Clear tag filter"
-              }
-            : null,
-          resultsHtml: `<div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="tag"></div>`
-        })}
-        ${renderSearchField({
-          wrapperClass: "archive-filters__field",
-          wrapperAttributes: { "data-filter-field": "entity" },
-          srLabel: "Search entities",
-          inputAttributes: {
-            name: "entity",
-            type: "text",
-            placeholder: "Search entities",
-            value: filters.entity,
-            autocomplete: "off",
-            "data-filter-input": "entity"
-          },
-          clearButton: filters.entity
-            ? {
-                className: "workspace-search__clear archive-filters__clear-button",
-                attributes: { "data-clear-archive-field": "entity" },
-                ariaLabel: "Clear entity filter"
-              }
-            : null,
-          resultsHtml: `<div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="entity"></div>`
-        })}
-      </div>
-    </section>
-  `;
 }
 
 function renderInlineReplyForm(comment, publicState) {
@@ -1970,38 +1732,6 @@ function applyLocalCommentDeletion(commentId, note = "Deleted by author") {
   commitLocalPublicState(applyDerivedCommentState(state.publicState, nextComments));
 }
 
-function renderArchiveMapPanel() {
-  return `
-    <section class="surface-panel archive-map-card">
-      <div class="tag-row archive-map-card__tags" data-investigation-map-tags></div>
-      <div class="map-board map-board--leaflet map-board--compact" data-investigation-map-canvas></div>
-      <div class="button-row">
-        <a class="button-ghost" href="./map.html">Open full map</a>
-      </div>
-    </section>
-  `;
-}
-
-function renderArchiveStatusOption(option, selectedValue) {
-  const value = String(option?.value || "");
-  const isActive = value === String(selectedValue || "");
-  return `
-    <button
-      class="archive-status-menu__option${isActive ? " is-active" : ""}"
-      type="button"
-      role="option"
-      aria-selected="${isActive ? "true" : "false"}"
-      data-status-option="${escapeAttribute(value)}"
-    >
-      ${escapeHtml(String(option?.label || ""))}
-    </button>
-  `;
-}
-
-function archiveStatusLabel(value) {
-  return ARCHIVE_STATUS_OPTIONS.find((option) => option.value === String(value || ""))?.label || "All statuses";
-}
-
 function updateArchiveStatusMenu(shell = document.querySelector("[data-investigation-filters]")) {
   if (!(shell instanceof HTMLElement)) return;
   const current = shell.querySelector("[data-status-current]");
@@ -2030,7 +1760,7 @@ function initializeArchiveView(entries, publicState, canEdit) {
   const filtersShell = document.querySelector("[data-investigation-filters-shell]");
   const mapShell = document.querySelector("[data-investigation-map-shell]");
   if (!(listGrid instanceof HTMLElement)) return;
-  state.archiveFilters = currentArchiveFilters(canEdit);
+  state.archiveFilters = getCurrentArchiveFilters(window.location.search, canEdit);
   state.archiveFilterOpenField = "";
   state.archiveFilterHighlight = -1;
   state.archiveStatusMenuOpen = false;
@@ -2040,7 +1770,11 @@ function initializeArchiveView(entries, publicState, canEdit) {
     <div class="story-list__results" data-investigation-results></div>
   `;
   if (filtersShell instanceof HTMLElement) {
-    filtersShell.innerHTML = renderArchiveFiltersPanel(entries, publicState, activeArchiveFilters(), canEdit);
+    filtersShell.innerHTML = renderArchiveFiltersPanel({
+      filters: activeArchiveFilters(),
+      canEdit,
+      statusMenuOpen: state.archiveStatusMenuOpen
+    });
     bindInvestigationFilters(entries, publicState, canEdit);
   }
   if (mapShell instanceof HTMLElement) {
@@ -2073,7 +1807,7 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
       [name]: String(target.value || "").trim()
     };
     state.archiveFilterOpenField = name;
-    state.archiveFilterHighlight = archiveFilterSuggestions(name, entries, publicState).matching.length ? 0 : -1;
+    state.archiveFilterHighlight = archiveFilterSuggestions(name, entries, publicState, activeArchiveFilters()).matching.length ? 0 : -1;
     syncArchiveFiltersToUrl(canEdit);
     scheduleArchiveResults(entries, publicState, canEdit);
   });
@@ -2101,7 +1835,7 @@ function bindInvestigationFilters(entries, publicState, canEdit) {
     }
     if (!(target instanceof HTMLInputElement) || !target.matches("[data-filter-input]")) return;
     const field = target.getAttribute("data-filter-input") || "";
-    const descriptor = archiveFilterSuggestions(field, entries, publicState);
+    const descriptor = archiveFilterSuggestions(field, entries, publicState, activeArchiveFilters());
     if (event.key === "ArrowDown" && descriptor.matching.length) {
       event.preventDefault();
       state.archiveFilterHighlight = cycleHighlightIndex(state.archiveFilterHighlight, descriptor.matching.length, 1);
@@ -2249,8 +1983,24 @@ function updateArchiveSummary(filteredEntries, entries) {
 
 function updateArchiveFilterPanels(entries, publicState) {
   syncArchiveFilterFieldControls();
-  renderArchiveSuggestionPanel("tag", archiveFilterSuggestions("tag", entries, publicState));
-  renderArchiveSuggestionPanel("entity", archiveFilterSuggestions("entity", entries, publicState));
+  const tagHost = document.querySelector('[data-filter-results="tag"]');
+  if (tagHost instanceof HTMLElement) {
+    tagHost.innerHTML = renderArchiveSuggestionPanel(
+      "tag",
+      archiveFilterSuggestions("tag", entries, publicState, activeArchiveFilters()),
+      state.archiveFilterOpenField,
+      state.archiveFilterHighlight
+    );
+  }
+  const entityHost = document.querySelector('[data-filter-results="entity"]');
+  if (entityHost instanceof HTMLElement) {
+    entityHost.innerHTML = renderArchiveSuggestionPanel(
+      "entity",
+      archiveFilterSuggestions("entity", entries, publicState, activeArchiveFilters()),
+      state.archiveFilterOpenField,
+      state.archiveFilterHighlight
+    );
+  }
 }
 
 function syncArchiveFilterFieldControls() {
@@ -2276,38 +2026,6 @@ function syncArchiveFilterFieldControls() {
       existing.remove();
     }
   }
-}
-
-function archiveFilterSuggestions(field, entries, publicState) {
-  const filters = activeArchiveFilters();
-  const query = String(filters?.[field] || "").trim().toLowerCase();
-  const values = field === "tag"
-    ? dedupe(entries.flatMap((entry) => Array.isArray(entry.tags) ? entry.tags : []))
-    : dedupe(entries.flatMap((entry) => archiveEntryEntityOptions(entry, publicState)));
-  const matching = values
-    .filter((value) => String(value || "").trim())
-    .filter((value) => !query || value.toLowerCase().includes(query))
-    .slice(0, 8);
-  return { field, query, matching };
-}
-
-function renderArchiveSuggestionPanel(field, descriptor) {
-  const host = document.querySelector(`[data-filter-results="${field}"]`);
-  if (!(host instanceof HTMLElement)) return;
-  host.innerHTML = renderSearchSuggestions({
-    isOpen: state.archiveFilterOpenField === field,
-    query: descriptor?.query,
-    items: Array.isArray(descriptor?.matching) ? descriptor.matching : [],
-    highlightedIndex: state.archiveFilterHighlight,
-    emptyMessage: `No ${field} matches yet.`,
-    listClassName: "picker-results picker-results--dropdown archive-filters__results",
-    itemAttributes: (value) => ({
-      "data-filter-suggestion": field,
-      "data-filter-value": value
-    }),
-    renderPrimary: (value) => `<strong>${escapeHtml(value)}</strong>`,
-    renderSecondary: () => `<span>Use ${escapeHtml(field)}</span>`
-  });
 }
 
 function syncArchiveFiltersToUrl(canEdit) {
@@ -2353,25 +2071,7 @@ function updateArchiveMapPreview(filteredEntries, entries, publicState) {
     canvas.innerHTML = `<div class="map-empty">No mapped locations in the current results.</div>`;
     return;
   }
-  renderLeafletPreviewMap(canvas, mappedEntities);
-}
-
-function archiveEntitiesForEntries(entries, publicState) {
-  const entityMap = new Map((publicState?.approvedEntities || []).map((entity) => [entity.slug, entity]));
-  const refs = dedupe(
-    (Array.isArray(entries) ? entries : []).flatMap((entry) => [
-      ...(Array.isArray(entry?.entity_refs) ? entry.entity_refs : []),
-      ...(entry?.body ? collectEntityRefsFromText(entry.body, publicState?.approvedEntities || []) : [])
-    ])
-  );
-  return refs.map((slug) => entityMap.get(slug)).filter(Boolean);
-}
-
-function destroyLeafletPreview(canvas) {
-  if (canvas?.__leafletPreviewMap) {
-    canvas.__leafletPreviewMap.remove();
-    canvas.__leafletPreviewMap = null;
-  }
+  renderLeafletPreviewMap(canvas, mappedEntities, queueLeafletBoundsFit);
 }
 
 function destroyLeafletMap() {
@@ -2382,98 +2082,6 @@ function destroyLeafletMap() {
   state.map = null;
   state.mapCanvas = null;
   state.pendingMapEntitySlug = "";
-}
-
-function renderLeafletPreviewMap(canvas, entities) {
-  if (!window.L) {
-    canvas.innerHTML = `<div class="map-empty">Map library unavailable.</div>`;
-    return;
-  }
-  destroyLeafletPreview(canvas);
-  canvas.innerHTML = "";
-  const previewMap = window.L.map(canvas, {
-    zoomControl: false,
-    attributionControl: false,
-    dragging: false,
-    scrollWheelZoom: false,
-    doubleClickZoom: false,
-    boxZoom: false,
-    keyboard: false,
-    tap: false,
-    touchZoom: false
-  }).setView(SITE.map.defaultCenter, SITE.map.defaultZoom);
-  canvas.__leafletPreviewMap = previewMap;
-  window.L.tileLayer(SITE.map.tileUrl, {
-    attribution: SITE.map.tileAttribution,
-    minZoom: SITE.map.minZoom
-  }).addTo(previewMap);
-  const markers = window.L.layerGroup().addTo(previewMap);
-  const points = [];
-  for (const entity of entities) {
-    if (!Number.isFinite(entity.lat) || !Number.isFinite(entity.lng)) continue;
-    points.push([entity.lat, entity.lng]);
-    const marker = window.L.circleMarker([entity.lat, entity.lng], {
-      radius: 6,
-      color: "#6f0d09",
-      weight: 2,
-      fillColor: "#b3201a",
-      fillOpacity: 0.88
-    }).addTo(markers);
-    marker.bindTooltip(escapeHtml(entity.name), { direction: "top", opacity: 0.92 });
-  }
-  queueLeafletBoundsFit(previewMap, points, {
-    padding: [28, 28],
-    duration: 0.4,
-    defaultCenter: SITE.map.defaultCenter,
-    defaultZoom: SITE.map.defaultZoom,
-    singleZoom: 8
-  });
-}
-
-function filterArchiveEntries(entries, publicState, filters) {
-  const tagQuery = String(filters?.tag || "").trim().toLowerCase();
-  const entityQuery = String(filters?.entity || "").trim().toLowerCase();
-  const statusQuery = String(filters?.status || "").trim().toLowerCase();
-  const authorQuery = String(filters?.author || "").trim().toLowerCase();
-  return (Array.isArray(entries) ? entries : []).filter((entry) => {
-    if (statusQuery && normalizeDraftStatus(entry.archiveStatus) !== statusQuery) return false;
-    if (authorQuery) {
-      const author = String(entry.author || "").trim().toLowerCase();
-      const authorUser = (publicState?.users || []).find((user) => user.pubkey === author) || null;
-      const authorLabels = [author, authorUser?.username, authorUser?.displayName]
-        .map((value) => String(value || "").trim().toLowerCase())
-        .filter(Boolean);
-      if (!authorLabels.some((value) => value.includes(authorQuery))) return false;
-    }
-    if (tagQuery) {
-      const matchesTag = (Array.isArray(entry.tags) ? entry.tags : [])
-        .map((tag) => String(tag || "").trim().toLowerCase())
-        .some((tag) => tag.includes(tagQuery));
-      if (!matchesTag) return false;
-    }
-    if (entityQuery) {
-      const matchesEntity = archiveEntryEntityOptions(entry, publicState)
-        .map((value) => String(value || "").trim().toLowerCase())
-        .some((value) => value.includes(entityQuery));
-      if (!matchesEntity) return false;
-    }
-    return true;
-  });
-}
-
-function archiveEntryEntityOptions(entry, publicState) {
-  const entityMap = new Map((publicState?.approvedEntities || []).map((entity) => [entity.slug, entity]));
-  const refs = dedupe([
-    ...(Array.isArray(entry?.entity_refs) ? entry.entity_refs : []),
-    ...(entry?.body ? collectEntityRefsFromText(entry.body, publicState?.approvedEntities || []) : [])
-  ]);
-  return dedupe(
-    refs.flatMap((slug) => {
-      const entity = entityMap.get(slug);
-      if (!entity) return [slug];
-      return [entity.slug, entity.name, entity.location];
-    })
-  );
 }
 
 function normalizeDraftStatus(status) {
