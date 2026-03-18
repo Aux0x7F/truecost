@@ -1496,8 +1496,9 @@ function animateRootCommentReorder(panel, previousPositions) {
           { transform: "translate(0px, 0px)" }
         ],
         {
-          duration: 320,
-          easing: "cubic-bezier(0.22, 1, 0.36, 1)"
+          duration: 680,
+          easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+          fill: "both"
         }
       );
       continue;
@@ -1505,7 +1506,7 @@ function animateRootCommentReorder(panel, previousPositions) {
     item.card.style.transition = "none";
     item.card.style.transform = `translate(${item.deltaX}px, ${item.deltaY}px)`;
     void item.card.offsetWidth;
-    item.card.style.transition = "transform 320ms cubic-bezier(0.22, 1, 0.36, 1)";
+    item.card.style.transition = "transform 680ms cubic-bezier(0.16, 1, 0.3, 1)";
     item.card.style.transform = "";
   }
   window.setTimeout(() => {
@@ -1514,7 +1515,7 @@ function animateRootCommentReorder(panel, previousPositions) {
       item.card.style.transition = "";
       item.card.style.transform = "";
     }
-  }, 360);
+  }, 760);
 }
 
 function renderComment(comment, publicState, options = {}, depth = 0) {
