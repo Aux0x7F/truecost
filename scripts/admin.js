@@ -23,6 +23,7 @@ import {
   uploadPublicBlob
 } from "./core/nostr.js";
 import { createPublicStateStore } from "./core/public-state-store.js";
+import { publicStateHasAdminPubkey } from "./core/public-state.js";
 import {
   collectRecordBranchIds as collectWorkspaceCommentBranchIds,
   regroupRecordsByKey as regroupComments
@@ -30,6 +31,7 @@ import {
 import {
   cycleHighlightIndex
 } from "./core/search-controls.js";
+import { createWorkspaceSurfaceDeps } from "./surfaces/workspace-deps.js";
 import {
   renderCommentActionModal as renderWorkspaceCommentActionModal,
   renderEntityModal as renderWorkspaceEntityModal,
@@ -834,7 +836,7 @@ function renderWorkspace(options = {}) {
 
 function workspaceSurfaceDeps() {
   const actionDeps = workspaceActionSurfaceDeps();
-  return {
+  return createWorkspaceSurfaceDeps({
     tabButtons,
     renderTabButton,
     currentUserIsAdmin,
@@ -842,7 +844,6 @@ function workspaceSurfaceDeps() {
     currentUserPendingKeyRequest,
     currentUser,
     visibleWorkspaceUsers,
-    renderSearchField,
     renderKarmaSelectOptions,
     renderLookupCandidate: () => renderWorkspaceLookupCandidate(workspaceState, actionDeps),
     renderUserStatsCard: () => renderWorkspaceUserStatsCard(workspaceState, actionDeps),
@@ -871,7 +872,7 @@ function workspaceSurfaceDeps() {
     renderLogPane,
     renderUserCard: (user) => renderWorkspaceUserCard(user, workspaceState, actionDeps),
     renderUserIdentityButton
-  };
+  });
 }
 
 function workspaceActionSurfaceDeps() {
@@ -1428,7 +1429,7 @@ async function resolveUserLookupQuery(rawValue, options = {}) {
       pubkey: directPubkey,
       username: "",
       displayName: "Direct match",
-      isAdmin: workspaceState.publicState?.admins?.includes(directPubkey)
+      isAdmin: publicStateHasAdminPubkey(workspaceState.publicState, directPubkey)
     });
     workspaceState.userDirectStatus = "No profile is visible yet, but this account can still be managed directly.";
     if (shouldRender) renderWorkspace({ soft: true });
@@ -2090,7 +2091,7 @@ function currentUser() {
 }
 
 function currentUserIsAdmin() {
-  return Boolean(workspaceState.viewer && workspaceState.publicState?.admins?.includes(workspaceState.viewer.pubkey));
+  return publicStateHasAdminPubkey(workspaceState.publicState, workspaceState.viewer?.pubkey);
 }
 
 function currentUserHasInboxAccess() {
@@ -2770,7 +2771,7 @@ function hydrateLookupCandidate(user) {
     ...user,
     displayName: user.displayName || current.displayName || user.username || shortKey(user.pubkey),
     username: user.username || current.username || "",
-    isAdmin: workspaceState.publicState?.admins?.includes(user.pubkey) || current.isAdmin || false
+    isAdmin: publicStateHasAdminPubkey(workspaceState.publicState, user.pubkey) || current.isAdmin || false
   };
 }
 

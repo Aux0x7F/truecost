@@ -398,10 +398,15 @@ function renderLocationResults() {
   const input = document.querySelector("[data-submit-location-input]");
   if (!(host instanceof HTMLElement) || !(input instanceof HTMLInputElement)) return;
   const query = input.value.trim().toLowerCase();
+  if (!query) {
+    host.innerHTML = "";
+    host.removeAttribute("data-open");
+    return;
+  }
   const matches = uniqueLocations()
-    .filter((location) => !query || location.toLowerCase().includes(query))
+    .filter((location) => location.toLowerCase().includes(query))
     .slice(0, 6);
-  if (!query && !matches.length) {
+  if (!matches.length) {
     host.innerHTML = "";
     host.removeAttribute("data-open");
     return;

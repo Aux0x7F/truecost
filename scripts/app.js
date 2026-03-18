@@ -26,6 +26,7 @@ import {
 import {
   createPublicStateStore
 } from "./core/public-state-store.js";
+import { normalizeAdminPubkeys, publicStateHasAdminPubkey } from "./core/public-state.js";
 import {
   clampNotificationsPanel,
   closeProfileMenu,
@@ -2535,7 +2536,7 @@ async function buildNotifications(publicState) {
   const viewer = state.viewer;
   if (!viewer) return [];
   const notifications = [];
-  const isAdmin = publicState.admins?.includes(viewer.pubkey);
+  const isAdmin = publicStateHasAdminPubkey(publicState, viewer.pubkey);
   const commentMap = new Map((publicState.allComments || []).map((comment) => [comment.id, comment]));
 
   for (const comment of publicState.comments || []) {
@@ -2944,7 +2945,7 @@ function sessionViewerPubkey() {
 }
 
 function trustedAdminPubkeys(publicState) {
-  const admins = new Set(Array.isArray(publicState?.admins) ? publicState.admins : []);
+  const admins = new Set(normalizeAdminPubkeys(publicState));
   const rootAdminPubkey = String(publicState?.rootAdminPubkey || SITE.nostr.rootAdminPubkey || "").trim();
   if (rootAdminPubkey) admins.add(rootAdminPubkey);
   return [...admins];

@@ -52,6 +52,7 @@ test("submit shell renders attached search fields and consent copy inside the mo
 
   assert.match(view.shellMarkup, /data-submit-entity-results/);
   assert.match(view.shellMarkup, /data-submit-suggested-entity-results/);
+  assert.match(view.shellMarkup, /data-submit-location-results/);
   assert.match(view.shellMarkup, /Allow follow-up/);
 });
 
@@ -62,6 +63,8 @@ test("submit suggestion markup keeps attached dropdown semantics for each field 
     { kind: "entity", escapeAttribute: deps.escapeAttribute, escapeHtml: deps.escapeHtml }
   );
   assert.match(entityMarkup, /data-submit-entity-pick="yard"/);
+  assert.match(entityMarkup, /workspace-search__option/);
+  assert.doesNotMatch(entityMarkup, /picker-chip/);
 
   const suggestedMarkup = renderSubmitSuggestionMarkup(
     [{ slug: "route", name: "County Route", location: "Arizona" }],
@@ -69,6 +72,7 @@ test("submit suggestion markup keeps attached dropdown semantics for each field 
     { kind: "suggested-entity", escapeAttribute: deps.escapeAttribute, escapeHtml: deps.escapeHtml }
   );
   assert.match(suggestedMarkup, /data-submit-suggested-entity-pick="route"/);
+  assert.match(suggestedMarkup, /workspace-search__option-meta/);
 
   const locationMarkup = renderSubmitSuggestionMarkup(
     ["Phoenix, Arizona"],
@@ -76,4 +80,5 @@ test("submit suggestion markup keeps attached dropdown semantics for each field 
     { kind: "location", escapeAttribute: deps.escapeAttribute, escapeHtml: deps.escapeHtml }
   );
   assert.match(locationMarkup, /data-submit-location-pick="Phoenix, Arizona"/);
+  assert.match(locationMarkup, /workspace-search__option/);
 });

@@ -8,6 +8,7 @@ Changes to live state, cached state, comments, filters, maps, workspace surfaces
 
 - a focused deterministic test for the data/state contract
 - a focused surface test when a new render family is extracted from a page controller
+- a browser regression when the failure mode is a runtime boot error, DOM lifecycle error, or broken attached-field interaction
 - syntax validation for touched modules
 - a clear statement of what user behavior was verified
 - a compatibility note when introducing non-baseline browser features
@@ -41,5 +42,10 @@ Where applicable, cover:
 - `node --test tests/editor-shell.test.mjs`
 - `node --test tests/map-surface.test.mjs`
 - `node --test tests/submit-shell.test.mjs`
+- `node --test tests/admin-editor-submit.browser.test.mjs`
+Use the checked-in browser regression whenever a fix touches:
 
-Higher-level browser validation should continue in the sibling `nostr-site` smoke tooling until `truecost` has its own expanded harness.
+- admin/workspace boot
+- editor boot or editor lifecycle
+- attached autocomplete/dropdown geometry
+- other runtime paths that unit tests can miss because the failure only appears in a real browser

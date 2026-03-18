@@ -59,7 +59,7 @@ export function renderSearchSuggestions({
   emptyMessage = "",
   requiresQuery = true,
   listClassName = "picker-results picker-results--dropdown workspace-search__results",
-  itemClassName = "picker-chip",
+  itemClassName = "workspace-search__option",
   itemAttributes = () => ({}),
   renderPrimary = (item) => `<strong>${escapeHtml(item)}</strong>`,
   renderSecondary = () => ""
