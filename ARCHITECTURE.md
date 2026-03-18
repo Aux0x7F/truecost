@@ -25,6 +25,18 @@ The intended publishing model is:
 
 This means the public site should feel static-first, but still allow live admin-authored updates between bakedowns.
 
+## Cache-first live component contract
+
+Every live component on the site should follow the same rule:
+
+1. render static or cached baseline immediately
+2. load fresher relay state in the background
+3. patch the mounted component in place
+
+Comments, filters, maps, workspace lists, notifications, and collaborative units should all behave that way.
+
+A loading state is only appropriate when there is no useful cached or static baseline to show.
+
 ## Code layering
 
 The implementation should converge on three layers:
@@ -44,6 +56,8 @@ The implementation should converge on three layers:
   - mount points for live surfaces
 
 Page files should compose shared surfaces and helpers. They should not reintroduce duplicate escaping, duplicate comment threading, or duplicate attached-search behavior.
+
+The next refactors should reduce page controllers into composed surface modules backed by explicit shared state helpers.
 
 ## Trust model
 
@@ -89,6 +103,18 @@ Today, True Cost does not yet have:
 
 - archive-wide and entity-record live overlay coverage
 - periodic PR cadence driven from the live collaborative unit layer instead of the older review queue
+
+## Testing contract
+
+Feature work is not complete until the expected behavior is covered at the right layer.
+
+At minimum, changes to live or cached behavior should be covered for:
+
+- cache-first restore
+- optimistic update persistence
+- reload resilience
+- stale remote merge behavior
+- hierarchy preservation for threaded data
 
 ## Target implementation
 

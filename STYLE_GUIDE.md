@@ -50,6 +50,7 @@ The shared JS entry points for these primitives belong in `scripts/core`:
 - Spinners belong inside the control or component that is loading.
 - Loading should preserve expected layout space; do not collapse sections while data is pending.
 - Background refreshes should update data in place, not rebuild whole panels unless structure truly changed.
+- If useful cached data exists, render it first and update in place instead of showing a blank loading state.
 
 ## Content Rules
 - User-facing text should be plain and direct.
@@ -75,6 +76,10 @@ The shared JS entry points for these primitives belong in `scripts/core`:
 - Live updates should patch the current surface instead of tearing it down.
 - Partial relay reads should not erase richer cached state.
 - Any reusable state/render pattern should be moved toward a shared helper before duplicating it again.
+
+## Testing Expectations
+- A live-surface change should ship with a regression test for the data contract it depends on.
+- Claims about reload behavior, stale merges, or thread integrity should be backed by deterministic tests, not only manual checking.
 
 ## Next Convergence Targets
 - reusable filter/search rail components
