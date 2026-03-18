@@ -22,7 +22,7 @@ It is intentionally separate from `ARCHITECTURE.md`:
 
 ## Bakedown cadence
 
-Current intended cadence:
+Current cadence:
 
 - low traffic: around once per week
 - higher traffic: around once per day
