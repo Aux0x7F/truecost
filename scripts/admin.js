@@ -28,9 +28,7 @@ import {
   regroupRecordsByKey as regroupComments
 } from "./core/comment-utils.js";
 import {
-  cycleHighlightIndex,
-  renderSearchField,
-  renderSearchSuggestions
+  cycleHighlightIndex
 } from "./core/search-controls.js";
 import {
   renderCommentActionModal as renderWorkspaceCommentActionModal,
@@ -45,6 +43,13 @@ import {
   renderUserProfileModal as renderWorkspaceUserProfileModal,
   renderUserStatsCard as renderWorkspaceUserStatsCard
 } from "./surfaces/workspace-actions.js";
+import {
+  renderEntityLocationFilterSuggestions as renderWorkspaceEntityLocationFilterSuggestions,
+  renderEntityManagementRail as renderWorkspaceEntityManagementRail,
+  renderEntityPickerResultsMarkup,
+  renderLocationResultsMarkup,
+  renderSubmissionFilterSuggestions as renderWorkspaceSubmissionFilterSuggestions
+} from "./surfaces/workspace-filters.js";
 import { renderWorkspaceView } from "./surfaces/workspace.js";
 import {
   dedupeStrings as dedupe,
@@ -1990,22 +1995,10 @@ function renderEntityPickerResults(fieldName) {
   if (!(host instanceof HTMLElement) || !(input instanceof HTMLInputElement)) return;
   const query = fieldName === "entityRefs" ? lastCommaValue(input.value) : input.value.trim();
   const matches = matchEntities(query).slice(0, 6);
-  if (!query) {
-    host.innerHTML = "";
-    return;
-  }
-  host.innerHTML = matches.length
-    ? matches
-        .map(
-          (entity) => `
-            <button class="picker-chip" type="button" data-entity-pick="${escapeAttribute(entity.slug)}" data-target-field="${fieldName}">
-              <strong>${escapeHtml(entity.name)}</strong>
-              <span>${escapeHtml(entity.location)}</span>
-            </button>
-          `
-        )
-        .join("")
-    : `<div class="picker-hint">No match yet. Use the create button to add a new entity.</div>`;
+  host.innerHTML = renderEntityPickerResultsMarkup(fieldName, query, matches, {
+    escapeAttribute,
+    escapeHtml
+  });
 }
 
 function applyEntityPick(button) {
@@ -2308,16 +2301,9 @@ function filterInboxSubmissions(items) {
 }
 
 function renderSubmissionFilterSuggestions() {
-  return renderSearchSuggestions({
-    isOpen: workspaceState.submissionFilterOpen,
-    query: workspaceState.submissionFilters.query,
-    items: submissionFilterSuggestions(),
-    highlightedIndex: workspaceState.submissionFilterHighlight,
-    itemAttributes: (token, index) => ({
-      "data-submission-filter-suggestion": token,
-      "data-submission-filter-index": index
-    }),
-    renderPrimary: (token) => `<strong>${escapeHtml(token)}</strong>`
+  return renderWorkspaceSubmissionFilterSuggestions(workspaceState, {
+    escapeHtml,
+    submissionFilterSuggestions
   });
 }
 
@@ -2735,90 +2721,16 @@ function visibleWorkspaceEntities() {
 }
 
 function renderEntityManagementRail() {
-  return `
-    <div class="workspace-rail-copy">
-      <div class="eyebrow">Filter entities</div>
-      <p>Search by name or alias, then narrow by status, place, or submitting user.</p>
-    </div>
-    ${renderSearchField({
-      srLabel: "Search entities",
-      inputAttributes: {
-        class: "workspace-search__input",
-        "data-entity-filter-query": true,
-        type: "text",
-        maxlength: "120",
-        placeholder: "Search entities",
-        value: workspaceState.entityFilters.query || "",
-        autocomplete: "off"
-      },
-      clearButton: workspaceState.entityFilters.query
-        ? {
-            attributes: { "data-clear-entity-filter": "query" },
-            ariaLabel: "Clear entity search"
-          }
-        : null
-    })}
-    <label class="workspace-select">
-      <span class="sr-only">Filter by entity status</span>
-      <select data-entity-filter-status>
-        <option value="">All statuses</option>
-        <option value="approved" ${workspaceState.entityFilters.status === "approved" ? "selected" : ""}>Approved</option>
-        <option value="pending" ${workspaceState.entityFilters.status === "pending" ? "selected" : ""}>Pending</option>
-        <option value="denied" ${workspaceState.entityFilters.status === "denied" ? "selected" : ""}>Denied</option>
-        <option value="deleted" ${workspaceState.entityFilters.status === "deleted" ? "selected" : ""}>Deleted</option>
-      </select>
-    </label>
-    ${renderSearchField({
-      srLabel: "Filter by state or country",
-      inputAttributes: {
-        class: "workspace-search__input",
-        "data-entity-filter-location": true,
-        type: "text",
-        maxlength: "120",
-        placeholder: "State or county",
-        value: workspaceState.entityFilters.location || "",
-        autocomplete: "off"
-      },
-      clearButton: workspaceState.entityFilters.location
-        ? {
-            attributes: { "data-clear-entity-filter": "location" },
-            ariaLabel: "Clear location filter"
-          }
-        : null,
-      resultsHtml: renderEntityLocationFilterSuggestions()
-    })}
-    ${renderSearchField({
-      srLabel: "Filter by submitting user",
-      inputAttributes: {
-        class: "workspace-search__input",
-        "data-entity-filter-author": true,
-        type: "text",
-        maxlength: "120",
-        placeholder: "Submitted by",
-        value: workspaceState.entityFilters.author || "",
-        autocomplete: "off"
-      },
-      clearButton: workspaceState.entityFilters.author
-        ? {
-            attributes: { "data-clear-entity-filter": "author" },
-            ariaLabel: "Clear submitter filter"
-          }
-        : null
-    })}
-  `;
+  return renderWorkspaceEntityManagementRail(workspaceState, {
+    escapeHtml,
+    entityLocationSuggestions: entityLocationFilterSuggestions
+  });
 }
 
 function renderEntityLocationFilterSuggestions() {
-  return renderSearchSuggestions({
-    isOpen: workspaceState.entityLocationFilterOpen,
-    query: workspaceState.entityFilters.location,
-    items: entityLocationFilterSuggestions(),
-    highlightedIndex: workspaceState.entityLocationFilterHighlight,
-    itemAttributes: (value, index) => ({
-      "data-entity-location-suggestion": value,
-      "data-entity-location-index": index
-    }),
-    renderPrimary: (value) => `<strong>${escapeHtml(value)}</strong>`
+  return renderWorkspaceEntityLocationFilterSuggestions(workspaceState, {
+    escapeHtml,
+    entityLocationSuggestions: entityLocationFilterSuggestions
   });
 }
 

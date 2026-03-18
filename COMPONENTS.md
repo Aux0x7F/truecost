@@ -112,19 +112,23 @@ Do not blank useful content while waiting for background state.
 
 Current extraction targets:
 
+- `scripts/core/navigation-state.js`
+- `scripts/core/notification-state.js`
 - `scripts/surfaces/navigation.js`
+- `scripts/surfaces/profile-overlays.js`
 - `scripts/surfaces/comments.js`
 - `scripts/surfaces/archive.js`
+- `scripts/surfaces/submit-shell.js`
 - `scripts/surfaces/workspace.js`
+- `scripts/surfaces/workspace-filters.js`
 - `scripts/surfaces/workspace-actions.js`
 - `scripts/surfaces/map.js`
 - `scripts/surfaces/editor-shell.js`
 
 The next convergence targets are:
 
-- notification/profile-menu state
-- editor side rails
-- controller/store boundaries behind these surfaces
+- editor collaboration rail behavior when that feature lands
+- narrower selectors behind the remaining admin controller flows
 
 ## Modals and action sheets
 
@@ -132,6 +136,13 @@ The next convergence targets are:
 - Action menus should stay context-bound to the item they operate on.
 - If an action navigates to a filtered or threaded context, wait for the target context to exist before final focusing.
 - Repeated item-action patterns should converge into one action-sheet family before another list invents its own.
+- The current modal family is:
+  - public profile overlays
+  - submit modals
+  - workspace action modals
+  - workspace filter/search rails
+  - editor modals
+  Those should keep sharing one shell vocabulary instead of drifting per page.
 
 ## Editor shell
 

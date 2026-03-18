@@ -24,9 +24,20 @@ import {
   stopPublicStateRepairPeer
 } from "./core/nostr.js";
 import {
-  createPublicStateDigest,
   createPublicStateStore
 } from "./core/public-state-store.js";
+import {
+  clampNotificationsPanel,
+  closeProfileMenu,
+  createNavigationUiState,
+  keepProfileMenuOpen,
+  toggleNotificationsPanel,
+  toggleProfileMenu
+} from "./core/navigation-state.js";
+import {
+  countNotificationItems,
+  createNotificationState
+} from "./core/notification-state.js";
 import {
   applyCommentVoteToPublicState,
   commentAffectsThreadRanking,
@@ -57,6 +68,7 @@ import {
   renderNavigationMarkup,
   profileInitials
 } from "./surfaces/navigation.js";
+import { renderPublicUserProfileModal } from "./surfaces/profile-overlays.js";
 import {
   archiveEntitiesForEntries,
   archiveEntryEntityOptions,
@@ -123,6 +135,7 @@ const publicStateStore = createPublicStateStore({
 });
 const initialPublicState = publicStateStore.value;
 const initialPosts = loadCachedPosts();
+const navigationUi = createNavigationUiState();
 
 const state = {
   session: getStoredSession(),
@@ -133,10 +146,8 @@ const state = {
   posts: initialPosts,
   postsPromise: null,
   commentReply: null,
-  notifications: [],
-  notificationsLoading: false,
-  profileMenuOpen: false,
-  notificationsExpanded: false,
+  navigationUi,
+  userProfileModalPubkey: "",
   archiveFilters: null,
   archiveFilterOpenField: "",
   archiveFilterHighlight: -1,
@@ -156,6 +167,15 @@ const state = {
   mapViewDigest: "",
   highlightedCommentId: ""
 };
+
+const notificationState = createNotificationState({
+  storageNamespace: SITE.nostr.storageNamespace,
+  onChange: () => renderNavigation(),
+  getSession: () => state.session,
+  getViewerPubkey: () => state.viewer?.pubkey || "",
+  getPublicState: (force) => getPublicState(force),
+  buildNotifications: ({ publicState, force }) => buildNotifications(publicState, force)
+});
 
 publicStateStore.subscribe((snapshot) => {
   state.publicState = snapshot.value;
@@ -188,11 +208,11 @@ function bindGlobalSiteInteractions() {
     const userTrigger = target.closest("[data-open-user]");
     if (userTrigger instanceof HTMLElement) {
       event.preventDefault();
-      await openUserProfileModal(userTrigger.getAttribute("data-open-user") || "");
+      openUserProfileModal(userTrigger.getAttribute("data-open-user") || "");
       return;
     }
 
-    if (target.closest("[data-close-user-modal]")) {
+    if (target.matches("[data-user-modal]") || target.closest("[data-close-user-modal]")) {
       event.preventDefault();
       closeUserProfileModal();
     }
@@ -254,37 +274,37 @@ function initNavigation() {
 
     const profileToggle = target.closest("[data-profile-toggle]");
     if (profileToggle) {
-      state.profileMenuOpen = !state.profileMenuOpen;
-      if (!state.profileMenuOpen) state.notificationsExpanded = false;
+      toggleProfileMenu(state.navigationUi);
       renderNavigation();
       return;
     }
 
     if (target.closest("[data-notification-toggle]")) {
       event.preventDefault();
-      state.profileMenuOpen = true;
-      if (!state.notifications.length && !state.notificationsLoading) {
-        state.notificationsExpanded = false;
-      } else {
-        state.notificationsExpanded = !state.notificationsExpanded;
-      }
+      toggleNotificationsPanel(state.navigationUi, {
+        count: countNotificationItems(notificationState.items),
+        loading: notificationState.loading
+      });
       renderNavigation();
       return;
     }
 
     if (target.closest("[data-clear-notifications]")) {
       event.preventDefault();
-      clearNotifications();
-      state.notificationsExpanded = false;
-      state.profileMenuOpen = true;
+      notificationState.clear();
+      keepProfileMenuOpen(state.navigationUi);
+      clampNotificationsPanel(state.navigationUi, { count: 0, loading: false });
       renderNavigation();
       return;
     }
 
     const notificationLink = target.closest("[data-notification-link]");
     if (notificationLink) {
-      dismissNotification(notificationLink.getAttribute("data-notification-link") || "");
-      if (!state.notifications.length) state.notificationsExpanded = false;
+      notificationState.dismiss(notificationLink.getAttribute("data-notification-link") || "");
+      clampNotificationsPanel(state.navigationUi, {
+        count: countNotificationItems(notificationState.items),
+        loading: notificationState.loading
+      });
       return;
     }
 
@@ -301,8 +321,7 @@ function initNavigation() {
 
     for (const menu of document.querySelectorAll("[data-profile-menu].is-open")) {
       if (!menu.contains(target)) {
-        state.profileMenuOpen = false;
-        state.notificationsExpanded = false;
+        closeProfileMenu(state.navigationUi);
         renderNavigation();
       }
     }
@@ -421,12 +440,12 @@ function initLinkPrefetch() {
 function handleSessionChanged() {
   state.session = getStoredSession();
   state.viewer = null;
-  state.notifications = [];
-  state.notificationsLoading = false;
-  state.profileMenuOpen = false;
-  state.notificationsExpanded = false;
+  state.userProfileModalPubkey = "";
+  notificationState.reset();
+  closeProfileMenu(state.navigationUi);
   primeViewerFromSession(hasNostrTools());
   renderNavigation();
+  renderGlobalOverlays();
   destroyStaticPageOverlay();
   state.staticEdit = null;
   if (state.session) {
@@ -450,11 +469,12 @@ function renderNavigation() {
       viewerPubkey &&
       trustedAdminPubkeys(state.publicState).includes(viewerPubkey)
   );
-  const notifications = isLoggedIn ? state.notifications.slice(0, 8) : [];
-  const unreadCount = isLoggedIn ? notifications.length : 0;
-  const notificationsExpanded = unreadCount || state.notificationsLoading
-    ? state.notificationsExpanded
-    : false;
+  const notifications = isLoggedIn ? notificationState.items.slice(0, 8) : [];
+  const unreadCount = isLoggedIn ? countNotificationItems(notifications) : 0;
+  const notificationsExpanded = clampNotificationsPanel(state.navigationUi, {
+    count: unreadCount,
+    loading: notificationState.loading
+  });
   const mapEnabled = Boolean(state.publicState?.connected);
   nav.innerHTML = renderNavigationMarkup({
     page,
@@ -464,17 +484,18 @@ function renderNavigation() {
     currentUser,
     sessionUsername: state.session?.username || "",
     notifications,
-    notificationsLoading: state.notificationsLoading,
-    profileMenuOpen: state.profileMenuOpen,
+    notificationsLoading: notificationState.loading,
+    profileMenuOpen: state.navigationUi.profileMenuOpen,
     notificationsExpanded,
     mapEnabled,
     deps: {
-      countUnreadNotifications,
+      countUnreadNotifications: countNotificationItems,
       escapeAttribute,
       escapeHtml,
       safeAvatarUrl
     }
   });
+  renderGlobalOverlays();
 
   for (const disabled of nav.querySelectorAll('[aria-disabled="true"]')) {
     disabled.addEventListener("click", (event) => event.preventDefault(), { once: false });
@@ -1413,52 +1434,43 @@ function focusRequestedComment(postSlug, attempt = 0) {
   window.setTimeout(() => target.classList.remove("comment-card--focus"), 1800);
 }
 
-async function openUserProfileModal(pubkey) {
+function openUserProfileModal(pubkey) {
   const cleanPubkey = String(pubkey || "").trim().toLowerCase();
   if (!cleanPubkey) return;
-  const publicState = state.publicState || await getPublicState();
-  const user = (publicState?.users || []).find((item) => item.pubkey === cleanPubkey);
-  if (!user) return;
-  closeUserProfileModal();
-  const modal = document.createElement("div");
-  modal.className = "modal-backdrop";
-  modal.setAttribute("data-user-modal", "");
-  const displayName = user.displayName || user.username || "User";
-  modal.innerHTML = `
-    <section class="modal-card user-profile-modal">
-      <div class="workspace-list__row">
-        <div>
-          <div class="eyebrow">Profile</div>
-          <h2>${escapeHtml(displayName)}</h2>
-        </div>
-        <button class="button-ghost" type="button" data-close-user-modal>Close</button>
-      </div>
-      <div class="user-profile-modal__hero">
-        <div class="user-profile-modal__avatar-wrap">
-          ${renderAvatarBadge(user, displayName, "user-profile-modal__avatar")}
-        </div>
-        <div class="user-profile-modal__copy">
-          ${user.username ? `<strong>@${escapeHtml(user.username)}</strong>` : ""}
-          <span class="muted-text">Karma ${formatKarma(resolveUserKarma(publicState, cleanPubkey))}</span>
-          <p>${escapeHtml(user.bio || "No bio added yet.")}</p>
-        </div>
-      </div>
-      ${
-        safeUserSocialLinks(user).length
-          ? `
-            <div class="user-profile-modal__links">
-              ${safeUserSocialLinks(user).map((link) => `<a class="text-link" href="${escapeAttribute(link)}" target="_blank" rel="noreferrer">${escapeHtml(link)}</a>`).join("")}
-            </div>
-          `
-          : ""
-      }
-    </section>
-  `;
-  document.body.append(modal);
+  state.userProfileModalPubkey = cleanPubkey;
+  renderGlobalOverlays();
+  if (!(state.publicState?.users || []).some((item) => item.pubkey === cleanPubkey)) {
+    void getPublicState().then(() => renderGlobalOverlays()).catch(() => null);
+  }
 }
 
 function closeUserProfileModal() {
-  document.querySelector("[data-user-modal]")?.remove();
+  state.userProfileModalPubkey = "";
+  renderGlobalOverlays();
+}
+
+function ensureGlobalOverlayRoot() {
+  let root = document.querySelector("[data-global-overlay-root]");
+  if (root instanceof HTMLElement) return root;
+  root = document.createElement("div");
+  root.setAttribute("data-global-overlay-root", "");
+  document.body.append(root);
+  return root;
+}
+
+function renderGlobalOverlays() {
+  const root = ensureGlobalOverlayRoot();
+  const user = state.userProfileModalPubkey
+    ? (state.publicState?.users || []).find((item) => item.pubkey === state.userProfileModalPubkey) || null
+    : null;
+  root.innerHTML = renderPublicUserProfileModal(user, {
+    escapeAttribute,
+    escapeHtml,
+    profileInitials,
+    safeAvatarUrl,
+    safeSocialLinks: safeUserSocialLinks,
+    shortKey: (value) => String(value || "").trim().slice(0, 12)
+  });
 }
 
 function commentAuthorLabel(comment, publicState) {
@@ -2474,7 +2486,7 @@ async function publishReviewDecision(panel, draft, button) {
       }
     });
     state.publicState = (await publicStateStore.hydrate({ force: true, reason: "review-action" })).value;
-    state.notifications = [];
+    notificationState.reset();
     void hydrateNotifications(true);
     if (statusBox instanceof HTMLElement) {
       statusBox.textContent = reviewActionMessage(action, draft);
@@ -2514,24 +2526,9 @@ function reviewActionMessage(action, draft = null) {
 }
 
 async function hydrateNotifications(force = false) {
-  if (!state.session) {
-    state.notifications = [];
-    state.notificationsLoading = false;
-    return;
-  }
   const publicState = await getPublicState();
   primeViewerFromSession(false);
-  if (!state.viewer?.pubkey) return;
-  state.notificationsLoading = true;
-  renderNavigation();
-  try {
-    state.notifications = await buildNotifications(publicState, force);
-  } catch {
-    state.notifications = [];
-  } finally {
-    state.notificationsLoading = false;
-    renderNavigation();
-  }
+  await notificationState.hydrate({ publicState, force });
 }
 
 async function buildNotifications(publicState) {
@@ -2618,13 +2615,9 @@ async function buildNotifications(publicState) {
   const submissionNotifications = await loadSubmissionNotifications(publicState, viewer.pubkey, isAdmin);
   notifications.push(...submissionNotifications);
 
-  const dismissed = dismissedNotificationIds();
-
   return notifications
     .sort((left, right) => right.createdAt - left.createdAt)
-    .filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index)
-    .filter((item) => !dismissed.has(item.id))
-    .slice(0, 12);
+    .filter((item, index, items) => items.findIndex((candidate) => candidate.id === item.id) === index);
 }
 
 async function loadSubmissionNotifications(publicState, viewerPubkey, isAdmin) {
@@ -2692,41 +2685,6 @@ function notificationSitePubkeys(publicState) {
     publicState?.siteInfo?.fallbackPubkey || "",
     ...((publicState?.siteInfo?.events || []).map((event) => event.site_pubkey || ""))
   ]);
-}
-
-function dismissedNotificationIds() {
-  if (!state.viewer?.pubkey) return new Set();
-  try {
-    const raw = window.localStorage.getItem(notificationDismissedKey(state.viewer.pubkey));
-    const parsed = raw ? JSON.parse(raw) : [];
-    return new Set(Array.isArray(parsed) ? parsed.map((item) => String(item || "").trim()).filter(Boolean) : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function notificationDismissedKey(pubkey) {
-  return `${SITE.nostr.storageNamespace}.notifications.dismissed.${pubkey}`;
-}
-
-function dismissNotification(id) {
-  if (!state.viewer?.pubkey || !id) return;
-  const dismissed = dismissedNotificationIds();
-  dismissed.add(String(id));
-  window.localStorage.setItem(notificationDismissedKey(state.viewer.pubkey), JSON.stringify([...dismissed]));
-  state.notifications = state.notifications.filter((item) => item.id !== id);
-}
-
-function clearNotifications() {
-  if (!state.viewer?.pubkey || !state.notifications.length) return;
-  const dismissed = dismissedNotificationIds();
-  for (const item of state.notifications) dismissed.add(item.id);
-  window.localStorage.setItem(notificationDismissedKey(state.viewer.pubkey), JSON.stringify([...dismissed]));
-  state.notifications = [];
-}
-
-function countUnreadNotifications(notifications) {
-  return Array.isArray(notifications) ? notifications.length : 0;
 }
 
 function reviewNotificationTitle(action, isPage = false) {
@@ -3398,7 +3356,7 @@ async function saveStaticEditSnapshot() {
       content: payload
     });
     state.publicState = (await publicStateStore.hydrate({ force: true, reason: "page-snapshot-review" })).value;
-    state.notifications = [];
+    notificationState.reset();
     void hydrateNotifications(true);
     editState.status = `Snapshot saved locally at ${formatLocalTimestamp(savedAt)} and sent to review.`;
   } catch (error) {

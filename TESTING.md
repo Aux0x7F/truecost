@@ -35,8 +35,11 @@ Where applicable, cover:
 - `node --test tests/comment-refresh.test.mjs`
 - `node --test tests/comment-vote-ranking.test.mjs`
 - `node --test tests/public-state-store.test.mjs`
+- `node --test tests/navigation-notification.test.mjs`
 - `node --test tests/workspace-actions.test.mjs`
+- `node --test tests/workspace-filters.test.mjs`
 - `node --test tests/editor-shell.test.mjs`
 - `node --test tests/map-surface.test.mjs`
+- `node --test tests/submit-shell.test.mjs`
 
 Higher-level browser validation should continue in the sibling `nostr-site` smoke tooling until `truecost` has its own expanded harness.

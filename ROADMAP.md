@@ -13,11 +13,14 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - The first broad surface split is in place: navigation, archive, comments, and workspace rendering now have dedicated modules instead of living only inside page controllers.
 - Workspace action sheets, map shells, and editor-shell rendering are now split into dedicated surface modules instead of staying buried in page controllers.
 - Public, workspace, and editor controllers now share one extracted public-state store boundary for cache-first hydrate, repair-peer lifecycle, and refresh scheduling.
+- Notification state and profile-menu UI state now live in dedicated core modules instead of page-controller sprawl.
+- Public profile overlays and submit-shell rendering now live in dedicated surface modules, so the full modal family follows the same surface pattern.
+- Workspace filter/search rails and picker suggestion markup now live in dedicated surface modules instead of staying embedded in admin controllers.
 - The framework/template repo now follows the same direction with matching extracted surface families instead of keeping that logic only in one large template controller.
 
 ## Near Term
 
-- Finish the remaining high-churn controller cleanup so notifications, profile-menu state, editor side rails, and repeated action-sheet/modal behavior stop living as ad hoc logic inside page controllers.
+- Expand the normalized collaborative shell into editor presence, quote-linked discussion, and broader live-unit coverage for entities and the archive.
 - Extend the live collaborative layer from static pages and investigation detail/editor flows into the archive and entity records without regressing the static-first baseline.
 - Add clearer history and conflict handling for live collaborative units before each bakedown cycle, so operators can see what will ship and why.
 - Expand end-to-end browser validation around submissions, moderation, publishing, comment handling, and browser-compat fallbacks before each release.

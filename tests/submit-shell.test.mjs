@@ -1,0 +1,79 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  renderSubmitPageView,
+  renderSubmitSuggestionMarkup
+} from "../scripts/surfaces/submit-shell.js";
+
+const deps = {
+  escapeAttribute: (value) => String(value || ""),
+  escapeHtml: (value) => String(value || ""),
+  renderLoadingState: (value) => `<div data-loading>${value}</div>`,
+  renderOption: (value, current) => `<option value="${value}" ${current === value ? "selected" : ""}>${value}</option>`,
+  resolveEntityDisplayValue: (value) => String(value || ""),
+  trimmed: (value) => String(value || "")
+};
+
+test("submit shell renders cache-first loading and sessionless states distinctly", () => {
+  const loadingView = renderSubmitPageView({
+    submitState: { loading: true, loadingMessage: "Looking up your submissions..." },
+    deps
+  });
+  assert.match(loadingView.shellMarkup, /data-loading/);
+
+  const gateView = renderSubmitPageView({
+    submitState: { loading: false, session: null, submissions: [] },
+    deps
+  });
+  assert.match(gateView.shellMarkup, /Log in required/);
+});
+
+test("submit shell renders attached search fields and consent copy inside the modal", () => {
+  const view = renderSubmitPageView({
+    submitState: {
+      loading: false,
+      session: { username: "aux" },
+      publicState: { submissionStatuses: new Map() },
+      submissions: [],
+      formModal: {
+        mode: "create",
+        submissionId: "",
+        payload: {
+          entity_refs: [],
+          contact: {},
+          suggested_entity: {}
+        }
+      },
+      chatModal: null
+    },
+    deps
+  });
+
+  assert.match(view.shellMarkup, /data-submit-entity-results/);
+  assert.match(view.shellMarkup, /data-submit-suggested-entity-results/);
+  assert.match(view.shellMarkup, /Allow follow-up/);
+});
+
+test("submit suggestion markup keeps attached dropdown semantics for each field kind", () => {
+  const entityMarkup = renderSubmitSuggestionMarkup(
+    [{ slug: "yard", name: "County Yard", location: "Phoenix, Arizona" }],
+    "",
+    { kind: "entity", escapeAttribute: deps.escapeAttribute, escapeHtml: deps.escapeHtml }
+  );
+  assert.match(entityMarkup, /data-submit-entity-pick="yard"/);
+
+  const suggestedMarkup = renderSubmitSuggestionMarkup(
+    [{ slug: "route", name: "County Route", location: "Arizona" }],
+    "",
+    { kind: "suggested-entity", escapeAttribute: deps.escapeAttribute, escapeHtml: deps.escapeHtml }
+  );
+  assert.match(suggestedMarkup, /data-submit-suggested-entity-pick="route"/);
+
+  const locationMarkup = renderSubmitSuggestionMarkup(
+    ["Phoenix, Arizona"],
+    "",
+    { kind: "location", escapeAttribute: deps.escapeAttribute, escapeHtml: deps.escapeHtml }
+  );
+  assert.match(locationMarkup, /data-submit-location-pick="Phoenix, Arizona"/);
+});

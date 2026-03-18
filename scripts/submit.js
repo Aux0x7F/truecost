@@ -16,8 +16,17 @@ import {
   startPublicStateRepairPeer,
   resolveSitePubkey
 } from "./core/nostr.js";
-import { renderSearchField } from "./core/search-controls.js";
+import {
+  dedupeStrings as dedupe,
+  escapeAttribute,
+  escapeHtml,
+  lastCommaValue
+} from "./core/text-utils.js";
 import { getStoredSession } from "./core/session.js";
+import {
+  renderSubmitPageView,
+  renderSubmitSuggestionMarkup
+} from "./surfaces/submit-shell.js";
 
 const submitState = {
   session: getStoredSession(),
@@ -27,6 +36,8 @@ const submitState = {
   publicStateRepairInFlight: false,
   publicStateRepairRequestedAt: 0,
   submissions: [],
+  loading: false,
+  loadingMessage: "",
   formModal: null,
   chatModal: null
 };
@@ -122,6 +133,8 @@ function bindSubmitPage() {
 async function refreshSubmitPage(force = false) {
   submitState.session = getStoredSession();
   if (!submitState.session) {
+    submitState.loading = false;
+    submitState.loadingMessage = "";
     renderSubmitPage();
     return;
   }
@@ -133,6 +146,8 @@ async function refreshSubmitPage(force = false) {
   void maybeRequestSubmitStateRepair(submitState.publicState, "submit-page");
   submitState.submissions = await loadUserSubmissions(submitState.session.secretKeyHex).catch(() => []);
   await maybeOpenChatFromUrl();
+  submitState.loading = false;
+  submitState.loadingMessage = "";
   renderSubmitPage();
 }
 
@@ -169,298 +184,20 @@ async function maybeRequestSubmitStateRepair(publicState, reason = "") {
 }
 
 function renderSubmitLoading(message) {
-  const shell = document.querySelector("[data-submit-shell]");
-  if (shell) shell.innerHTML = renderLoadingState(message);
+  submitState.loading = true;
+  submitState.loadingMessage = message;
+  renderSubmitPage();
 }
 
 function renderSubmitPage() {
   const shell = document.querySelector("[data-submit-shell]");
   if (!shell) return;
-
-  if (!submitState.session) {
-    shell.innerHTML = `
-      <section class="surface-panel">
-        <div class="eyebrow">Log in required</div>
-        <h2>Use a shared account first</h2>
-        <p>Submission history and encrypted discussion are tied to your site identity.</p>
-        <div class="button-row">
-          <a class="button" href="./admin.html?tab=login">Log in</a>
-        </div>
-      </section>
-    `;
-    return;
-  }
-
-  shell.innerHTML = `
-    <section class="surface-panel">
-      <div class="workspace-list__row">
-        <div>
-          <div class="eyebrow">Submit</div>
-          <h2>Your submissions</h2>
-        </div>
-        <button class="button" type="button" data-open-submission-modal="new">Add submission</button>
-      </div>
-      <div class="roster-list">
-        ${
-          submitState.submissions.length
-            ? submitState.submissions.map((submission) => renderSubmissionRow(submission)).join("")
-            : `<div class="empty-state">No submissions yet.</div>`
-        }
-      </div>
-    </section>
-    ${renderSubmissionModal()}
-    ${renderSubmissionChatModal()}
-  `;
+  const view = renderSubmitPageView({
+    submitState,
+    deps: submitSurfaceDeps()
+  });
+  shell.innerHTML = view.shellMarkup;
   hydrateSubmissionEnhancements();
-}
-
-function renderSubmissionRow(submission) {
-  const latest = submission.latest?.payload || {};
-  const status = submitState.publicState?.submissionStatuses.get(submission.id)?.status || "received";
-  const entityRefs = Array.isArray(latest.entity_refs) ? latest.entity_refs : [];
-  return `
-    <article class="roster-item">
-      <div class="workspace-list__row">
-        <div>
-          <strong>${escapeHtml(latest.subject || "Untitled submission")}</strong>
-          <span>${escapeHtml(latest.location || "No location supplied")}</span>
-        </div>
-        <div class="tag-row">
-          <span class="tag">${escapeHtml(status)}</span>
-        </div>
-      </div>
-      <span>${escapeHtml(trimmed(latest.details || "", 180))}</span>
-      ${
-        entityRefs.length
-          ? `<span class="muted-text">Entities: ${escapeHtml(entityRefs.map(resolveEntityDisplayValue).join(", "))}</span>`
-          : ""
-      }
-      <div class="button-row button-row--tight">
-        <button class="button-ghost" type="button" data-open-submission-modal="${submission.id}">Edit</button>
-        <button class="button-ghost" type="button" data-open-submission-chat="${submission.id}">Chat</button>
-      </div>
-    </article>
-  `;
-}
-
-function renderSubmissionModal() {
-  if (!submitState.formModal) return "";
-  const payload = submitState.formModal.payload || {};
-  const entityRefsValue = (payload.entity_refs || []).map(resolveEntityDisplayValue).join(", ");
-  const suggestedLocationValue = String(payload.suggested_entity?.location || "");
-  return `
-    <div class="modal-backdrop">
-      <section class="modal-card modal-card--wide">
-        <div class="workspace-list__row">
-          <div>
-            <div class="eyebrow">Submission</div>
-            <h2>${submitState.formModal.mode === "edit" ? "Edit submission" : "Add submission"}</h2>
-          </div>
-          <button class="button-ghost" type="button" data-submit-modal-close>Close</button>
-        </div>
-        <form class="tip-form" data-submission-form>
-          <input name="submissionId" type="hidden" value="${escapeAttribute(submitState.formModal.submissionId || "")}">
-          <div class="tip-form__split">
-            <label>
-              <span>Submission type</span>
-              <select name="category">
-                ${renderOption("tip", payload.category)}
-                ${renderOption("document", payload.category)}
-                ${renderOption("subsidy-audit", payload.category)}
-                ${renderOption("policing-record", payload.category)}
-              </select>
-            </label>
-            <label>
-              <span>Subject</span>
-              <input name="subject" type="text" maxlength="140" value="${escapeAttribute(payload.subject || "")}" required>
-            </label>
-          </div>
-          <label>
-            <span>Submission location</span>
-            <input
-              name="location"
-              type="text"
-              maxlength="160"
-              placeholder="Where did this happen?"
-              value="${escapeAttribute(payload.location || "")}"
-            >
-          </label>
-          <div class="submit-form-field">
-            <span class="submit-form-field__label">Related entities</span>
-            ${renderSearchField({
-              wrapperClass: "workspace-search submit-search-field",
-              srLabel: "Related entities",
-              inputAttributes: {
-                name: "entityRefs",
-                type: "text",
-                maxlength: "240",
-                autocomplete: "off",
-                placeholder: "Search entities to connect this submission",
-                value: entityRefsValue,
-                "data-submit-entity-input": true
-              },
-              clearButton: entityRefsValue
-                ? {
-                    attributes: { "data-clear-submit-field": "entityRefs" },
-                    ariaLabel: "Clear related entities"
-                  }
-                : null,
-              resultsHtml:
-                '<div class="picker-results picker-results--dropdown workspace-search__results" data-submit-entity-results></div>'
-            })}
-          </div>
-          <label>
-            <span>Details</span>
-            <textarea name="details" required>${escapeHtml(payload.details || "")}</textarea>
-          </label>
-          <div class="submit-form-note">If the entity is missing, suggest it below and include the location you want attached to it.</div>
-          <div class="tip-form__split">
-            <div class="submit-form-field">
-              <span class="submit-form-field__label">Suggested entity</span>
-              ${renderSearchField({
-                wrapperClass: "workspace-search submit-search-field",
-                srLabel: "Suggested entity",
-                inputAttributes: {
-                  name: "suggestedEntityName",
-                  type: "text",
-                  maxlength: "140",
-                  autocomplete: "off",
-                  placeholder: "Search existing entities or name a new one",
-                  value: payload.suggested_entity?.name || "",
-                  "data-submit-suggested-entity-input": true
-                },
-                clearButton: payload.suggested_entity?.name
-                  ? {
-                      attributes: { "data-clear-submit-field": "suggestedEntityName" },
-                      ariaLabel: "Clear suggested entity"
-                    }
-                  : null,
-                resultsHtml:
-                  '<div class="picker-results picker-results--dropdown workspace-search__results" data-submit-suggested-entity-results></div>'
-              })}
-            </div>
-            <div class="submit-form-field">
-              <span class="submit-form-field__label">Suggested entity location</span>
-              ${renderSearchField({
-                wrapperClass: "workspace-search submit-search-field",
-                srLabel: "Suggested entity location",
-                inputAttributes: {
-                  name: "suggestedEntityLocation",
-                  type: "text",
-                  maxlength: "160",
-                  autocomplete: "off",
-                  placeholder: "Search known locations or type a new one",
-                  value: suggestedLocationValue,
-                  "data-submit-location-input": true
-                },
-                clearButton: suggestedLocationValue
-                  ? {
-                      attributes: { "data-clear-submit-field": "suggestedEntityLocation" },
-                      ariaLabel: "Clear suggested entity location"
-                    }
-                  : null,
-                resultsHtml:
-                  '<div class="picker-results picker-results--dropdown workspace-search__results" data-submit-location-results></div>'
-              })}
-            </div>
-          </div>
-          <div class="tip-form__split">
-            <label>
-              <span>Suggested entity type</span>
-              <input name="suggestedEntityType" type="text" maxlength="80" placeholder="facility, office, store" value="${escapeAttribute(payload.suggested_entity?.type || "")}">
-            </label>
-            <label>
-              <span>Suggested entity note</span>
-              <input name="suggestedEntityNotes" type="text" maxlength="200" value="${escapeAttribute(payload.suggested_entity?.notes || "")}">
-            </label>
-          </div>
-          <label>
-            <span>Source links</span>
-            <textarea name="sourceLinks">${escapeHtml((payload.source_links || []).join("\n"))}</textarea>
-          </label>
-          <div class="tip-form__split">
-            <label>
-              <span>Name</span>
-              <input name="name" type="text" maxlength="120" value="${escapeAttribute(payload.contact?.name || "")}">
-            </label>
-            <label>
-              <span>Email</span>
-              <input name="email" type="email" maxlength="160" value="${escapeAttribute(payload.contact?.email || "")}">
-            </label>
-          </div>
-          <div class="tip-form__split">
-            <label>
-              <span>Preferred contact method</span>
-              <input name="contactMethod" type="text" maxlength="120" value="${escapeAttribute(payload.contact?.preferred_method || "")}">
-            </label>
-            <label>
-              <span>Attachment</span>
-              <input name="attachment" type="file" accept=".txt,.md,.csv,.json,.pdf,.png,.jpg,.jpeg">
-            </label>
-          </div>
-          <label class="checkbox checkbox--panel">
-            <input name="consent" type="checkbox" value="yes" ${payload.consent_to_follow_up ? "checked" : ""}>
-            <span class="checkbox__copy">
-              <strong>Allow follow-up</strong>
-              <small>We may contact you if a quick clarification would help.</small>
-            </span>
-          </label>
-          <div class="button-row">
-            <button class="button" type="submit">Save submission</button>
-          </div>
-          <div class="status-box" data-submission-status>${payload.attachment?.name ? `Current attachment: ${escapeHtml(payload.attachment.name)}` : "Attachments are encrypted before upload."}</div>
-        </form>
-      </section>
-    </div>
-  `;
-}
-
-function renderSubmissionChatModal() {
-  if (!submitState.chatModal) return "";
-  const submission = submitState.submissions.find((item) => item.id === submitState.chatModal.submissionId);
-  const messages = submitState.chatModal.messages || [];
-  const loading = submitState.chatModal.loading;
-  return `
-    <div class="modal-backdrop">
-      <section class="modal-card modal-card--wide">
-        <div class="workspace-list__row">
-          <div>
-            <div class="eyebrow">Submission chat</div>
-            <h2>${escapeHtml(submission?.latest?.payload?.subject || submitState.chatModal.submissionId)}</h2>
-          </div>
-          <button class="button-ghost" type="button" data-submit-modal-close>Close</button>
-        </div>
-        <div class="chat-thread">
-          ${
-            loading
-              ? renderLoadingState("Looking up chat...")
-              : messages.length
-              ? messages
-                  .map(
-                    (message) => `
-                      <article class="chat-message ${message.author === submitState.viewer?.pubkey ? "is-self" : ""}">
-                        <strong>${message.author === submitState.viewer?.pubkey ? "You" : "Admin"}</strong>
-                        <p>${escapeHtml(message.payload.body || "")}</p>
-                      </article>
-                    `
-                  )
-                  .join("")
-              : `<div class="empty-state">No messages yet.</div>`
-          }
-        </div>
-        <form class="tip-form" data-submission-chat-form>
-          <input name="submissionId" type="hidden" value="${escapeAttribute(submitState.chatModal.submissionId)}">
-          <label>
-            <span>Reply</span>
-            <textarea name="body" placeholder="Write a message to admins" required></textarea>
-          </label>
-          <div class="button-row">
-            <button class="button" type="submit">Send message</button>
-          </div>
-        </form>
-      </section>
-    </div>
-  `;
 }
 
 function workspaceOpenSubmission(submissionId) {
@@ -620,6 +357,17 @@ function renderOption(value, current) {
   return `<option value="${value}" ${current === value ? "selected" : ""}>${value}</option>`;
 }
 
+function submitSurfaceDeps() {
+  return {
+    escapeAttribute,
+    escapeHtml,
+    renderLoadingState,
+    renderOption,
+    resolveEntityDisplayValue,
+    trimmed
+  };
+}
+
 function hydrateSubmissionEnhancements() {
   renderEntityResults();
   renderLocationResults();
@@ -638,18 +386,11 @@ function renderEntityResults() {
     return;
   }
   host.setAttribute("data-open", "yes");
-  host.innerHTML = matches.length
-    ? matches
-        .map(
-          (entity) => `
-            <button class="picker-chip" type="button" data-submit-entity-pick="${escapeAttribute(entity.slug)}">
-              <strong>${escapeHtml(entity.name)}</strong>
-              <span>${escapeHtml(entity.location)}</span>
-            </button>
-          `
-        )
-        .join("")
-    : `<div class="picker-hint">No existing entity matches. Use the suggested entity fields to add a new one for review.</div>`;
+  host.innerHTML = renderSubmitSuggestionMarkup(
+    matches,
+    `<div class="picker-hint">No existing entity matches. Use the suggested entity fields to add a new one for review.</div>`,
+    { kind: "entity", escapeAttribute, escapeHtml }
+  );
 }
 
 function renderLocationResults() {
@@ -666,17 +407,11 @@ function renderLocationResults() {
     return;
   }
   host.setAttribute("data-open", "yes");
-  host.innerHTML = matches.length
-    ? matches
-        .map(
-          (location) => `
-            <button class="picker-chip" type="button" data-submit-location-pick="${escapeAttribute(location)}">
-              <strong>${escapeHtml(location)}</strong>
-            </button>
-          `
-        )
-        .join("")
-    : `<div class="picker-hint">No known location matches. Keep the typed value to propose a new one.</div>`;
+  host.innerHTML = renderSubmitSuggestionMarkup(
+    matches,
+    `<div class="picker-hint">No known location matches. Keep the typed value to propose a new one.</div>`,
+    { kind: "location", escapeAttribute, escapeHtml }
+  );
 }
 
 function renderSuggestedEntityResults() {
@@ -691,18 +426,11 @@ function renderSuggestedEntityResults() {
     return;
   }
   host.setAttribute("data-open", "yes");
-  host.innerHTML = matches.length
-    ? matches
-        .map(
-          (entity) => `
-            <button class="picker-chip" type="button" data-submit-suggested-entity-pick="${escapeAttribute(entity.slug)}">
-              <strong>${escapeHtml(entity.name)}</strong>
-              <span>${escapeHtml(entity.location)}</span>
-            </button>
-          `
-        )
-        .join("")
-    : `<div class="picker-hint">No existing entity matches. Keep the typed name to suggest a new one.</div>`;
+  host.innerHTML = renderSubmitSuggestionMarkup(
+    matches,
+    `<div class="picker-hint">No existing entity matches. Keep the typed name to suggest a new one.</div>`,
+    { kind: "suggested-entity", escapeAttribute, escapeHtml }
+  );
 }
 
 function applyEntityPick(button) {
@@ -839,30 +567,9 @@ function knownSitePubkeys() {
   ]);
 }
 
-function lastCommaValue(value) {
-  return String(value || "").split(",").pop().trim();
-}
-
-function dedupe(values) {
-  return [...new Set((Array.isArray(values) ? values : []).map((value) => String(value || "").trim()).filter(Boolean))];
-}
-
 function trimmed(value, length) {
   const text = String(value || "").trim();
   return text.length > length ? `${text.slice(0, length - 1)}...` : text;
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function escapeAttribute(value) {
-  return escapeHtml(value).replace(/`/g, "");
 }
 
 function renderLoadingState(message) {

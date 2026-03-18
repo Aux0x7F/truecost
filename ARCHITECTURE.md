@@ -45,13 +45,18 @@ The implementation should converge on three layers:
   - transport wrappers
   - cache and public-state normalization
   - subscribed public-state store lifecycle
+  - navigation UI state
+  - notification state
   - reusable rendering helpers for shared controls
 - `scripts/surfaces`
   - composed surface modules that render and update one UI family at a time
+  - profile overlays
   - archive
   - comments
   - map
+  - submit shell
   - workspace
+  - workspace filters
   - workspace actions
   - editor shell
 - HTML documents
@@ -60,13 +65,9 @@ The implementation should converge on three layers:
 
 Page files should compose shared surfaces and helpers. They should not reintroduce duplicate escaping, duplicate comment threading, or duplicate attached-search behavior.
 
-The current branch has already applied this move to navigation, archive, comments, workspace rendering, workspace actions, map shells, editor-shell rendering, and a shared `public-state-store` boundary for public, workspace, and editor controllers. The next refactors should continue reducing page controllers into composed surface modules backed by explicit shared state helpers.
+The current branch has already applied this move to navigation, profile-menu state, notifications, archive, comments, submit shell rendering, public profile overlays, workspace rendering, workspace actions, map shells, editor-shell rendering, and a shared `public-state-store` boundary for public, workspace, and editor controllers. The next refactors should keep reducing page controllers into composed surface modules backed by explicit shared state helpers.
 
-The next tightening step for the current branch is to finish that move for the remaining highest-churn surfaces:
-
-- notifications and profile-menu state
-- editor side rails and collaboration controls
-- remaining action-sheet/modal convergence so repeated item actions stop diverging across pages
+The next tightening step for the current branch is no longer shell normalization. It is feature-facing work on top of the normalized shell: collaborative editor rails, richer entity relationships, and broader live-unit coverage.
 
 ## Trust model
 
