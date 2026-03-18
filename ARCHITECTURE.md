@@ -59,6 +59,12 @@ Page files should compose shared surfaces and helpers. They should not reintrodu
 
 The next refactors should reduce page controllers into composed surface modules backed by explicit shared state helpers.
 
+The next tightening step for the current branch is to finish that move for the highest-churn surfaces:
+
+- threads and comments
+- archive results, filters, and rails
+- workspace lists and action sheets
+
 ## Trust model
 
 For now, an admin is an admin.

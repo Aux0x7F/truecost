@@ -32,6 +32,7 @@ PRs should be:
 - narrow enough to review in one pass
 - explicit about the user-visible contract being changed
 - backed by the relevant deterministic tests
+- updated in the relevant contract docs when a shared pattern, component family, browser fallback, or workflow rule changes
 
 If a change touches live state, cache behavior, comments, ranking, filters, maps, or editor behavior, reference the test coverage added for that contract.
 

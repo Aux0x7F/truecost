@@ -9,6 +9,8 @@ It exists to keep the public site coherent while the codebase continues to grow:
 - one set of component expectations
 - less page-by-page drift
 
+See [COMPONENTS.md](./COMPONENTS.md) for the expected reusable component families.
+
 ## Product Shape
 - Static baseline first. Every public page should render useful content before live data arrives.
 - Live overlay second. New relay data should enrich or update the current view without blanking the baseline.
@@ -36,6 +38,7 @@ Do not create a new card/button/search pattern when one of these can be extended
 The shared JS entry points for these primitives belong in `scripts/core`:
 - `text-utils.js`
 - `comment-utils.js`
+- `comment-ranking.js`
 - `search-controls.js`
 - `public-state.js`
 
