@@ -16,6 +16,12 @@ export function cycleHighlightIndex(current, length, delta) {
   return (current + delta + length) % length;
 }
 
+export function closeSearchResults(host) {
+  if (!(host instanceof HTMLElement)) return;
+  host.innerHTML = "";
+  host.removeAttribute("data-open");
+}
+
 export function renderSearchField({
   wrapperClass = "workspace-search",
   wrapperAttributes = {},

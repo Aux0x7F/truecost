@@ -9,6 +9,7 @@ Changes to live state, cached state, comments, filters, maps, workspace surfaces
 - a focused deterministic test for the data/state contract
 - a focused surface test when a new render family is extracted from a page controller
 - a browser regression when the failure mode is a runtime boot error, DOM lifecycle error, or broken attached-field interaction
+- a browser regression when a consent/settings control depends on custom checkbox or radio styling
 - syntax validation for touched modules
 - a clear statement of what user behavior was verified
 - a compatibility note when introducing non-baseline browser features
@@ -48,4 +49,6 @@ Use the checked-in browser regression whenever a fix touches:
 - admin/workspace boot
 - editor boot or editor lifecycle
 - attached autocomplete/dropdown geometry
+- attached autocomplete close behavior on `Enter` or blur
+- custom checkbox/radio toggle behavior inside a larger click target
 - other runtime paths that unit tests can miss because the failure only appears in a real browser
