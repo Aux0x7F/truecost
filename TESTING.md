@@ -7,6 +7,7 @@
 Changes to live state, cached state, comments, filters, maps, workspace surfaces, or collaborative units should have:
 
 - a focused deterministic test for the data/state contract
+- a focused surface test when a new render family is extracted from a page controller
 - syntax validation for touched modules
 - a clear statement of what user behavior was verified
 - a compatibility note when introducing non-baseline browser features
@@ -30,6 +31,7 @@ Where applicable, cover:
 
 - `node --check <file>`
 - `node --test tests/archive-surface.test.mjs`
+- `node --test tests/shell-surfaces.test.mjs`
 - `node --test tests/comment-refresh.test.mjs`
 - `node --test tests/comment-vote-ranking.test.mjs`
 

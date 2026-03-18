@@ -111,12 +111,13 @@ Do not blank useful content while waiting for background state.
 
 Current extraction targets:
 
+- `scripts/surfaces/navigation.js`
 - `scripts/surfaces/comments.js`
 - `scripts/surfaces/archive.js`
+- `scripts/surfaces/workspace.js`
 
 The next convergence targets are:
 
-- workspace lists
 - action sheets and moderation modals
 - map shells
 - editor side rails

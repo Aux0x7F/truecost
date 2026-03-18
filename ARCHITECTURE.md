@@ -58,11 +58,11 @@ The implementation should converge on three layers:
 
 Page files should compose shared surfaces and helpers. They should not reintroduce duplicate escaping, duplicate comment threading, or duplicate attached-search behavior.
 
-The current branch has already started this move with extracted archive and comment surface modules. The next refactors should continue reducing page controllers into composed surface modules backed by explicit shared state helpers.
+The current branch has already applied this move to navigation, archive, comments, and workspace rendering. The next refactors should continue reducing page controllers into composed surface modules backed by explicit shared state helpers.
 
-The next tightening step for the current branch is to finish that move for the highest-churn surfaces:
+The next tightening step for the current branch is to finish that move for the remaining highest-churn surfaces:
 
-- workspace lists and action sheets
+- action sheets and moderation modals
 - map shells that still sit in page controllers
 - editor side rails and collaboration controls
 

@@ -44,6 +44,13 @@ The shared JS entry points for these primitives belong in `scripts/core`:
 
 Whole UI families that compose those primitives belong in `scripts/surfaces`, not directly in page controllers.
 
+Current extracted surface families:
+
+- `navigation`
+- `archive`
+- `comments`
+- `workspace`
+
 ## Interaction Rules
 - Search suggestions open from the field itself and overlay content below them.
 - `x` inside a search field must clear both the field and the active filter state.

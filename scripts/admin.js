@@ -36,6 +36,7 @@ import {
   renderSearchField,
   renderSearchSuggestions
 } from "./core/search-controls.js";
+import { renderWorkspaceView } from "./surfaces/workspace.js";
 import {
   dedupeStrings as dedupe,
   escapeAttribute,
@@ -788,47 +789,99 @@ function renderWorkspace(options = {}) {
   const title = document.querySelector("[data-workspace-title]");
   const lede = document.querySelector("[data-workspace-lede]");
   if (!shell || !title || !lede) return;
+  const surfaceDeps = workspaceSurfaceDeps();
 
   if (!workspaceState.session) {
-    title.textContent = "Log in";
-    lede.textContent = "Use the same username and password each time to return to this account.";
-    shell.innerHTML = renderLoginPane();
+    const view = renderWorkspaceView({
+      workspaceState,
+      deps: surfaceDeps
+    });
+    title.textContent = view.title;
+    lede.textContent = view.lede;
+    shell.innerHTML = `
+      <div class="workspace-tabs" data-workspace-tabs>
+        ${view.tabsMarkup}
+      </div>
+      <div class="workspace-pane" data-workspace-pane>
+        ${view.paneMarkup}
+      </div>
+      <div data-workspace-overlays>
+        ${view.overlayMarkup}
+      </div>
+    `;
     return;
   }
-
-  const admin = currentUserIsAdmin();
-  title.textContent = admin ? "Workspace" : "Profile options";
-  lede.textContent = admin
-    ? "Manage users, submissions, entities, and post review."
-    : "Update your profile and review your comments.";
-
-  const tabsMarkup = tabButtons().map((tab) => renderTabButton(tab)).join("");
-  const paneMarkup = renderActivePane();
-  const overlayMarkup = `${renderEntityModal()}${renderUserProfileModal()}${renderUserActionModal()}${renderCommentActionModal()}${renderSubmissionModal()}`;
+  const view = renderWorkspaceView({
+    workspaceState,
+    deps: surfaceDeps
+  });
+  title.textContent = view.title;
+  lede.textContent = view.lede;
   const tabs = shell.querySelector("[data-workspace-tabs]");
   const pane = shell.querySelector("[data-workspace-pane]");
   const overlays = shell.querySelector("[data-workspace-overlays]");
   const focusState = soft ? captureWorkspaceFocusState() : null;
 
   if (soft && tabs && pane && overlays) {
-    tabs.innerHTML = tabsMarkup;
-    pane.innerHTML = paneMarkup;
-    overlays.innerHTML = overlayMarkup;
+    tabs.innerHTML = view.tabsMarkup;
+    pane.innerHTML = view.paneMarkup;
+    overlays.innerHTML = view.overlayMarkup;
   } else {
     shell.innerHTML = `
       <div class="workspace-tabs" data-workspace-tabs>
-        ${tabsMarkup}
+        ${view.tabsMarkup}
       </div>
       <div class="workspace-pane" data-workspace-pane>
-        ${paneMarkup}
+        ${view.paneMarkup}
       </div>
       <div data-workspace-overlays>
-        ${overlayMarkup}
+        ${view.overlayMarkup}
       </div>
     `;
   }
   hydrateWorkspaceEnhancements();
   if (focusState) restoreWorkspaceFocusState(focusState);
+}
+
+function workspaceSurfaceDeps() {
+  return {
+    tabButtons,
+    renderTabButton,
+    currentUserIsAdmin,
+    currentUserHasInboxAccess,
+    currentUserPendingKeyRequest,
+    currentUser,
+    visibleWorkspaceUsers,
+    renderSearchField,
+    renderKarmaSelectOptions,
+    renderLookupCandidate,
+    renderUserStatsCard,
+    escapeHtml,
+    escapeAttribute,
+    filterInboxSubmissions,
+    renderSubmissionFilterSuggestions,
+    renderLoadingState,
+    renderSubmissionCard,
+    visibleWorkspaceEntities,
+    renderEntityManagementRail,
+    renderReviewCard,
+    renderReviewedCard,
+    filterWorkspaceComments,
+    renderModerationComment,
+    renderOwnCommentRow,
+    formatWorkspaceKarma,
+    resolveWorkspaceUserKarma,
+    renderSiteKeyShareStatus,
+    renderSnapshotSummary,
+    renderEntityModal,
+    renderUserProfileModal,
+    renderUserActionModal,
+    renderCommentActionModal,
+    renderSubmissionModal,
+    renderLogPane,
+    renderUserCard,
+    renderUserIdentityButton
+  };
 }
 
 function captureWorkspaceFocusState() {
