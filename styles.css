@@ -2821,13 +2821,15 @@ h3 {
   position: relative;
   z-index: 3;
   will-change: transform;
-  background: #fffdfb;
+  background: rgba(255, 253, 251, 0.52);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   opacity: 1;
 }
 
 .comment-card--reordering-target {
   z-index: 5;
-  box-shadow: 0 18px 40px rgba(18, 18, 18, 0.14);
+  box-shadow: 0 18px 40px rgba(18, 18, 18, 0.12);
 }
 
 .comment-card__shell {
