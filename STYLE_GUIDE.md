@@ -67,7 +67,7 @@ The shared JS entry points for these primitives belong in `scripts/core`:
 - Vote controls must update the visible score immediately.
 - Root comment vote changes may rerank the root list.
 - Reply vote changes must not reorder the thread.
-- If a root comment reranks, the position change should transition smoothly enough that the movement is noticeable instead of reading like a random jump.
+- If a root comment reranks, the card should translate smoothly into place so the movement is readable as layout change instead of a random jump.
 
 ## Editor Rules
 - The editor is the primary authoring surface, not a form with extras.
