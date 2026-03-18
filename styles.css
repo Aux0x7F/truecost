@@ -3474,9 +3474,19 @@ body.is-static-editing [data-static-edit]:focus {
     padding-top: 0;
   }
 
-  .comment-composer,
-  .comment-card__shell {
+  .comment-composer {
     grid-template-columns: 1fr;
+  }
+
+  .comment-card__shell {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.75rem;
+    align-items: start;
+  }
+
+  .comment-card__avatar {
+    width: 2.4rem;
+    height: 2.4rem;
   }
 
   .comment-card--reply {
