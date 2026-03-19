@@ -106,6 +106,13 @@ export function createArchivePageFeature({
   function hydrateArchiveSummaryLinks(posts, publicState) {
     const hosts = [...document.querySelectorAll("[data-archive-summary]")];
     if (!hosts.length) return;
+    const markup = renderArchiveSummaryMarkup(posts, publicState);
+    for (const host of hosts) {
+      if (host instanceof HTMLElement) host.innerHTML = markup;
+    }
+  }
+
+  function renderArchiveSummaryMarkup(posts, publicState) {
     const publishedCount = Array.isArray(posts) ? posts.length : 0;
     const activeCount = investigationDrafts(publicState?.drafts || []).length;
     const investigationCount = publishedCount > 0 ? publishedCount : activeCount;
@@ -113,16 +120,13 @@ export function createArchivePageFeature({
     const entities = Array.isArray(publicState?.approvedEntities) ? publicState.approvedEntities : [];
     const mappedCount = entities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng)).length;
     const locationCount = dedupe(entities.map((entity) => String(entity.location || "").trim()).filter(Boolean)).length;
-    const tagCount = dedupe((Array.isArray(posts) ? posts : []).flatMap((post) => (Array.isArray(post?.tags) ? post.tags : [])));
-    const markup = `
+    const tagCount = dedupe((Array.isArray(posts) ? posts : []).flatMap((post) => (Array.isArray(post?.tags) ? post.tags : []))).length;
+    return `
       <a class="hero-summary__item" href="./investigations.html"><strong>${investigationCount}</strong><span>${investigationLabel}</span></a>
       <a class="hero-summary__item" href="./map.html#entity-index"><strong>${entities.length}</strong><span>Tracked entities</span></a>
       <a class="hero-summary__item" href="./map.html#map-board"><strong>${Math.max(mappedCount, locationCount)}</strong><span>Locations</span></a>
       <a class="hero-summary__item" href="./investigations.html"><strong>${tagCount}</strong><span>Archive tags</span></a>
     `;
-    for (const host of hosts) {
-      if (host instanceof HTMLElement) host.innerHTML = markup;
-    }
   }
 
   function buildPublishedArchiveEntries(posts) {
@@ -461,6 +465,7 @@ export function createArchivePageFeature({
     mount,
     isInteractionActive,
     hydrateArchiveSummaryLinks,
+    renderArchiveSummaryMarkup,
     renderInvestigationCard
   };
 }
