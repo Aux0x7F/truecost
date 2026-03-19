@@ -26,6 +26,12 @@
   --control-panel-bg: rgba(18, 18, 18, 0.05);
   --dropdown-bg: rgba(250, 247, 241, 0.96);
   --dropdown-border: 1px solid rgba(18, 18, 18, 0.08);
+  --surface-border-soft: 1px solid rgba(18, 18, 18, 0.08);
+  --surface-bg-soft: rgba(255, 255, 255, 0.78);
+  --surface-bg-muted: rgba(18, 18, 18, 0.04);
+  --surface-bg-muted-strong: rgba(18, 18, 18, 0.05);
+  --surface-shadow-soft: 0 18px 35px rgba(18, 18, 18, 0.12);
+  --surface-shadow-soft-lg: 0 18px 40px rgba(18, 18, 18, 0.08);
   --wrap: min(1160px, calc(100vw - 2rem));
   --rail-stick-top: 6rem;
   --rail-max-height: calc(100vh - 6.75rem);
@@ -208,6 +214,18 @@ h3 {
 :where(.comment-reply-form__head, .static-edit-bar__copy) {
   display: grid;
   gap: 0.18rem;
+}
+
+:where(.metric-card, .info-card, .support-card, .authoring-card, .modal-card) {
+  padding: var(--surface-pad, 1.4rem);
+}
+
+:where(.nav-group__panel, .profile-menu__panel, .archive-filters__results, .workspace-search__results, .picker-results--dropdown, .archive-status-menu__panel) {
+  padding: var(--attached-panel-padding, 0.5rem);
+  border-radius: var(--attached-panel-radius, var(--control-radius));
+  border: var(--attached-panel-border, var(--dropdown-border));
+  background: var(--attached-panel-bg, var(--dropdown-bg));
+  box-shadow: var(--attached-panel-shadow, var(--surface-shadow-soft));
 }
 
 .sr-only {

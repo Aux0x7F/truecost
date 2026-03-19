@@ -112,22 +112,16 @@ export function renderNavigationMarkup({
 
   return `
     <a class="${navLinkClass(page, navKeys, "home")}" href="./index.html">Home</a>
-    ${
-      isAdmin
-        ? `
-          <div class="nav-group ${navKeys.investigations?.includes(page) ? "is-current" : ""}" data-nav-group>
-            <button class="nav-group__toggle" type="button" data-submenu-toggle>
-              Investigations
-            </button>
-            <div class="nav-group__panel">
-              <a class="${navLinkClass(page, navKeys, "investigations")}" href="./investigations.html">View Investigations</a>
-              <a href="./editor.html">Create Investigation</a>
-            </div>
-          </div>
-        `
-        : `<a class="${navLinkClass(page, navKeys, "investigations")}" href="./investigations.html">Investigations</a>`
-    }
-    <a class="${navLinkClass(page, navKeys, "map", !mapEnabled && !navKeys.map?.includes(page))}" href="./map.html" ${!mapEnabled && !navKeys.map?.includes(page) ? 'aria-disabled="true"' : ""}>Map</a>
+    <div class="nav-group ${navKeys.explore?.includes(page) ? "is-current" : ""}" data-nav-group>
+      <button class="nav-group__toggle" type="button" data-submenu-toggle>
+        Explore
+      </button>
+      <div class="nav-group__panel">
+        <a class="${navLinkClass(page, navKeys, "investigations")}" href="./investigations.html">Investigations</a>
+        <a class="${navLinkClass(page, navKeys, "map", !mapEnabled && !navKeys.map?.includes(page))}" href="./map.html" ${!mapEnabled && !navKeys.map?.includes(page) ? 'aria-disabled="true"' : ""}>Map</a>
+        ${isAdmin ? `<a class="nav-link" href="./editor.html">Create Investigation</a>` : ""}
+      </div>
+    </div>
     <div class="nav-group ${navKeys["get-involved"]?.includes(page) ? "is-current" : ""}" data-nav-group>
       <button class="nav-group__toggle" type="button" data-submenu-toggle>
         Get Involved

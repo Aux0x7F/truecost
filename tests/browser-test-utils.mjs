@@ -10,7 +10,11 @@ export function contentType(filePath) {
     ".css": "text/css; charset=utf-8",
     ".json": "application/json; charset=utf-8",
     ".svg": "image/svg+xml",
-    ".md": "text/markdown; charset=utf-8"
+    ".md": "text/markdown; charset=utf-8",
+    ".woff2": "font/woff2",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg"
   }[path.extname(filePath).toLowerCase()] || "application/octet-stream";
 }
 

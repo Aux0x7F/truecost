@@ -74,8 +74,22 @@ export function createArchivePageFeature({
     }
 
     try {
+      const publicStatePromise = getPublicState();
       const posts = await postsStore.refresh();
-      const publicState = await getPublicState();
+      const optimisticState = state.publicState || cachedPublicState || { drafts: [], approvedEntities: [], users: [] };
+      const optimisticCanEdit = viewerController.canEdit(optimisticState);
+      if (archiveSummaryHosts.length) hydrateArchiveSummaryLinks(posts, optimisticState);
+      if (homeGrid instanceof HTMLElement) {
+        const count = Number(homeGrid.getAttribute("data-count") || "2");
+        homeGrid.innerHTML = posts.filter((post) => post.featured).slice(0, count).map((post) => renderInvestigationCard(post, true)).join("");
+      }
+      if (listGrid instanceof HTMLElement && !renderedCachedCards) {
+        const optimisticEntries = optimisticCanEdit
+          ? buildInvestigationArchiveEntries(posts, investigationDrafts(optimisticState.drafts || []))
+          : buildPublishedArchiveEntries(posts);
+        initializeArchiveView(optimisticEntries, optimisticState, optimisticCanEdit);
+      }
+      const publicState = await publicStatePromise;
       const canEdit = viewerController.canEdit(publicState);
       if (archiveSummaryHosts.length) hydrateArchiveSummaryLinks(posts, publicState);
       if (homeGrid instanceof HTMLElement) {
@@ -99,6 +113,10 @@ export function createArchivePageFeature({
   async function initAuthoringEntry() {
     const host = document.querySelector("[data-authoring-entry]");
     if (!(host instanceof HTMLElement)) return;
+    const cachedPublicState = state.publicState;
+    if (cachedPublicState) {
+      host.innerHTML = viewerController.canEdit(cachedPublicState) ? `<a class="button" href="./editor.html">Create investigation</a>` : "";
+    }
     const publicState = await getPublicState();
     host.innerHTML = viewerController.canEdit(publicState) ? `<a class="button" href="./editor.html">Create investigation</a>` : "";
   }
@@ -129,11 +147,12 @@ export function createArchivePageFeature({
     `;
   }
 
-  function buildPublishedArchiveEntries(posts) {
+  function buildPublishedArchiveEntries(posts, { showPublicStatus = false } = {}) {
     return (Array.isArray(posts) ? posts : []).map((post) => ({
       ...post,
       archiveStatus: "posted",
-      statusLabel: "Posted",
+      statusLabel: showPublicStatus ? "Posted" : "",
+      showStatusPill: showPublicStatus,
       href: `./investigation.html?slug=${encodeURIComponent(post.slug)}`,
       actionLabel: "Open investigation"
     }));
@@ -141,7 +160,7 @@ export function createArchivePageFeature({
 
   function buildInvestigationArchiveEntries(posts, drafts) {
     const staticSlugs = new Set((Array.isArray(posts) ? posts : []).map((post) => post.slug));
-    const published = buildPublishedArchiveEntries(posts);
+    const published = buildPublishedArchiveEntries(posts, { showPublicStatus: true });
     const relayEntries = (Array.isArray(drafts) ? drafts : [])
       .filter((draft) => !(staticSlugs.has(draft.slug) && normalizeDraftStatus(draft.status) === "approved"))
       .map((draft) => {
@@ -154,6 +173,7 @@ export function createArchivePageFeature({
           body: draft.markdown || "",
           archiveStatus: archived,
           statusLabel: draftStatusLabel(status, reviewAction),
+          showStatusPill: true,
           href: isEditable ? `./editor.html?slug=${encodeURIComponent(draft.slug)}` : `./investigation.html?draft=${encodeURIComponent(draft.slug)}`,
           actionLabel: isEditable ? "Continue writing" : "Open preview",
           location: draft.location || "Draft location pending",
@@ -173,7 +193,7 @@ export function createArchivePageFeature({
     const href = post.href || `./investigation.html?slug=${encodeURIComponent(post.slug)}`;
     const eyebrow = post.eyebrow || "Case file";
     const actionLabel = post.actionLabel || "Open investigation";
-    const statusPill = post.statusLabel
+    const statusPill = post.showStatusPill !== false && post.statusLabel
       ? `<span class="status-pill status-pill--${escapeAttribute(post.archiveStatus || "posted")}">${escapeHtml(post.statusLabel)}</span>`
       : "";
     const tags = renderTagList((post.tags || []).slice(0, compact ? 2 : 4));

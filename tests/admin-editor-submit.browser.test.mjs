@@ -34,6 +34,21 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
 
     await page.goto(`http://127.0.0.1:${port}/admin.html`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector("[data-workspace-pane]", { timeout: 15000 });
+    await page.waitForFunction(
+      () => document.querySelector('[data-workspace-tab="dashboard"]')?.classList.contains("is-current"),
+      { timeout: 1500 }
+    );
+    const cachedWorkspaceState = await page.evaluate(() => ({
+      activeTab: document.querySelector("[data-workspace-tab].is-current")?.getAttribute("data-workspace-tab") || "",
+      hasDashboardPane: document.querySelector("[data-request-snapshot]") instanceof HTMLElement,
+      hasAdminTabs: Boolean(
+        document.querySelector('[data-workspace-tab="users"]') &&
+        document.querySelector('[data-workspace-tab="submissions"]')
+      )
+    }));
+
+    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "domcontentloaded" });
+    const navMarkup = await page.locator("[data-site-nav]").innerHTML();
 
     await page.goto(`http://127.0.0.1:${port}/submit.html`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector("[data-open-submission-modal=\"new\"]", { timeout: 15000 });
@@ -92,6 +107,15 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
 
     assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(" | ")}`);
     assert.deepEqual(consoleErrors, [], `console errors: ${consoleErrors.join(" | ")}`);
+    assert.deepEqual(cachedWorkspaceState, {
+      activeTab: "dashboard",
+      hasDashboardPane: true,
+      hasAdminTabs: true
+    });
+    assert.match(navMarkup, /Explore/);
+    assert.match(navMarkup, /Investigations/);
+    assert.match(navMarkup, /Map/);
+    assert.match(navMarkup, /Create Investigation/);
     assert.equal(resultsClosedBeforeTyping, true, "attached suggestions should stay closed until the field has input");
     assert.ok(attachedFieldMetrics, "attached field metrics should be available");
     assert.ok(attachedFieldMetrics.hostTop >= attachedFieldMetrics.inputBottom - 2, "attached suggestions should render below the input");
