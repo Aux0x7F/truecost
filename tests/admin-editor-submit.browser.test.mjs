@@ -1,94 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import http from "node:http";
-import fs from "node:fs/promises";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
+
+import {
+  captureRelevantConsoleErrors,
+  createStaticServer,
+  loadPlaywright,
+  seedAdminSession
+} from "./browser-test-utils.mjs";
 
 const repoRoot = process.cwd();
-const port = 4173;
 const secretKeyHex = "1111111111111111111111111111111111111111111111111111111111111111";
 const pubkey = "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
-
-function contentType(filePath) {
-  return {
-    ".html": "text/html; charset=utf-8",
-    ".js": "text/javascript; charset=utf-8",
-    ".css": "text/css; charset=utf-8",
-    ".json": "application/json; charset=utf-8",
-    ".svg": "image/svg+xml",
-    ".md": "text/markdown; charset=utf-8"
-  }[path.extname(filePath).toLowerCase()] || "application/octet-stream";
-}
-
-async function createStaticServer(root) {
-  const server = http.createServer(async (req, res) => {
-    try {
-      const urlPath = decodeURIComponent((req.url || "/").split("?")[0]);
-      const relativePath = urlPath === "/" ? "/index.html" : urlPath;
-      const filePath = path.join(root, relativePath);
-      const buffer = await fs.readFile(filePath);
-      res.writeHead(200, { "Content-Type": contentType(filePath) });
-      res.end(buffer);
-    } catch {
-      res.writeHead(404);
-      res.end("not found");
-    }
-  });
-  await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
-  return server;
-}
-
-async function loadPlaywright() {
-  const playwrightPath = path.resolve(repoRoot, "../nostr-site/tooling/browser-smoke/node_modules/playwright/index.mjs");
-  try {
-    return await import(pathToFileURL(playwrightPath).href);
-  } catch {
-    return null;
-  }
-}
-
-function captureRelevantConsoleErrors(page, bucket) {
-  page.on("console", (msg) => {
-    if (msg.type() !== "error") return;
-    const text = msg.text();
-    if (
-      text.includes("renderSearchField") ||
-      text.includes("Node.removeChild") ||
-      text.includes("toastui") ||
-      text.includes("ReferenceError") ||
-      text.includes("TypeError") ||
-      text.includes("DOMException")
-    ) {
-      bucket.push(text);
-    }
-  });
-}
-
-async function seedSession(page) {
-  await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "domcontentloaded" });
-  await page.evaluate(({ secretKeyHex, pubkey }) => {
-    localStorage.setItem(
-      "truecost.v2.session",
-      JSON.stringify({ username: "smoke-user", secretKeyHex, pubkey })
-    );
-    localStorage.setItem(
-      "truecost.v2.public-state-snapshot",
-      JSON.stringify({
-        admins: [pubkey],
-        users: [{ pubkey, username: "smoke-user", displayName: "Smoke User", socialLinks: [] }],
-        entities: [{ slug: "county-yard", name: "County Yard", location: "Phoenix, Arizona", status: "approved", type: "facility", notes: "" }],
-        approvedEntities: [{ slug: "county-yard", name: "County Yard", location: "Phoenix, Arizona", status: "approved", type: "facility", notes: "" }],
-        drafts: [],
-        allComments: [],
-        comments: [],
-        metrics: {},
-        rawEvents: [{ id: "cached:1", kind: 0 }],
-        syncInfo: { connected: false, remoteEventCount: 0, cachedEventCount: 1, mergedEventCount: 1 }
-      })
-    );
-  }, { secretKeyHex, pubkey });
-}
 
 test("admin workspace, submit autocomplete, and editor boot survive cached admin load", async (t) => {
   const playwright = await loadPlaywright();
@@ -97,7 +19,7 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
     return;
   }
 
-  const server = await createStaticServer(repoRoot);
+  const { server, port } = await createStaticServer(repoRoot);
   const browser = await playwright.chromium.launch({ headless: true });
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -108,7 +30,7 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
   captureRelevantConsoleErrors(page, consoleErrors);
 
   try {
-    await seedSession(page);
+    await seedAdminSession(page, { port, secretKeyHex, pubkey });
 
     await page.goto(`http://127.0.0.1:${port}/admin.html`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector("[data-workspace-pane]", { timeout: 15000 });
@@ -163,7 +85,7 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
       { timeout: 5000 }
     );
 
-    await seedSession(page);
+    await seedAdminSession(page, { port, secretKeyHex, pubkey });
     await page.goto(`http://127.0.0.1:${port}/editor.html`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector("[data-editor-form]", { timeout: 15000 });
     await page.waitForTimeout(2000);
