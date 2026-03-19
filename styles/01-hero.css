@@ -54,9 +54,13 @@
 }
 
 .hero-summary__item strong {
+  display: block;
   font-size: clamp(1.45rem, 3vw, 2rem);
   font-family: "Spectral", serif;
   color: inherit;
+  line-height: 0.95;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .hero-summary__item span {
