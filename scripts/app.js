@@ -76,6 +76,7 @@ import { createSiteShellFeature } from "./features/site-shell.js";
 import { createSiteRuntime } from "./features/site-runtime.js";
 const NAV_KEYS = {
   home: ["home"],
+  explore: ["investigations", "investigation", "editor", "map"],
   investigations: ["investigations", "investigation", "editor"],
   guide: ["guide"],
   submit: ["submit"],

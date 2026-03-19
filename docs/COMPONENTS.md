@@ -12,6 +12,7 @@ Component behavior that spans a whole UI family should live in `scripts/surfaces
 
 - The site header is static-first and readable before JavaScript enhancement.
 - The mobile nav toggle must have a discernible accessible name in HTML.
+- The primary public nav groups archive browsing under `Explore`, with `Investigations` and `Map` as child destinations.
 - The nav drawer is an overlay surface:
   - the drawer scrolls
   - the page behind it does not
@@ -69,6 +70,7 @@ Component behavior that spans a whole UI family should live in `scripts/surfaces
 - Workspace panes should render from one list/rail contract per data family, not bespoke per-tab markup.
 - Search, stats, and filters belong in the supporting rail when they drive a list below.
 - Background refresh should patch list rows and counts in place instead of rebuilding the entire workspace pane.
+- If cached state already proves the viewer is an admin, admin tabs and admin-only controls should render before relay sync finishes, then patch in place.
 
 ### Notifications and profile menu
 
@@ -107,6 +109,7 @@ These include:
 - workspace lists
 - notifications
 - collaborative overlays
+- cached admin workspace panes
 
 Expected behavior:
 
@@ -115,6 +118,12 @@ Expected behavior:
 3. patch in place
 
 Do not blank useful content while waiting for background state.
+
+## Public archive status visibility
+
+- Non-admin readers should only see public publication state.
+- Public archive cards must not expose status pills at all.
+- Admin review states belong in admin-facing archive and workspace surfaces only.
 
 ## Extraction boundary
 
@@ -131,6 +140,13 @@ Do not blank useful content while waiting for background state.
 
 Root entry files should mostly create these layers and mount them.
 
+## Stylesheet contract
+
+- Pages load the bundled `styles.css` asset for first paint.
+- `styles/` remains the editable source split by concern.
+- `tooling/build-styles.mjs` is the rebuild path from partial source to bundled output.
+- Shared shells, dropdowns, and control families should converge in the early source partials instead of being recopied deeper in the stack.
+
 ## Surface modules
 
 Current extraction targets:
@@ -146,6 +162,11 @@ Current extraction targets:
 - `scripts/features/map-page.js`
 - `scripts/features/markdown-page.js`
 - `scripts/features/review-workflow.js`
+- `scripts/features/workspace-shell.js`
+- `scripts/features/workspace-tabs.js`
+- `scripts/features/workspace-inbox.js`
+- `scripts/features/workspace-deep-links.js`
+- `scripts/features/workspace-mutations.js`
 - `scripts/surfaces/navigation.js`
 - `scripts/surfaces/profile-overlays.js`
 - `scripts/surfaces/comments.js`
@@ -157,13 +178,14 @@ Current extraction targets:
 - `scripts/surfaces/workspace.js`
 - `scripts/surfaces/workspace-filters.js`
 - `scripts/surfaces/workspace-actions.js`
+- `scripts/surfaces/workspace-review-log.js`
 - `scripts/surfaces/map.js`
 - `scripts/surfaces/editor-shell.js`
 
 The next convergence targets are:
 
 - editor collaboration rail behavior when that feature lands
-- narrower selectors behind the remaining admin controller flows
+- narrower selectors behind the remaining account/profile/upload flows
 - any remaining page-controller-owned notification or moderation detail that still has not moved into shared features or surfaces
 
 ## Modals and action sheets

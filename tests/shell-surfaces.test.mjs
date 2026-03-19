@@ -4,11 +4,12 @@ import assert from "node:assert/strict";
 import { renderNavigationMarkup } from "../scripts/surfaces/navigation.js";
 import { renderWorkspaceView } from "../scripts/surfaces/workspace.js";
 
-test("renderNavigationMarkup builds the admin investigations shell with notifications", () => {
+test("renderNavigationMarkup builds the admin explore shell with notifications", () => {
   const markup = renderNavigationMarkup({
     page: "investigations",
     navKeys: {
       home: ["home"],
+      explore: ["investigations", "map"],
       investigations: ["investigations"],
       map: ["map"],
       "get-involved": ["get-involved"],
@@ -35,7 +36,10 @@ test("renderNavigationMarkup builds the admin investigations shell with notifica
     }
   });
 
-  assert.match(markup, /Create Investigation/);
+  assert.match(markup, />\s*Explore\s*</);
+  assert.match(markup, />\s*Investigations\s*</);
+  assert.match(markup, />\s*Map\s*</);
+  assert.match(markup, /<a class="nav-link" href="\.\/editor\.html">Create Investigation<\/a>/);
   assert.match(markup, /Notifications/);
   assert.match(markup, />Admin</);
 });

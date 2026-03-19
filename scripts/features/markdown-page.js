@@ -417,6 +417,7 @@ export function createMarkdownPageFeature({
 
   return {
     mount,
+    enrichArticleEntities,
     renderComments,
     renderMarkdown,
     commentAuthorLabel,

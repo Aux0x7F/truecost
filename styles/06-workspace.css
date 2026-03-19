@@ -67,9 +67,9 @@
   gap: 0.2rem;
   width: 100%;
   padding: 0.9rem 1rem;
-  border: 1px solid rgba(18, 18, 18, 0.08);
+  border: var(--surface-border-soft);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.78);
+  background: var(--surface-bg-soft);
   color: var(--ink);
   text-align: left;
   cursor: pointer;
@@ -184,8 +184,8 @@
 
 .picker-chip {
   padding: 0.7rem 0.9rem;
-  border: 1px solid rgba(18, 18, 18, 0.08);
-  background: rgba(255, 255, 255, 0.78);
+  border: var(--surface-border-soft);
+  background: var(--surface-bg-soft);
 }
 
 .picker-chip.is-highlighted {

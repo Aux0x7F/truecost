@@ -13,6 +13,7 @@ Changes to live state, cached state, comments, filters, maps, workspace surfaces
 - syntax validation for touched modules
 - a clear statement of what user behavior was verified
 - a compatibility note when introducing non-baseline browser features
+- a bundle or source-contract check when a change alters first-paint assets such as `styles.css`
 
 Pure presentation refinements should be checked in manual design runs unless they change runtime behavior or a documented interaction contract.
 
@@ -51,9 +52,15 @@ Where applicable, cover:
 - `node --test tests/static-page-edit.test.mjs`
 - `node --test tests/submit-shell.test.mjs`
 - `node --test tests/admin-editor-submit.browser.test.mjs`
+- `node --test tests/stylesheets-bundle.test.mjs`
+- `node --test tests/workspace-shell.test.mjs`
+- `node --test tests/workspace-tabs.test.mjs`
+- `node --test tests/workspace-site-key.test.mjs`
+- `node --test tests/workspace-selectors.test.mjs`
 Use the checked-in browser regression whenever a fix touches:
 
 - admin/workspace boot
+- cached-first admin tab and control visibility
 - editor boot or editor lifecycle
 - attached autocomplete/dropdown geometry
 - attached autocomplete close behavior on `Enter` or blur

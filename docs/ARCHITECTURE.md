@@ -48,6 +48,7 @@ The implementation now follows four layers:
   - navigation UI state
   - notification state
   - viewer/session/request-signer controllers
+  - workspace access, cache, projections, selectors, site-key, entity-form, and filter-data helpers
   - shared draft and review helpers
   - shared rendering helpers for loading, markdown, tags, and TOC
   - reusable rendering helpers for shared controls
@@ -58,6 +59,13 @@ The implementation now follows four layers:
   - map page
   - markdown/article page
   - review workflow
+  - workspace runtime
+  - workspace shell
+  - workspace tabs
+  - workspace inbox/chat
+  - workspace deep links
+  - workspace mutations
+  - workspace user lookup
   - any future route-level collaborative shells
 - `scripts/surfaces`
   - composed surface modules that render and update one UI family at a time
@@ -72,6 +80,7 @@ The implementation now follows four layers:
   - workspace
   - workspace filters
   - workspace actions
+  - workspace review and audit log
   - editor shell
 - HTML documents
   - static baseline markup
@@ -82,16 +91,18 @@ The implementation now follows four layers:
 The CSS now follows the same split:
 
 - `styles.css`
-  - import manifest only
+  - generated bundled stylesheet loaded by pages for first paint
 - `styles/`
-  - ordered partials by shared foundation, surface family, and responsive override layer
+  - ordered source partials by shared foundation, surface family, and responsive override layer
   - shared control, dropdown, comment, workspace, editor, and responsive selector families should collapse into the early partials instead of being recopied per surface
+- `tooling/build-styles.mjs`
+  - rebuilds `styles.css` from the ordered source partials
 
 That keeps the CSS boundary closer to the JS surface split instead of letting one root stylesheet keep absorbing every component family.
 
-The codebase now applies this split to navigation, profile-menu state, notifications, archive, comments, investigation detail, static-page editing, submit shell rendering, public profile overlays, workspace rendering, workspace actions, map shells, editor-shell rendering, shared draft/review helpers, shared rendering helpers, request-signer helpers, and a shared `public-state-store` boundary for public, workspace, and editor controllers. Future refactors should keep reducing remaining heavy controllers into composed feature modules backed by explicit shared state helpers.
+The codebase now applies this split to navigation, profile-menu state, notifications, archive, comments, investigation detail, static-page editing, submit shell rendering, public profile overlays, workspace rendering, workspace actions, workspace review/log rendering, map shells, editor-shell rendering, shared draft/review helpers, shared rendering helpers, request-signer helpers, workspace cache/access/projection helpers, and a shared `public-state-store` boundary for public, workspace, and editor controllers. Future refactors should keep reducing remaining heavy controllers into composed feature modules backed by explicit shared state helpers.
 
-The next tightening step is thinning the remaining heavy admin controller logic the same way `app.js` was reduced, then continuing feature-facing work on top of the normalized shell: collaborative editor rails, richer entity relationships, and broader live-unit coverage.
+The next tightening step is thinning the remaining account/profile/upload handler families the same way the workspace shell, tabs, inbox, site-key, selector, and mutation layers were reduced, then continuing feature-facing work on top of the normalized shell: collaborative editor rails, richer entity relationships, and broader live-unit coverage.
 
 ## Trust model
 
@@ -132,6 +143,7 @@ Today, True Cost already has:
 - CRDT-backed live overlay plumbing for static page units
 - trusted static-page live updates applied after the static baseline loads
 - trusted investigation live updates applied in the editor and detail view on top of the static or draft baseline
+- cached-first admin workspace boot, including admin tabs and inbox-aware state before relay sync completes
 
 Today, True Cost does not yet have:
 
