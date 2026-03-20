@@ -1,6 +1,13 @@
 import SITE from "./core/site-config.js";
 import { createUniqueSlug, splitTags } from "./core/content-utils.js";
 import {
+  assertSessionUsernameIntegrity,
+  buildStaleSessionMessage,
+  currentSessionUsernameConflictMessage,
+  resolveStaleSessionAccount,
+  sessionHasUsernameConflict
+} from "./core/account-integrity.js";
+import {
   cleanSlug,
   deriveIdentity,
   uploadEncryptedBlob,
@@ -22,6 +29,7 @@ import {
   escapeHtml,
   lastCommaValue
 } from "./core/text-utils.js";
+import { applyObservedMarkup, applyObservedText } from "./core/observed-regions.js";
 import { closeSearchResults, cycleHighlightIndex } from "./core/search-controls.js";
 import { getStoredSession } from "./core/session.js";
 import {
@@ -179,7 +187,14 @@ async function refreshSubmitPage(force = false) {
   submitState.viewer = deriveIdentity(submitState.session.secretKeyHex);
   submitState.publicState = await loadPublicState(force);
   void maybeRequestSubmitStateRepair(submitState.publicState, "submit-page");
-  submitState.submissions = await loadUserSubmissions(submitState.session.secretKeyHex).catch(() => []);
+  if (
+    resolveStaleSessionAccount(submitState.publicState, submitState.session) ||
+    sessionHasUsernameConflict(submitState.publicState, submitState.session)
+  ) {
+    submitState.submissions = [];
+  } else {
+    submitState.submissions = await loadUserSubmissions(submitState.session.secretKeyHex).catch(() => []);
+  }
   await maybeOpenChatFromUrl();
   submitState.loading = false;
   submitState.loadingMessage = "";
@@ -226,13 +241,17 @@ function renderSubmitLoading(message) {
 
 function renderSubmitPage() {
   const shell = document.querySelector("[data-submit-shell]");
+  const lede = document.querySelector("[data-submit-lede]");
   if (!shell) return;
   const view = renderSubmitPageView({
     submitState,
     deps: submitSurfaceDeps()
   });
-  shell.innerHTML = view.shellMarkup;
-  hydrateSubmissionEnhancements();
+  const ledeChanged = applyObservedText(lede, view.lede);
+  const shellChanged = applyObservedMarkup(shell, view.shellMarkup);
+  if (ledeChanged || shellChanged) {
+    hydrateSubmissionEnhancements();
+  }
 }
 
 function workspaceOpenSubmission(submissionId) {
@@ -257,6 +276,9 @@ function workspaceOpenSubmission(submissionId) {
 async function handleSubmissionSave(form) {
   const status = form.querySelector("[data-submission-status]");
   try {
+    assertSessionUsernameIntegrity(submitState.publicState, submitState.session, {
+      action: "publish a submission"
+    });
     const next = await buildSubmissionDraft(form, submitState.formModal?.payload || {});
     if (next.pendingEntity) {
       const entity = await publishPendingEntity(next.pendingEntity);
@@ -311,6 +333,9 @@ async function maybeOpenChatFromUrl() {
 }
 
 async function handleChatSend(form) {
+  assertSessionUsernameIntegrity(submitState.publicState, submitState.session, {
+    action: "send submission chat"
+  });
   const formData = new FormData(form);
   const body = String(formData.get("body") || "").trim();
   if (!body) return;
@@ -393,9 +418,19 @@ function renderOption(value, current) {
 }
 
 function submitSurfaceDeps() {
+  const staleSession = resolveStaleSessionAccount(submitState.publicState, submitState.session);
   return {
     escapeAttribute,
     escapeHtml,
+    sessionHasStalePassword: Boolean(staleSession),
+    sessionStaleMessage: staleSession
+      ? buildStaleSessionMessage({
+          claimedUsername: staleSession.claimedUsername || submitState.session?.username,
+          currentContext: "publish from this account"
+        })
+      : "",
+    sessionConflictMessage: currentSessionUsernameConflictMessage(submitState.publicState, submitState.session, "publish from this account"),
+    sessionHasUsernameConflict: sessionHasUsernameConflict(submitState.publicState, submitState.session),
     renderLoadingState,
     renderOption,
     resolveEntityDisplayValue,

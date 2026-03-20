@@ -24,6 +24,7 @@ export const {
   getOrCreateGuestSession,
   signInWithCredentials,
   rebroadcastAccount,
+  rotateAccountCredentials,
   deriveSecretKeyHex
 } = sessionApi;
 

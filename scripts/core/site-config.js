@@ -62,7 +62,8 @@ export const SITE = Object.freeze({
       adminKeyRequest: 34143,
       collabDocument: 34144,
       publicStateRequest: 34145,
-      commentVote: 34146
+      commentVote: 34146,
+      identityRotation: 34147
     }
   }
 });

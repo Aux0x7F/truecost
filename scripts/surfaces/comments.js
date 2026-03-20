@@ -83,6 +83,7 @@ export function animateRootCommentReorder(panel, previousPositions, anchorCommen
 export function renderComment(comment, publicState, options = {}, deps = {}, depth = 0) {
   const author = publicState.users.find((user) => user.pubkey === comment.author);
   const authorLabel = author?.displayName || author?.username || "User";
+  const isViewer = Boolean(options.viewerPubkey) && comment.author === options.viewerPubkey;
   const replies = Array.isArray(comment.replies) ? comment.replies : [];
   const voteSummary = resolveCommentVoteSummary(publicState, comment.id);
   const viewerVote = options.viewerPubkey ? resolveCurrentVoteForComment(publicState, comment.id, options.viewerPubkey) : 0;
@@ -102,7 +103,7 @@ export function renderComment(comment, publicState, options = {}, deps = {}, dep
         <div class="comment-card__main">
           <div class="comment-card__meta">
             <div>
-              <button class="comment-card__author-button" type="button" data-open-user="${escapeAttribute(comment.author)}">${escapeHtml(authorLabel)}</button>
+              <button class="comment-card__author-button${isViewer ? " is-self" : ""}" type="button" data-open-user="${escapeAttribute(comment.author)}" data-user-pubkey="${escapeAttribute(comment.author)}">${escapeHtml(authorLabel)}</button>
               <span>${formatDateTime(comment.created_at)}</span>
             </div>
           </div>

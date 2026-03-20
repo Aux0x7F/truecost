@@ -12,9 +12,26 @@ import { normalizeAdminPubkeys } from "./public-state.js";
 export function createPublicStateDigest(publicState) {
   const digest = {
     admins: normalizeAdminPubkeys(publicState).sort(),
-    users: (publicState?.users || []).map(
-      (user) => `${user.pubkey}:${user.isAdmin ? 1 : 0}:${user.commentCount || 0}:${user.submissionCount || 0}`
+    identityLinks: (publicState?.identityChain?.validLinks || []).map(
+      (link) => `${link.old_pubkey || ""}:${link.new_pubkey || ""}`
     ),
+    users: (publicState?.users || []).map(
+      (user) =>
+        [
+          user.pubkey,
+          user.isAdmin ? 1 : 0,
+          user.commentCount || 0,
+          user.submissionCount || 0,
+          user.username || "",
+          user.claimedUsername || "",
+          user.usernameConflict ? 1 : 0,
+          user.usernameOwnerPubkey || ""
+        ].join(":")
+    ),
+    usernameCollisions: (publicState?.usernameCollisions || []).map(
+      (entry) => `${entry.username}:${entry.owner_pubkey}:${(entry.claimant_pubkeys || []).join(",")}:${entry.conflict ? 1 : 0}`
+    ),
+    removedPubkeys: (publicState?.removedPubkeys || []).map((pubkey) => String(pubkey || "").trim().toLowerCase()),
     entities: (publicState?.approvedEntities || []).map(
       (entity) => `${entity.slug}:${entity.status || ""}:${entity.updated_at || entity.created_at || ""}`
     ),

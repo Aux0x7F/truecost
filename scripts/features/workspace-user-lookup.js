@@ -25,7 +25,9 @@ export function createWorkspaceUserLookupController({
     const localMatch = findLocalUserCandidate(cleanValue);
     if (localMatch) {
       state.userLookupResult = localMatch;
-      state.userDirectStatus = `Found ${localMatch.username ? `@${localMatch.username}` : localMatch.displayName || "this user"} in the current roster.`;
+      state.userDirectStatus = localMatch.usernameConflict
+        ? `Found a conflicting claim for @${localMatch.claimedUsername || localMatch.displayName || "this user"} in the current roster.`
+        : `Found ${localMatch.username ? `@${localMatch.username}` : localMatch.displayName || "this user"} in the current roster.`;
       if (shouldRender) renderWorkspace({ soft: true });
       return;
     }
@@ -38,7 +40,9 @@ export function createWorkspaceUserLookupController({
     if (remoteMatches.length) {
       const match = hydrateLookupCandidate(remoteMatches[0]);
       state.userLookupResult = match;
-      state.userDirectStatus = `Found ${match.username ? `@${match.username}` : match.displayName || "this user"} from shared site data.`;
+      state.userDirectStatus = match.usernameConflict
+        ? `Found a conflicting claim for @${match.claimedUsername || match.displayName || "this user"} from shared site data.`
+        : `Found ${match.username ? `@${match.username}` : match.displayName || "this user"} from shared site data.`;
       if (shouldRender) renderWorkspace({ soft: true });
       return;
     }

@@ -2,6 +2,10 @@ import { renderSearchField } from "../core/search-controls.js";
 
 export function renderSubmitPageView({ submitState, deps = {} } = {}) {
   const renderLoadingState = deps.renderLoadingState || ((value) => String(value || ""));
+  const sessionHasStalePassword = Boolean(deps.sessionHasStalePassword);
+  const sessionStaleMessage = String(deps.sessionStaleMessage || "").trim();
+  const sessionHasUsernameConflict = Boolean(deps.sessionHasUsernameConflict);
+  const sessionConflictMessage = String(deps.sessionConflictMessage || "").trim();
   if (submitState.loading && submitState.session) {
     return {
       lede: submitState.loadingMessage || "Looking up your submissions...",
@@ -41,6 +45,40 @@ export function renderSubmitPageView({ submitState, deps = {} } = {}) {
           <p>Submission history and encrypted discussion are tied to your site identity.</p>
           <div class="button-row">
             <a class="button" href="./admin.html?tab=login">Log in</a>
+          </div>
+        </section>
+      `
+    };
+  }
+
+  if (sessionHasStalePassword) {
+    return {
+      lede: "This session is using an older password and cannot publish until it signs in again.",
+      shellMarkup: `
+        <section class="surface-panel">
+          <div class="eyebrow">Password changed</div>
+          <h2>Sign in with the current password</h2>
+          <div class="status-box" data-state="error">${deps.escapeHtml ? deps.escapeHtml(sessionStaleMessage) : sessionStaleMessage}</div>
+          <p class="muted-text">Submissions and encrypted chat stay attached to the latest active signer for this account.</p>
+          <div class="button-row">
+            <a class="button" href="./admin.html?tab=login">Open account</a>
+          </div>
+        </section>
+      `
+    };
+  }
+
+  if (sessionHasUsernameConflict) {
+    return {
+      lede: "This account is blocked from publishing until it uses a unique username.",
+      shellMarkup: `
+        <section class="surface-panel">
+          <div class="eyebrow">Username conflict</div>
+          <h2>Choose a different username</h2>
+          <div class="status-box" data-state="error">${deps.escapeHtml ? deps.escapeHtml(sessionConflictMessage) : sessionConflictMessage}</div>
+          <p class="muted-text">Submissions and encrypted chat are disabled for conflicting username claims.</p>
+          <div class="button-row">
+            <a class="button" href="./admin.html?tab=profile">Open profile</a>
           </div>
         </section>
       `

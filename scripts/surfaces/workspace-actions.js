@@ -41,21 +41,27 @@ export function renderUserCard(user, workspaceState, deps = {}) {
   const submissionHref = `./investigations.html?author=${encodeURIComponent(user.username || user.pubkey)}`;
   const commentHref = `./admin.html?tab=comments&user=${encodeURIComponent(user.username || user.pubkey)}`;
   const karma = deps.resolveWorkspaceUserKarma(user.pubkey);
+  const usernameConflict = deps.userHasUsernameConflict ? deps.userHasUsernameConflict(user) : Boolean(user?.usernameConflict);
   const escapeHtml = deps.escapeHtml || ((value) => String(value || ""));
   const escapeAttribute = deps.escapeAttribute || ((value) => String(value || ""));
   return `
-    <article class="roster-item" id="user-${escapeAttribute(user.pubkey)}" data-user-card="${escapeAttribute(user.pubkey)}">
+    <article class="roster-item" id="user-${escapeAttribute(user.pubkey)}" data-user-card="${escapeAttribute(user.pubkey)}" ${usernameConflict ? 'data-account-integrity="conflict"' : ""}>
       <div class="workspace-list__row">
         <div>
           ${deps.renderUserIdentityButton(user)}
-          <span>${user.username ? `@${escapeHtml(user.username)}` : "Shared account"}</span>
         </div>
         <div class="tag-row">
+          ${usernameConflict ? `<span class="tag tag--danger">Username conflict</span>` : ""}
           <span class="tag">Karma ${deps.formatWorkspaceKarma(karma)}</span>
           ${user.isAdmin ? `<span class="tag">admin</span>` : ""}
           ${user.moderation ? `<span class="tag">${escapeHtml(user.moderation.action)}</span>` : ""}
         </div>
       </div>
+      ${
+        usernameConflict
+          ? `<span class="muted-text">This account claimed @${escapeHtml(user.claimedUsername || "")}, but another pubkey owns that username. Local clients should treat this identity as blocked until it uses a unique username.</span>`
+          : ""
+      }
       <div class="workspace-stat-links">
         <a class="text-link" href="${escapeAttribute(submissionHref)}">${user.submissionCount} submissions</a>
         <a class="text-link" href="${escapeAttribute(commentHref)}">${user.commentCount} comments</a>
@@ -84,19 +90,25 @@ export function renderLookupCandidate(workspaceState, deps = {}) {
   const user = workspaceState.userLookupResult;
   if (!user) return "";
   const karma = deps.resolveWorkspaceUserKarma(user.pubkey);
+  const usernameConflict = deps.userHasUsernameConflict ? deps.userHasUsernameConflict(user) : Boolean(user?.usernameConflict);
   const escapeAttribute = deps.escapeAttribute || ((value) => String(value || ""));
   return `
-    <article class="roster-item" data-user-card="${escapeAttribute(user.pubkey)}">
+    <article class="roster-item" data-user-card="${escapeAttribute(user.pubkey)}" ${usernameConflict ? 'data-account-integrity="conflict"' : ""}>
       <div class="workspace-list__row">
         <div>
           ${deps.renderUserIdentityButton(user)}
-          <span>${user.username ? `@${deps.escapeHtml(user.username)}` : "Shared account"}</span>
         </div>
         <div class="tag-row">
+          ${usernameConflict ? `<span class="tag tag--danger">Username conflict</span>` : ""}
           <span class="tag">Karma ${deps.formatWorkspaceKarma(karma)}</span>
           ${user.isAdmin ? `<span class="tag">admin</span>` : `<span class="tag">member</span>`}
         </div>
       </div>
+      ${
+        usernameConflict
+          ? `<span class="muted-text">This account claimed a username that is already owned elsewhere on the network.</span>`
+          : ""
+      }
       ${
         deps.currentUserIsAdmin() &&
         user.pubkey !== workspaceState.viewer?.pubkey &&
@@ -111,7 +123,8 @@ export function renderLookupCandidate(workspaceState, deps = {}) {
 export function renderUserProfileModal(workspaceState, deps = {}) {
   const user = deps.resolveWorkspaceUser(workspaceState.userModalPubkey);
   if (!user) return "";
-  const displayName = user.displayName || user.username || deps.shortKey(user.pubkey);
+  const displayName = user.displayName || user.username || user.claimedUsername || deps.shortKey(user.pubkey);
+  const usernameConflict = deps.userHasUsernameConflict ? deps.userHasUsernameConflict(user) : Boolean(user?.usernameConflict);
   const avatarUrl = deps.safeWorkspaceAvatarUrl(user.avatarUrl || "");
   const socialLinks = deps.safeWorkspaceSocialLinks(user);
   const karma = deps.resolveWorkspaceUserKarma(user.pubkey);
@@ -137,6 +150,8 @@ export function renderUserProfileModal(workspaceState, deps = {}) {
           </div>
           <div class="user-profile-modal__copy">
             ${user.username ? `<strong>@${escapeHtml(user.username)}</strong>` : ""}
+            ${!user.username && user.claimedUsername ? `<strong>Claimed @${escapeHtml(user.claimedUsername)}</strong>` : ""}
+            ${usernameConflict ? `<div class="status-box" data-state="error">This username claim conflicts with an older identity on the network.</div>` : ""}
             <span class="muted-text">Karma ${deps.formatWorkspaceKarma(karma)}</span>
             <p>${escapeHtml(user.bio || "No bio added yet.")}</p>
           </div>

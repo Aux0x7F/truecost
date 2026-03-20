@@ -57,6 +57,46 @@ test("submit shell renders attached search fields and consent copy inside the mo
   assert.match(view.shellMarkup, /Allow follow-up/);
 });
 
+test("submit shell blocks conflicting username sessions with a warning panel", () => {
+  const view = renderSubmitPageView({
+    submitState: {
+      loading: false,
+      session: { username: "aux" },
+      publicState: { submissionStatuses: new Map() },
+      submissions: []
+    },
+    deps: {
+      ...deps,
+      sessionHasUsernameConflict: true,
+      sessionConflictMessage: "@aux is already claimed by another identity on the network."
+    }
+  });
+
+  assert.match(view.shellMarkup, /Username conflict/);
+  assert.match(view.shellMarkup, /already claimed/);
+  assert.doesNotMatch(view.shellMarkup, /Add submission/);
+});
+
+test("submit shell blocks stale-password sessions with a reauth panel", () => {
+  const view = renderSubmitPageView({
+    submitState: {
+      loading: false,
+      session: { username: "aux" },
+      publicState: { submissionStatuses: new Map() },
+      submissions: []
+    },
+    deps: {
+      ...deps,
+      sessionHasStalePassword: true,
+      sessionStaleMessage: "@aux is using an older password for this account."
+    }
+  });
+
+  assert.match(view.shellMarkup, /Password changed/);
+  assert.match(view.shellMarkup, /older password/);
+  assert.doesNotMatch(view.shellMarkup, /Add submission/);
+});
+
 test("submit suggestion markup keeps attached dropdown semantics for each field kind", () => {
   const entityMarkup = renderSubmitSuggestionMarkup(
     [{ slug: "yard", name: "County Yard", location: "Phoenix, Arizona" }],

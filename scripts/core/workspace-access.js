@@ -1,9 +1,9 @@
-import { publicStateHasAdminPubkey } from "./public-state.js";
+import { identityPubkeysMatch, publicStateHasAdminPubkey } from "./public-state.js";
 
 export function currentWorkspaceUser(publicState, viewerPubkey = "") {
   const cleanPubkey = String(viewerPubkey || "").trim().toLowerCase();
   if (!cleanPubkey) return null;
-  return (publicState?.users || []).find((user) => user.pubkey === cleanPubkey) || null;
+  return (publicState?.users || []).find((user) => identityPubkeysMatch(publicState, user?.pubkey, cleanPubkey)) || null;
 }
 
 export function workspaceUserIsAdmin(publicState, viewerPubkey = "") {
@@ -29,7 +29,7 @@ export function workspacePendingKeyRequest(publicState, viewerPubkey = "", activ
 }
 
 export function workspaceTabButtons({ hasSession = false, isAdmin = false } = {}) {
-  if (!hasSession) return [{ id: "login", label: "Log in" }];
+  if (!hasSession) return [];
   const base = [{ id: "profile", label: "Profile" }, { id: "comments", label: "Comments" }];
   if (!isAdmin) return base;
   return [

@@ -10,6 +10,7 @@ Changes to live state, cached state, comments, filters, maps, workspace surfaces
 - a focused feature/runtime test when route-owned logic moves out of a root controller
 - a focused surface test when a new render family is extracted from a page controller
 - a browser regression when the failure mode is a runtime boot error, DOM lifecycle error, or broken attached-field interaction
+- a browser or controller regression when the failure mode is an unrelated rerender wiping active local input state
 - syntax validation for touched modules
 - a clear statement of what user behavior was verified
 - a compatibility note when introducing non-baseline browser features
@@ -51,6 +52,7 @@ Where applicable, cover:
 - `node --test tests/map-surface.test.mjs`
 - `node --test tests/static-page-edit.test.mjs`
 - `node --test tests/submit-shell.test.mjs`
+- `node --test tests/observed-regions.test.mjs`
 - `node --test tests/admin-editor-submit.browser.test.mjs`
 - `node --test tests/stylesheets-bundle.test.mjs`
 - `node --test tests/workspace-shell.test.mjs`
@@ -61,7 +63,11 @@ Use the checked-in browser regression whenever a fix touches:
 
 - admin/workspace boot
 - cached-first admin tab and control visibility
+- session-integrity gating for conflicting username claims
+- session-integrity gating for removed identities
+- create/login refusal and next-available username actions for taken handles
 - editor boot or editor lifecycle
 - attached autocomplete/dropdown geometry
 - attached autocomplete close behavior on `Enter` or blur
+- mounted-shell rerender boundaries, such as password modal inputs surviving unrelated workspace pane updates
 - other runtime paths that unit tests can miss because the failure only appears in a real browser

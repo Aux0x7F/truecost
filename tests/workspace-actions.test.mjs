@@ -11,6 +11,7 @@ function deps() {
   return {
     currentUserIsAdmin: () => true,
     userNeedsCurrentSiteKey: () => false,
+    userHasUsernameConflict: (user) => Boolean(user?.usernameConflict),
     resolveWorkspaceUserKarma: () => 12,
     formatWorkspaceKarma: (value) => String(value || 0),
     renderUserIdentityButton: (user) => `<button>${user.displayName || user.username || user.pubkey}</button>`,
@@ -43,6 +44,28 @@ test("renderUserCard keeps roster actions inside the workspace action surface", 
   assert.match(markup, /Take action/);
   assert.match(markup, /2 submissions/);
   assert.match(markup, /Karma 12/);
+  assert.doesNotMatch(markup, />@author</);
+});
+
+test("renderUserCard flags conflicting username claims prominently", () => {
+  const markup = renderUserCard(
+    {
+      pubkey: "user-2",
+      username: "",
+      claimedUsername: "aux",
+      usernameConflict: true,
+      displayName: "Aux",
+      submissionCount: 0,
+      commentCount: 0,
+      isAdmin: false
+    },
+    { publicState: { rootAdminPubkey: "root" }, viewer: { pubkey: "viewer" } },
+    deps()
+  );
+
+  assert.match(markup, /Username conflict/);
+  assert.match(markup, /claimed @aux/i);
+  assert.match(markup, /data-account-integrity="conflict"/);
 });
 
 test("renderLookupCandidate stays action-oriented without duplicating roster logic", () => {
@@ -62,6 +85,7 @@ test("renderLookupCandidate stays action-oriented without duplicating roster log
 
   assert.match(markup, /Take action/);
   assert.match(markup, /member/);
+  assert.doesNotMatch(markup, />@author</);
 });
 
 test("renderSubmissionCard keeps submission controls in the action surface", () => {

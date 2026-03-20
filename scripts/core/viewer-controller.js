@@ -1,4 +1,8 @@
-import { normalizeAdminPubkeys } from "./public-state.js";
+import {
+  expandCanonicalIdentityPubkeys,
+  normalizeAdminPubkeys,
+  publicStateHasAdminPubkey
+} from "./public-state.js";
 
 export function createViewerController({
   state,
@@ -49,14 +53,16 @@ export function createViewerController({
     const admins = new Set(normalizeAdminPubkeys(publicState));
     const rootAdminPubkey = String(publicState?.rootAdminPubkey || site?.nostr?.rootAdminPubkey || "").trim();
     if (rootAdminPubkey) admins.add(rootAdminPubkey);
-    return [...admins];
+    return [...new Set(
+      [...admins].flatMap((pubkey) => expandCanonicalIdentityPubkeys(publicState, pubkey))
+    )];
   }
 
   function canEdit(publicState) {
     if (!state.session) return false;
     const viewerPubkey = sessionPubkey();
     if (!viewerPubkey) return false;
-    return trustedPubkeys(publicState).includes(viewerPubkey);
+    return publicStateHasAdminPubkey(publicState, viewerPubkey);
   }
 
   return {

@@ -23,8 +23,17 @@ export function createWorkspaceSelectorController({
     return {
       ...current,
       ...user,
-      displayName: user.displayName || current.displayName || user.username || runtime.shortKey(user.pubkey),
+      displayName:
+        user.displayName ||
+        current.displayName ||
+        user.username ||
+        user.claimedUsername ||
+        current.claimedUsername ||
+        runtime.shortKey(user.pubkey),
       username: user.username || current.username || "",
+      claimedUsername: user.claimedUsername || current.claimedUsername || "",
+      usernameConflict: Boolean(user.usernameConflict || current.usernameConflict),
+      usernameOwnerPubkey: user.usernameOwnerPubkey || current.usernameOwnerPubkey || "",
       isAdmin: runtime.publicStateHasAdminPubkey(state.publicState, user.pubkey) || current.isAdmin || false
     };
   }
