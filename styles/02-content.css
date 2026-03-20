@@ -483,6 +483,11 @@
   font-family: "IBM Plex Mono", monospace;
 }
 
+.tag--danger {
+  background: rgba(176, 32, 26, 0.12);
+  color: var(--accent-deep);
+}
+
 .text-link {
   color: var(--accent);
   font-weight: 600;

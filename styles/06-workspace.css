@@ -106,6 +106,10 @@
   text-align: left;
 }
 
+.workspace-user-link.is-self strong {
+  color: #1f5fbf;
+}
+
 .workspace-user__avatar {
   display: inline-flex;
   align-items: center;
@@ -201,6 +205,17 @@
       rgba(255, 255, 255, 0)
     ),
     rgba(255, 255, 255, 0.72);
+}
+
+.roster-item[data-account-integrity="conflict"] {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(176, 32, 26, 0.14),
+      rgba(255, 255, 255, 0)
+    ),
+    rgba(255, 255, 255, 0.76);
+  border-color: rgba(176, 32, 26, 0.2);
 }
 
 .roster-item[data-comment-tone="negative"] {
