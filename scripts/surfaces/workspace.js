@@ -1,4 +1,5 @@
 export function renderWorkspaceView({ workspaceState, deps = {} } = {}) {
+  const passwordMinLength = Number(deps.passwordMinLength || 8) || 8;
   const currentUserIsAdmin = deps.currentUserIsAdmin || (() => false);
   const hasSession = Boolean(workspaceState?.session);
   const removedSession = deps.currentRemovedSessionAccount ? deps.currentRemovedSessionAccount() : null;
@@ -24,8 +25,8 @@ export function renderWorkspaceView({ workspaceState, deps = {} } = {}) {
       ? renderStalePane(deps)
       : sessionConflict.conflict
       ? renderIntegrityPane(workspaceState, deps)
-      : renderActivePane(workspaceState, deps)
-    : renderLoginPane();
+      : renderActivePane(workspaceState, deps, passwordMinLength)
+    : renderLoginPane(passwordMinLength);
   const overlayMarkup = [
     deps.renderEntityModal?.() || "",
     deps.renderUserProfileModal?.() || "",
@@ -38,7 +39,7 @@ export function renderWorkspaceView({ workspaceState, deps = {} } = {}) {
   return { title, lede, tabsMarkup, paneMarkup, overlayMarkup };
 }
 
-function renderActivePane(workspaceState, deps) {
+function renderActivePane(workspaceState, deps, passwordMinLength) {
   switch (workspaceState.activeTab) {
     case "dashboard":
       return renderDashboardPane(workspaceState, deps);
@@ -56,11 +57,11 @@ function renderActivePane(workspaceState, deps) {
       return renderCommentsPane(workspaceState, deps);
     case "profile":
     default:
-      return renderProfilePane(workspaceState, deps);
+      return renderProfilePane(workspaceState, deps, passwordMinLength);
   }
 }
 
-function renderLoginPane() {
+function renderLoginPane(passwordMinLength = 8) {
   return `
     <section class="surface-panel workspace-auth">
       <form class="tip-form" data-login-form>
@@ -70,7 +71,7 @@ function renderLoginPane() {
         </label>
         <label>
           <span>Password</span>
-          <input name="password" type="password" maxlength="120" placeholder="••••••••" autocomplete="current-password" required>
+          <input name="password" type="password" maxlength="120" minlength="${passwordMinLength}" placeholder="••••••••" autocomplete="current-password" required>
         </label>
         <div class="button-row">
           <button class="button" type="submit" data-login-submit>Create/Login</button>
@@ -168,7 +169,7 @@ function renderDashboardPane(workspaceState, deps) {
   `;
 }
 
-function renderProfilePane(workspaceState, deps) {
+function renderProfilePane(workspaceState, deps, passwordMinLength = 8) {
   const current = deps.currentUser();
   const karma = deps.resolveWorkspaceUserKarma(workspaceState.viewer?.pubkey || "");
   const escapeHtml = deps.escapeHtml || ((value) => String(value || ""));
@@ -206,7 +207,7 @@ function renderProfilePane(workspaceState, deps) {
         </label>
         <div class="button-row">
           <button class="button" type="submit">Save profile</button>
-          <button class="button-ghost" type="button" data-open-password-rotation>Change password</button>
+          <button class="button-ghost" type="button" data-open-password-rotation data-password-min-length="${passwordMinLength}">Change password</button>
         </div>
         <div class="status-box" data-workspace-status>${deps.currentUserIsAdmin() ? escapeHtml(deps.renderSiteKeyShareStatus()) : "Save changes to update your public profile."}</div>
       </form>

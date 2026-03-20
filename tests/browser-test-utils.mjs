@@ -215,6 +215,112 @@ export async function seedConflictedUsernameSession(page, { port, secretKeyHex, 
   );
 }
 
+export async function seedHistoryCurrentUsernameSession(
+  page,
+  {
+    port,
+    secretKeyHex,
+    pubkey,
+    claimedUsername = "aux",
+    historicalPubkeys = [],
+    staleOwnerPubkey = ""
+  }
+) {
+  const knownPubkeys = [...new Set([...(Array.isArray(historicalPubkeys) ? historicalPubkeys : []), pubkey])]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+  const fallbackOwnerPubkey = staleOwnerPubkey || knownPubkeys.find((value) => value !== String(pubkey || "").trim().toLowerCase()) || pubkey;
+  await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "domcontentloaded" });
+  await page.evaluate(
+    ({
+      nextSecretKeyHex,
+      nextPubkey,
+      nextClaimedUsername,
+      nextKnownPubkeys,
+      nextStaleOwnerPubkey
+    }) => {
+      const normalizedUsername = String(nextClaimedUsername || "").trim().toLowerCase();
+      const normalizedPubkey = String(nextPubkey || "").trim().toLowerCase();
+      localStorage.setItem(
+        "truecost.v2.session",
+        JSON.stringify({ username: normalizedUsername, secretKeyHex: nextSecretKeyHex, pubkey: normalizedPubkey })
+      );
+      localStorage.setItem(
+        "truecost.v2.account-history",
+        JSON.stringify({
+          [normalizedUsername]: {
+            username: normalizedUsername,
+            currentPubkey: normalizedPubkey,
+            knownPubkeys: nextKnownPubkeys,
+            updatedAt: Date.now()
+          }
+        })
+      );
+      localStorage.setItem(
+        "truecost.v2.username-integrity",
+        JSON.stringify({
+          [`${normalizedUsername}:${normalizedPubkey}`]: {
+            conflict: true,
+            claimedUsername: normalizedUsername,
+            ownerPubkey: String(nextStaleOwnerPubkey || "").trim().toLowerCase(),
+            checkedAt: Date.now(),
+            source: "lookup"
+          }
+        })
+      );
+      localStorage.setItem(
+        "truecost.v2.public-state-snapshot",
+        JSON.stringify({
+          connected: true,
+          admins: [normalizedPubkey],
+          users: [
+            {
+              pubkey: normalizedPubkey,
+              username: "",
+              claimedUsername: normalizedUsername,
+              usernameConflict: true,
+              usernameOwnerPubkey: String(nextStaleOwnerPubkey || "").trim().toLowerCase(),
+              displayName: normalizedUsername,
+              socialLinks: []
+            }
+          ],
+          usernameRegistry: [
+            {
+              username: normalizedUsername,
+              owner_pubkey: String(nextStaleOwnerPubkey || "").trim().toLowerCase(),
+              claimant_pubkeys: [String(nextStaleOwnerPubkey || "").trim().toLowerCase(), normalizedPubkey],
+              conflict: true
+            }
+          ],
+          usernameCollisions: [
+            {
+              username: normalizedUsername,
+              owner_pubkey: String(nextStaleOwnerPubkey || "").trim().toLowerCase(),
+              claimant_pubkeys: [String(nextStaleOwnerPubkey || "").trim().toLowerCase(), normalizedPubkey],
+              conflict: true
+            }
+          ],
+          entities: [],
+          approvedEntities: [],
+          drafts: [],
+          allComments: [],
+          comments: [],
+          metrics: { usernameCollisionCount: 1 },
+          rawEvents: [{ id: "cached:history-current", kind: 0 }],
+          syncInfo: { connected: true, remoteEventCount: 1, cachedEventCount: 1, mergedEventCount: 1 }
+        })
+      );
+    },
+    {
+      nextSecretKeyHex: secretKeyHex,
+      nextPubkey: pubkey,
+      nextClaimedUsername: claimedUsername,
+      nextKnownPubkeys: knownPubkeys,
+      nextStaleOwnerPubkey: fallbackOwnerPubkey
+    }
+  );
+}
+
 export async function seedRemovedSession(page, { port, secretKeyHex, pubkey, claimedUsername = "aux" }) {
   await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "domcontentloaded" });
   await page.evaluate(

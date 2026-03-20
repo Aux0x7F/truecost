@@ -48,6 +48,7 @@ The implementation now follows four layers:
   - cache and public-state normalization
   - subscribed public-state store lifecycle
   - observed-region routing helpers for mounted shells and feature roots
+  - account action orchestration for login and password rotation commit boundaries
   - navigation UI state
   - notification state
   - viewer/session/request-signer controllers
@@ -111,6 +112,13 @@ Mounted shell updates now also follow an observed-region rule:
 - if the shell structure is already mounted, features should update only the changed regions
 - unchanged overlays and active form roots must be left in place
 - full shell replacement is only appropriate when the structure itself changes
+
+Account auth flows follow a similar separation:
+
+- identity-chain resolution belongs in shared resolvers and upstream session primitives
+- session persistence belongs in session management, not UI handlers
+- login and password rotation orchestration belongs in a dedicated account action layer
+- login must not leak whether a password was previously valid; stale or superseded credentials should collapse to a generic mismatch at login time
 
 The next tightening step is thinning the remaining account/profile/upload handler families the same way the workspace shell, tabs, inbox, site-key, selector, and mutation layers were reduced, then continuing feature-facing work on top of the normalized shell: collaborative editor rails, richer entity relationships, and broader live-unit coverage.
 

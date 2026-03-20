@@ -93,6 +93,7 @@ Component behavior that spans a whole UI family should live in `scripts/surfaces
 - Logged-out workspace should render directly to the create/login pane instead of a one-item fake tab strip.
 - If a taken username fails sign-in, the login status should explain that the handle already exists, keep the session unsaved, and offer an inline next-available-number action.
 - Profile settings should treat the username as an immutable account handle and only edit the public profile fields attached to it.
+- All account password fields should enforce a minimum length of 8 characters in both field attributes and action-layer validation.
 - If cached or live public state shows that a newer pubkey is claiming an already-owned username, the conflicting session is blocked from profile updates, comments, votes, submissions, and encrypted chat.
 - If a pubkey is signed as `removed`, the client should treat that identity as removed from the site:
   - hide it from normal user-facing and admin-facing lists

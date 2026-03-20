@@ -70,6 +70,7 @@ test("workspace view does not render a fake login tab and keeps the profile hand
   assert.equal(loggedOutView.tabsMarkup, "");
   assert.match(loggedOutView.paneMarkup, /Create\/Login/);
   assert.match(loggedOutView.paneMarkup, /data-login-form/);
+  assert.match(loggedOutView.paneMarkup, /minlength="8"/);
 
   const profileView = renderWorkspaceView({
     workspaceState: {
@@ -93,6 +94,7 @@ test("workspace view does not render a fake login tab and keeps the profile hand
   assert.match(profileView.paneMarkup, /@aux/);
   assert.match(profileView.paneMarkup, /Usernames are fixed account handles/);
   assert.match(profileView.paneMarkup, /data-open-password-rotation/);
+  assert.match(profileView.paneMarkup, /data-password-min-length="8"/);
 });
 
 test("workspace view includes the password rotation modal in workspace overlays when provided", () => {

@@ -51,6 +51,18 @@ export function readStoredAccountHistory(usernameOrSession = "") {
   };
 }
 
+export function sessionMatchesStoredCurrentKey(session = null) {
+  const history = readStoredAccountHistory(session);
+  const sessionPubkey = normalizePubkey(session?.pubkey);
+  return Boolean(history?.currentPubkey && sessionPubkey && history.currentPubkey === sessionPubkey);
+}
+
+export function storedAccountHistoryIncludesPubkey(usernameOrSession = "", pubkey = "") {
+  const history = readStoredAccountHistory(usernameOrSession);
+  const cleanPubkey = normalizePubkey(pubkey);
+  return Boolean(cleanPubkey && history?.knownPubkeys?.includes(cleanPubkey));
+}
+
 function writeStoredAccountHistory(usernameOrSession, updater) {
   const username = normalizeUsername(
     typeof usernameOrSession === "string" ? usernameOrSession : usernameOrSession?.username

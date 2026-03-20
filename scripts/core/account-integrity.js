@@ -9,6 +9,7 @@ import {
   isPasswordReuseError,
   createStaleSessionError,
   isStaleSessionError,
+  readStoredAccountHistory,
   rotationReusesIdentityKey,
   resolveStaleSessionAccount
 } from "./account-management.js";
@@ -20,6 +21,7 @@ export {
   isPasswordReuseError,
   createStaleSessionError,
   isStaleSessionError,
+  readStoredAccountHistory,
   rotationReusesIdentityKey,
   resolveStaleSessionAccount
 } from "./account-management.js";
@@ -110,6 +112,15 @@ function buildResolvedIntegrity({ conflict = false, claimedUsername = "", ownerP
     user,
     source
   };
+}
+
+function currentSessionHistoryTrustsOwner(session = null, ownerPubkey = "") {
+  const cleanSessionPubkey = normalizePubkey(session?.pubkey);
+  const cleanOwnerPubkey = normalizePubkey(ownerPubkey);
+  const history = readStoredAccountHistory(session);
+  if (!cleanSessionPubkey || !cleanOwnerPubkey || !history?.currentPubkey) return false;
+  if (history.currentPubkey !== cleanSessionPubkey) return false;
+  return Array.isArray(history.knownPubkeys) && history.knownPubkeys.includes(cleanOwnerPubkey);
 }
 
 function buildRemovedIntegrity({ claimedUsername = "", ownerPubkey = "", user = null, source = "state" } = {}) {
@@ -241,6 +252,16 @@ export function resolveSessionUsernameConflict(publicState, session = null) {
   const stateIntegrity = resolveSessionUsernameConflictFromState(publicState, session);
   const trustedState = publicStateHasTrustedRemovalState(publicState);
   const cachedIntegrity = readCachedSessionUsernameIntegrity(session);
+  if (stateIntegrity.conflict && currentSessionHistoryTrustsOwner(session, stateIntegrity.ownerPubkey)) {
+    clearCachedSessionUsernameIntegrity(session);
+    return buildResolvedIntegrity({
+      conflict: false,
+      claimedUsername: stateIntegrity.claimedUsername,
+      ownerPubkey: normalizePubkey(session?.pubkey),
+      user: stateIntegrity.user,
+      source: "history-current"
+    });
+  }
   if (stateIntegrity.conflict && trustedState) {
     rememberSessionUsernameIntegrity(session, stateIntegrity);
     return stateIntegrity;
@@ -250,6 +271,16 @@ export function resolveSessionUsernameConflict(publicState, session = null) {
     return stateIntegrity;
   }
   if (cachedIntegrity?.conflict && cachedIntegrity.source === "lookup") {
+    if (currentSessionHistoryTrustsOwner(session, cachedIntegrity.ownerPubkey)) {
+      clearCachedSessionUsernameIntegrity(session);
+      return buildResolvedIntegrity({
+        conflict: false,
+        claimedUsername: cachedIntegrity.claimedUsername || stateIntegrity.claimedUsername,
+        ownerPubkey: normalizePubkey(session?.pubkey),
+        user: stateIntegrity.user,
+        source: "history-current"
+      });
+    }
     return buildResolvedIntegrity({
       conflict: true,
       claimedUsername: cachedIntegrity.claimedUsername || stateIntegrity.claimedUsername,
@@ -594,6 +625,16 @@ export async function assertNetworkSessionUsernameIntegrity(
   if (lookupOwner) {
     const lookupOwnerPubkey = normalizePubkey(lookupOwner.pubkey);
     if (lookupOwnerPubkey && lookupOwnerPubkey !== cleanSessionPubkey) {
+      if (currentSessionHistoryTrustsOwner(session, lookupOwnerPubkey)) {
+        clearCachedSessionUsernameIntegrity(session);
+        return buildResolvedIntegrity({
+          conflict: false,
+          claimedUsername,
+          ownerPubkey: cleanSessionPubkey,
+          user: stateIntegrity.user,
+          source: "history-current"
+        });
+      }
       if (staleSession) {
         throw createStaleSessionError({
           claimedUsername,
@@ -635,6 +676,16 @@ export async function assertNetworkSessionUsernameIntegrity(
   }
 
   if (stateIntegrity.conflict) {
+    if (currentSessionHistoryTrustsOwner(session, stateIntegrity.ownerPubkey)) {
+      clearCachedSessionUsernameIntegrity(session);
+      return buildResolvedIntegrity({
+        conflict: false,
+        claimedUsername: stateIntegrity.claimedUsername,
+        ownerPubkey: cleanSessionPubkey,
+        user: stateIntegrity.user,
+        source: "history-current"
+      });
+    }
     const stateKnowsClaimant = stateKnowsSessionUsernameClaim(publicState, session, stateIntegrity);
     if (requireLookup && (!lookupSuccessful || !stateKnowsClaimant)) {
       throw new Error(`Could not verify whether @${claimedUsername} belongs to this account on the network. Try again in a moment.`);
