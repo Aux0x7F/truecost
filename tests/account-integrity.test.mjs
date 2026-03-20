@@ -428,6 +428,43 @@ test("lookup-backed cached conflicts survive an untrusted no-conflict snapshot",
   assert.equal(readCachedSessionUsernameIntegrity(session)?.conflict, true);
 });
 
+test("lookup-backed cached conflicts survive a generic trusted snapshot without explicit ownership", () => {
+  const storage = new Map();
+  globalThis.localStorage = {
+    getItem: (key) => storage.get(key) || null,
+    setItem: (key, value) => storage.set(key, value),
+    removeItem: (key) => storage.delete(key)
+  };
+
+  const session = { username: "aux", pubkey: "b".repeat(64) };
+  storage.set(
+    "truecost.v2.username-integrity",
+    JSON.stringify({
+      [`aux:${"b".repeat(64)}`]: {
+        conflict: true,
+        claimedUsername: "aux",
+        ownerPubkey: "a".repeat(64),
+        checkedAt: Date.now(),
+        source: "lookup"
+      }
+    })
+  );
+
+  const integrity = resolveSessionUsernameConflict(
+    {
+      connected: true,
+      syncInfo: { remoteEventCount: 2, cachedEventCount: 0, mergedEventCount: 2 },
+      usernameRegistry: [],
+      users: []
+    },
+    session
+  );
+
+  assert.equal(integrity.conflict, true);
+  assert.equal(integrity.source, "cache");
+  assert.equal(readCachedSessionUsernameIntegrity(session)?.conflict, true);
+});
+
 test("network-backed username integrity does not reject the canonical owner from provisional state conflict", async () => {
   const session = { username: "aux", pubkey: "a".repeat(64) };
   let lookupOptions = null;

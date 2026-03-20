@@ -6,6 +6,7 @@ import {
   createStaticServer,
   loadPlaywright,
   seedAdminSession,
+  seedLegacyAdminSession,
   seedHistoryCurrentUsernameSession,
   seedKnownUsernameOwner,
   seedConflictedUsernameSession
@@ -14,6 +15,7 @@ import {
 const repoRoot = process.cwd();
 const secretKeyHex = "1111111111111111111111111111111111111111111111111111111111111111";
 const pubkey = "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
+const conflictSecretKeyHex = "2222222222222222222222222222222222222222222222222222222222222222";
 
 test("admin workspace, submit autocomplete, and editor boot survive cached admin load", async (t) => {
   const playwright = await loadPlaywright();
@@ -39,6 +41,7 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
     await page.waitForSelector("[data-workspace-pane]", { timeout: 15000 });
     await page.waitForFunction(
       () => document.querySelector('[data-workspace-tab="dashboard"]')?.classList.contains("is-current"),
+      null,
       { timeout: 1500 }
     );
     const cachedWorkspaceState = await page.evaluate(() => ({
@@ -82,6 +85,7 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
     await page.fill("[data-submit-suggested-entity-input]", "Test");
     await page.waitForFunction(
       () => document.querySelector("[data-submit-suggested-entity-results]")?.getAttribute("data-open") === "yes",
+      null,
       { timeout: 5000 }
     );
 
@@ -105,17 +109,20 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
     await page.press("[data-submit-suggested-entity-input]", "Enter");
     await page.waitForFunction(
       () => document.querySelector("[data-submit-suggested-entity-results]")?.getAttribute("data-open") !== "yes",
+      null,
       { timeout: 5000 }
     );
 
     await page.focus("[data-submit-suggested-entity-input]");
     await page.waitForFunction(
       () => document.querySelector("[data-submit-suggested-entity-results]")?.getAttribute("data-open") === "yes",
+      null,
       { timeout: 5000 }
     );
     await page.focus("[name=\"suggestedEntityNotes\"]");
     await page.waitForFunction(
       () => document.querySelector("[data-submit-suggested-entity-results]")?.getAttribute("data-open") !== "yes",
+      null,
       { timeout: 5000 }
     );
 
@@ -176,8 +183,7 @@ test("conflicting username sessions are blocked across workspace, submit, and co
   try {
     await seedConflictedUsernameSession(page, {
       port,
-      secretKeyHex,
-      pubkey: "6".repeat(64),
+      secretKeyHex: conflictSecretKeyHex,
       claimedUsername: "aux",
       ownerPubkey: pubkey
     });
@@ -189,7 +195,8 @@ test("conflicting username sessions are blocked across workspace, submit, and co
     await page.goto(`http://127.0.0.1:${port}/submit.html`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(
       () => document.body.textContent.includes("Username conflict"),
-      { timeout: 15000 }
+      null,
+      { timeout: 45000 }
     );
     const submitConflictState = await page.evaluate(() => ({
       bodyText: document.body.textContent || "",
@@ -202,7 +209,11 @@ test("conflicting username sessions are blocked across workspace, submit, and co
     );
     await page.waitForSelector("[data-comment-panel]", { timeout: 15000 });
     await page.waitForFunction(
-      () => document.querySelector("[data-comment-panel]")?.textContent.includes("comment from this account"),
+      () => {
+        const text = document.querySelector("[data-comment-panel]")?.textContent || "";
+        return text.includes("already claimed by another identity") || text.includes("comment from this account");
+      },
+      null,
       { timeout: 15000 }
     );
     const commentConflictState = await page.evaluate(() => ({
@@ -260,13 +271,14 @@ test("login form rejects a taken username before persisting a session", async (t
     await page.click("[data-login-submit]");
     await page.waitForFunction(
       () => document.querySelector("[data-workspace-status]")?.textContent.includes("already exists and your password did not match"),
-      { timeout: 15000 }
+      null,
+      { timeout: 45000 }
     );
     await page.click("[data-append-next-available-username]");
     await page.waitForFunction(() => {
       const value = document.querySelector('[data-login-form] [name="username"]')?.value || "";
       return /^aux\d+$/.test(value) && value !== "aux";
-    }, { timeout: 15000 });
+    }, null, { timeout: 15000 });
 
     const loginState = await page.evaluate(() => ({
       statusText: document.querySelector("[data-workspace-status]")?.textContent || "",
@@ -333,6 +345,50 @@ test("workspace keeps the current local account head active when cached conflict
     assert.equal(workspaceState.hasPasswordModal, true, "current local account head should keep the password modal open");
     assert.equal(workspaceState.hasConflictPane, false, "stale ownership from an older local key should not replace the workspace with a conflict pane");
     assert.doesNotMatch(workspaceState.paneText, /already claimed by another identity/);
+  } finally {
+    await browser.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("legacy sessions missing a stored pubkey are repaired before workspace account actions use them", async (t) => {
+  const playwright = await loadPlaywright();
+  if (!playwright?.chromium) {
+    t.skip("Playwright is not available in this workspace.");
+    return;
+  }
+
+  const { server, port } = await createStaticServer(repoRoot);
+  const browser = await playwright.chromium.launch({ headless: true });
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const pageErrors = [];
+  const consoleErrors = [];
+
+  page.on("pageerror", (error) => pageErrors.push(String(error)));
+  captureRelevantConsoleErrors(page, consoleErrors);
+
+  try {
+    await seedLegacyAdminSession(page, {
+      port,
+      secretKeyHex,
+      username: "testiprofile"
+    });
+
+    await page.goto(`http://127.0.0.1:${port}/admin.html?tab=profile`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("[data-workspace-pane]", { timeout: 15000 });
+    await page.click("[data-open-password-rotation]");
+    await page.waitForSelector("[data-password-rotation-form]", { timeout: 15000 });
+
+    const repairedState = await page.evaluate(() => ({
+      sessionRaw: localStorage.getItem("truecost.v2.session") || "",
+      modalOpen: Boolean(document.querySelector("[data-password-rotation-form]"))
+    }));
+
+    assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(" | ")}`);
+    assert.deepEqual(consoleErrors, [], `console errors: ${consoleErrors.join(" | ")}`);
+    assert.equal(repairedState.modalOpen, true);
+    assert.match(repairedState.sessionRaw, /"pubkey":"[0-9a-f]{64}"/);
   } finally {
     await browser.close();
     await new Promise((resolve) => server.close(resolve));

@@ -13,6 +13,40 @@ export function buildPasswordLengthMessage(minimum = PASSWORD_MIN_LENGTH) {
   return `Passwords must be at least ${Number(minimum) || PASSWORD_MIN_LENGTH} characters.`;
 }
 
+function normalizeActionSession(session = null, { deriveIdentity, saveSession } = {}) {
+  if (!session || typeof session !== "object") return null;
+  const username = String(session.username || "").trim().toLowerCase();
+  const secretKeyHex = String(session.secretKeyHex || "").trim().toLowerCase();
+  const pubkey = String(session.pubkey || "").trim().toLowerCase();
+  if (!username || !secretKeyHex) return session;
+  if (pubkey) {
+    return {
+      ...session,
+      username,
+      secretKeyHex,
+      pubkey
+    };
+  }
+  if (typeof deriveIdentity !== "function") return session;
+  try {
+    const identity = deriveIdentity(secretKeyHex);
+    const derivedPubkey = String(identity?.pubkey || "").trim().toLowerCase();
+    if (!derivedPubkey) return session;
+    const normalizedSession = {
+      ...session,
+      username,
+      secretKeyHex,
+      pubkey: derivedPubkey
+    };
+    if (typeof saveSession === "function") {
+      saveSession(normalizedSession);
+    }
+    return normalizedSession;
+  } catch {
+    return session;
+  }
+}
+
 function assertPasswordMinimumLength(password, minimum = PASSWORD_MIN_LENGTH) {
   if (String(password || "").length < minimum) {
     throw new Error(buildPasswordLengthMessage(minimum));
@@ -94,23 +128,24 @@ export async function rotateAccountPassword({
   rememberAccountRotation,
   afterCommit = null
 } = {}) {
-  if (!session?.username || !session?.pubkey) throw new Error("Sign in before changing this password.");
+  const normalizedSession = normalizeActionSession(session, { deriveIdentity, saveSession });
+  if (!normalizedSession?.username || !normalizedSession?.pubkey) throw new Error("Sign in before changing this password.");
   const trimmedPassword = String(nextPassword || "");
   if (!trimmedPassword.trim()) throw new Error("Enter a new password.");
   assertPasswordMinimumLength(trimmedPassword);
 
-  const nextSecretKeyHex = await deriveSecretKeyHex(session.username, trimmedPassword);
+  const nextSecretKeyHex = await deriveSecretKeyHex(normalizedSession.username, trimmedPassword);
   const nextIdentity = deriveIdentity(nextSecretKeyHex);
   const buildReuseError = () =>
     createPasswordReuseError({
-      claimedUsername: session.username,
-      message: buildPasswordReuseMessage({ claimedUsername: session.username })
+      claimedUsername: normalizedSession.username,
+      message: buildPasswordReuseMessage({ claimedUsername: normalizedSession.username })
     });
 
-  if (nextIdentity.pubkey === String(session.pubkey || "").trim().toLowerCase()) {
+  if (nextIdentity.pubkey === String(normalizedSession.pubkey || "").trim().toLowerCase()) {
     throw buildReuseError();
   }
-  if (rotationReusesIdentityKey(currentPublicState, session, nextIdentity.pubkey)) {
+  if (rotationReusesIdentityKey(currentPublicState, normalizedSession, nextIdentity.pubkey)) {
     throw buildReuseError();
   }
 
@@ -118,17 +153,17 @@ export async function rotateAccountPassword({
     ? await loadPublicState()
     : currentPublicState;
 
-  await assertNetworkSessionUsernameIntegrity(publicState, session, {
+  await assertNetworkSessionUsernameIntegrity(publicState, normalizedSession, {
     lookupUsers,
     requireLookup: true,
     action: "rotate this account"
   });
 
-  if (rotationReusesIdentityKey(publicState, session, nextIdentity.pubkey)) {
+  if (rotationReusesIdentityKey(publicState, normalizedSession, nextIdentity.pubkey)) {
     throw buildReuseError();
   }
 
-  const rotation = await rotateAccountCredentials(session, trimmedPassword, {
+  const rotation = await rotateAccountCredentials(normalizedSession, trimmedPassword, {
     persistSession: false,
     validateCurrentSession: async (currentSession) => {
       await assertNetworkSessionUsernameIntegrity(publicState, currentSession, {
@@ -140,13 +175,13 @@ export async function rotateAccountPassword({
   });
 
   saveSession(rotation.session);
-  rememberAccountRotation(session, rotation.session);
+  rememberAccountRotation(normalizedSession, rotation.session);
 
   let warnings = [];
   if (typeof afterCommit === "function") {
     try {
       const afterCommitResult = await afterCommit({
-        previousSession: session,
+        previousSession: normalizedSession,
         rotation,
         publicState
       });

@@ -235,7 +235,8 @@ const viewerController = createViewerController({
   state: workspaceState,
   site: SITE,
   deriveIdentity,
-  hasNostrTools
+  hasNostrTools,
+  persistSession: saveSession
 });
 
 workspaceSelectors = createWorkspaceSelectorController({
