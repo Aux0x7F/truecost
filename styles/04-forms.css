@@ -200,6 +200,30 @@
   background: rgba(18, 18, 18, 0.08);
 }
 
+.status-box__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.status-box__inline-action {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+  cursor: pointer;
+}
+
+.status-box__inline-action:hover,
+.status-box__inline-action:focus-visible {
+  opacity: 0.82;
+}
+
 .admin-identity {
   display: grid;
   gap: 0.45rem;

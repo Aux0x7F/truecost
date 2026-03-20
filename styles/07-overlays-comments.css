@@ -150,6 +150,10 @@
   text-align: left;
 }
 
+.comment-card__author-button.is-self {
+  color: #1f5fbf;
+}
+
 .comment-card__author-button:hover,
 .comment-card__avatar-button:hover,
 .user-link:hover {

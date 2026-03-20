@@ -1461,6 +1461,11 @@ h3 {
   font-family: "IBM Plex Mono", monospace;
 }
 
+.tag--danger {
+  background: rgba(176, 32, 26, 0.12);
+  color: var(--accent-deep);
+}
+
 .text-link {
   color: var(--accent);
   font-weight: 600;
@@ -2282,6 +2287,30 @@ h3 {
   background: rgba(18, 18, 18, 0.08);
 }
 
+.status-box__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.55rem;
+}
+
+.status-box__inline-action {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.12em;
+  cursor: pointer;
+}
+
+.status-box__inline-action:hover,
+.status-box__inline-action:focus-visible {
+  opacity: 0.82;
+}
+
 .admin-identity {
   display: grid;
   gap: 0.45rem;
@@ -2564,6 +2593,10 @@ h3 {
   text-align: left;
 }
 
+.workspace-user-link.is-self strong {
+  color: #1f5fbf;
+}
+
 .workspace-user__avatar {
   display: inline-flex;
   align-items: center;
@@ -2659,6 +2692,17 @@ h3 {
       rgba(255, 255, 255, 0)
     ),
     rgba(255, 255, 255, 0.72);
+}
+
+.roster-item[data-account-integrity="conflict"] {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(176, 32, 26, 0.14),
+      rgba(255, 255, 255, 0)
+    ),
+    rgba(255, 255, 255, 0.76);
+  border-color: rgba(176, 32, 26, 0.2);
 }
 
 .roster-item[data-comment-tone="negative"] {
@@ -2850,6 +2894,10 @@ h3 {
   display: inline-flex;
   justify-self: start;
   text-align: left;
+}
+
+.comment-card__author-button.is-self {
+  color: #1f5fbf;
 }
 
 .comment-card__author-button:hover,
