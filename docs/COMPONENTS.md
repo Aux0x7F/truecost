@@ -90,6 +90,7 @@ Component behavior that spans a whole UI family should live in `scripts/surfaces
 
 - Usernames are unique handles at the site level.
 - Sign-in should verify current username ownership before persisting a deterministic session.
+- Legacy deterministic sessions missing a stored `pubkey` should be repaired through shared session/viewer helpers before account actions use them.
 - Logged-out workspace should render directly to the create/login pane instead of a one-item fake tab strip.
 - If a taken username fails sign-in, the login status should explain that the handle already exists, keep the session unsaved, and offer an inline next-available-number action.
 - Profile settings should treat the username as an immutable account handle and only edit the public profile fields attached to it.

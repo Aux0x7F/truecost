@@ -6,45 +6,12 @@ import {
   isUsernameConflictError,
   rotationReusesIdentityKey
 } from "./account-integrity.js";
+import { repairSession } from "./session.js";
 
 export const PASSWORD_MIN_LENGTH = 8;
 
 export function buildPasswordLengthMessage(minimum = PASSWORD_MIN_LENGTH) {
   return `Passwords must be at least ${Number(minimum) || PASSWORD_MIN_LENGTH} characters.`;
-}
-
-function normalizeActionSession(session = null, { deriveIdentity, saveSession } = {}) {
-  if (!session || typeof session !== "object") return null;
-  const username = String(session.username || "").trim().toLowerCase();
-  const secretKeyHex = String(session.secretKeyHex || "").trim().toLowerCase();
-  const pubkey = String(session.pubkey || "").trim().toLowerCase();
-  if (!username || !secretKeyHex) return session;
-  if (pubkey) {
-    return {
-      ...session,
-      username,
-      secretKeyHex,
-      pubkey
-    };
-  }
-  if (typeof deriveIdentity !== "function") return session;
-  try {
-    const identity = deriveIdentity(secretKeyHex);
-    const derivedPubkey = String(identity?.pubkey || "").trim().toLowerCase();
-    if (!derivedPubkey) return session;
-    const normalizedSession = {
-      ...session,
-      username,
-      secretKeyHex,
-      pubkey: derivedPubkey
-    };
-    if (typeof saveSession === "function") {
-      saveSession(normalizedSession);
-    }
-    return normalizedSession;
-  } catch {
-    return session;
-  }
 }
 
 function assertPasswordMinimumLength(password, minimum = PASSWORD_MIN_LENGTH) {
@@ -124,11 +91,12 @@ export async function rotateAccountPassword({
   assertNetworkSessionUsernameIntegrity,
   lookupUsers,
   rotateAccountCredentials,
+  repairAccountSession = repairSession,
   saveSession,
   rememberAccountRotation,
   afterCommit = null
 } = {}) {
-  const normalizedSession = normalizeActionSession(session, { deriveIdentity, saveSession });
+  const normalizedSession = await repairAccountSession(session, { persistSession: true });
   if (!normalizedSession?.username || !normalizedSession?.pubkey) throw new Error("Sign in before changing this password.");
   const trimmedPassword = String(nextPassword || "");
   if (!trimmedPassword.trim()) throw new Error("Enter a new password.");
