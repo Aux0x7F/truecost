@@ -9,6 +9,14 @@ import {
   collectRecordBranchIds as collectCommentBranchIds,
   dedupeRecordsById as dedupeCommentList
 } from "../core/comment-utils.js";
+import {
+  buildRemovedAccountMessage,
+  buildStaleSessionMessage,
+  buildUsernameConflictMessage,
+  resolveRemovedSessionAccount,
+  resolveStaleSessionAccount,
+  resolveSessionUsernameConflict
+} from "../core/account-integrity.js";
 import { applyDerivedCommentState } from "../core/public-state.js";
 import { formatDateTime } from "../core/formatting.js";
 import { renderAvatarBadge } from "../core/profile-markup.js";
@@ -67,6 +75,9 @@ export function createMarkdownPageFeature({
     if (!(panel instanceof HTMLElement)) return;
 
     const isLoggedIn = Boolean(state.session);
+    const removedAccount = resolveRemovedSessionAccount(publicState, state.session);
+    const staleSession = resolveStaleSessionAccount(publicState, state.session);
+    const usernameIntegrity = resolveSessionUsernameConflict(publicState, state.session);
     const isAdmin = Boolean(state.viewer && viewerController.trustedPubkeys(publicState).includes(state.viewer.pubkey));
     const viewerPubkey = viewerController.sessionPubkey();
     const threadedComments = rankVisibleCommentThreads(publicState.commentThreadsByPost?.get(postSlug) || [], publicState, viewerPubkey);
@@ -84,7 +95,33 @@ export function createMarkdownPageFeature({
       </div>
       ${
         isLoggedIn
-          ? `
+          ? removedAccount
+            ? `
+              <div class="status-box" data-state="error">${escapeHtml(
+                buildRemovedAccountMessage({
+                  claimedUsername: removedAccount.claimedUsername || removedAccount.username || state.session?.username
+                })
+              )}</div>
+            `
+            : staleSession
+            ? `
+              <div class="status-box" data-state="error">${escapeHtml(
+                buildStaleSessionMessage({
+                  claimedUsername: staleSession.claimedUsername || state.session?.username,
+                  currentContext: "comment from this account"
+                })
+              )}</div>
+            `
+            : usernameIntegrity.conflict
+            ? `
+              <div class="status-box" data-state="error">${escapeHtml(
+                buildUsernameConflictMessage({
+                  claimedUsername: usernameIntegrity.claimedUsername,
+                  action: "comment from this account"
+                })
+              )}</div>
+            `
+            : `
             <section class="comment-composer">
               ${renderAvatarBadge(currentUser, state.session?.username || "You", "comment-composer__avatar", profileInitials)}
               <form class="comment-composer__form" data-comment-form="root">
@@ -99,12 +136,18 @@ export function createMarkdownPageFeature({
           : `<div class="empty-state">Log in to comment or reply.</div>`
       }
       ${
-        threadedComments.length
+        !removedAccount && !staleSession && !usernameIntegrity.conflict && threadedComments.length
           ? `<div class="comment-list">${threadedComments.map((comment) =>
               renderComment(
                 comment,
                 publicState,
-                { isAdmin, canReply: isLoggedIn, canVote: isLoggedIn, replyTargetId, viewerPubkey },
+                {
+                  isAdmin,
+                  canReply: isLoggedIn && !removedAccount && !staleSession && !usernameIntegrity.conflict,
+                  canVote: isLoggedIn && !removedAccount && !staleSession && !usernameIntegrity.conflict,
+                  replyTargetId,
+                  viewerPubkey
+                },
                 {
                   formatDateTime,
                   renderAvatarBadge: (user, fallbackLabel, className) => renderAvatarBadge(user, fallbackLabel, className, profileInitials),
@@ -113,15 +156,15 @@ export function createMarkdownPageFeature({
                 }
               )
             ).join("")}</div>`
-          : isLoggedIn
+          : !removedAccount && !staleSession && !usernameIntegrity.conflict && isLoggedIn
             ? `<div class="comment-list"><div class="empty-state">No comments yet. Start the discussion.</div></div>`
             : ""
       }
     `;
 
-    bindCommentComposer(panel, postSlug);
-    bindReplyControls(panel, postSlug, publicState);
-    bindCommentActions(panel, postSlug, publicState, viewerPubkey);
+    bindCommentComposer(panel, postSlug, usernameIntegrity, removedAccount, staleSession);
+    bindReplyControls(panel, postSlug, publicState, usernameIntegrity, removedAccount, staleSession);
+    bindCommentActions(panel, postSlug, publicState, viewerPubkey, usernameIntegrity, removedAccount, staleSession);
     focusRequestedComment(postSlug);
   }
 
@@ -144,7 +187,7 @@ export function createMarkdownPageFeature({
     enrichEntityReferences(scope, publicState.approvedEntities);
   }
 
-  function bindCommentComposer(panel, postSlug) {
+  function bindCommentComposer(panel, postSlug, usernameIntegrity, removedAccount, staleSession) {
     const rootForm = panel.querySelector('[data-comment-form="root"]');
     if (!(rootForm instanceof HTMLFormElement)) return;
     rootForm.addEventListener("submit", async (event) => {
@@ -155,6 +198,29 @@ export function createMarkdownPageFeature({
       const markdown = String(textarea?.value || "").trim();
       if (!markdown) return;
       try {
+        if (removedAccount) {
+          throw new Error(
+            buildRemovedAccountMessage({
+              claimedUsername: removedAccount.claimedUsername || removedAccount.username || state.session?.username
+            })
+          );
+        }
+        if (staleSession) {
+          throw new Error(
+            buildStaleSessionMessage({
+              claimedUsername: staleSession.claimedUsername || state.session?.username,
+              currentContext: "comment from this account"
+            })
+          );
+        }
+        if (usernameIntegrity.conflict) {
+          throw new Error(
+            buildUsernameConflictMessage({
+              claimedUsername: usernameIntegrity.claimedUsername,
+              action: "comment from this account"
+            })
+          );
+        }
         const viewer = await viewerController.get();
         if (submitButton instanceof HTMLButtonElement) submitButton.disabled = true;
         if (status instanceof HTMLElement) {
@@ -190,7 +256,7 @@ export function createMarkdownPageFeature({
     });
   }
 
-  function bindReplyControls(panel, postSlug, publicState) {
+  function bindReplyControls(panel, postSlug, publicState, usernameIntegrity, removedAccount, staleSession) {
     for (const replyButton of panel.querySelectorAll("[data-reply-comment]")) {
       replyButton.addEventListener("click", async () => {
         state.commentReply = { postSlug, commentId: replyButton.getAttribute("data-reply-comment") || "" };
@@ -221,6 +287,29 @@ export function createMarkdownPageFeature({
         if (!markdown || !replyTarget) return;
         const rootId = String(replyTarget.root_id || replyTarget.parent_id || replyTarget.id || "").trim();
         try {
+          if (removedAccount) {
+            throw new Error(
+              buildRemovedAccountMessage({
+                claimedUsername: removedAccount.claimedUsername || removedAccount.username || state.session?.username
+              })
+            );
+          }
+          if (staleSession) {
+            throw new Error(
+              buildStaleSessionMessage({
+                claimedUsername: staleSession.claimedUsername || state.session?.username,
+                currentContext: "reply from this account"
+              })
+            );
+          }
+          if (usernameIntegrity.conflict) {
+            throw new Error(
+              buildUsernameConflictMessage({
+                claimedUsername: usernameIntegrity.claimedUsername,
+                action: "reply from this account"
+              })
+            );
+          }
           const viewer = await viewerController.get();
           if (submitButton instanceof HTMLButtonElement) submitButton.disabled = true;
           if (status instanceof HTMLElement) {
@@ -257,7 +346,7 @@ export function createMarkdownPageFeature({
     }
   }
 
-  function bindCommentActions(panel, postSlug, publicState, viewerPubkey) {
+  function bindCommentActions(panel, postSlug, publicState, viewerPubkey, usernameIntegrity, removedAccount, staleSession) {
     for (const button of panel.querySelectorAll("[data-hide-comment]")) {
       button.addEventListener("click", async () => {
         try {
@@ -278,6 +367,9 @@ export function createMarkdownPageFeature({
     for (const button of panel.querySelectorAll("[data-delete-comment]")) {
       button.addEventListener("click", async () => {
         if (!state.session?.secretKeyHex || !viewerPubkey) return;
+        if (removedAccount) return;
+        if (staleSession) return;
+        if (usernameIntegrity.conflict) return;
         const commentId = String(button.getAttribute("data-delete-comment") || "").trim();
         const targetComment = publicState.commentIndex?.get(commentId) || null;
         if (!targetComment || targetComment.author !== viewerPubkey) return;
@@ -302,6 +394,9 @@ export function createMarkdownPageFeature({
     for (const button of panel.querySelectorAll("[data-comment-vote]")) {
       button.addEventListener("click", async () => {
         if (!state.session?.secretKeyHex || !viewerPubkey) return;
+        if (removedAccount) return;
+        if (staleSession) return;
+        if (usernameIntegrity.conflict) return;
         const commentId = String(button.getAttribute("data-comment-vote") || "").trim();
         const requestedValue = Number(button.getAttribute("data-comment-vote-value") || 0);
         if (!commentId || !Number.isFinite(requestedValue) || ![1, -1].includes(requestedValue)) return;

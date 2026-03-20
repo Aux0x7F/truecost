@@ -28,6 +28,7 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - The stylesheet convergence pass now pushes repeated dropdown, shell, workspace, and comment rules up into the shared cascade instead of only redistributing them across files.
 - Site fonts are now self-hosted, so public pages no longer need client requests to Google for typography.
 - The workspace controller has been reduced again: admin shell rendering, tab state, inbox/chat flow, site-key handling, selectors, and mutation handlers now live in dedicated workspace modules instead of one large page controller.
+- Mounted workspace/admin, submit, and editor shells now use observed region updates so unrelated async state changes do not replace active form roots or open overlays.
 
 ## Near Term
 

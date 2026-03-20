@@ -1,3 +1,5 @@
+import { createObservedRegionRouter } from "../core/observed-regions.js";
+
 export function createWorkspaceShellController({
   state,
   deps = {},
@@ -13,6 +15,20 @@ export function createWorkspaceShellController({
     hydrateWorkspaceEnhancements: () => {},
     ...callbacks
   };
+  const regions = createObservedRegionRouter();
+
+  function renderShellMarkup(view) {
+    const tabsMarkup = String(view?.tabsMarkup || "").trim();
+    return `
+      ${tabsMarkup ? `<div class="workspace-tabs" data-workspace-tabs>${tabsMarkup}</div>` : ""}
+      <div class="workspace-pane" data-workspace-pane>
+        ${view?.paneMarkup || ""}
+      </div>
+      <div data-workspace-overlays>
+        ${view?.overlayMarkup || ""}
+      </div>
+    `;
+  }
 
   function renderLoading(message) {
     const shell = document.querySelector("[data-workspace-shell]");
@@ -88,7 +104,6 @@ export function createWorkspaceShellController({
   }
 
   function render(options = {}) {
-    const soft = Boolean(options.soft);
     const shell = document.querySelector("[data-workspace-shell]");
     const title = document.querySelector("[data-workspace-title]");
     const lede = document.querySelector("[data-workspace-lede]");
@@ -99,48 +114,60 @@ export function createWorkspaceShellController({
       workspaceState: state,
       deps: surfaceDeps
     });
-    title.textContent = view.title;
-    lede.textContent = view.lede;
+    const sharedRegions = [
+      { name: "workspace-title", kind: "text", element: title, value: view.title },
+      { name: "workspace-lede", kind: "text", element: lede, value: view.lede }
+    ];
 
     if (!state.session) {
-      shell.innerHTML = `
-        <div class="workspace-tabs" data-workspace-tabs>
-          ${view.tabsMarkup}
-        </div>
-        <div class="workspace-pane" data-workspace-pane>
-          ${view.paneMarkup}
-        </div>
-        <div data-workspace-overlays>
-          ${view.overlayMarkup}
-        </div>
-      `;
+      const shellMarkup = renderShellMarkup(view);
+      regions.apply(sharedRegions);
+      const changed = regions.apply(
+        [{ name: "workspace-shell", kind: "markup", element: shell, value: shellMarkup }],
+        { force: !shell.innerHTML }
+      );
+      if (changed.has("workspace-shell")) {
+        regions.reset();
+      }
+      hooks.hydrateWorkspaceEnhancements();
       return;
     }
 
     const tabs = shell.querySelector("[data-workspace-tabs]");
     const pane = shell.querySelector("[data-workspace-pane]");
     const overlays = shell.querySelector("[data-workspace-overlays]");
-    const focusState = soft ? captureFocusState() : null;
+    const focusState = captureFocusState();
+    const routeRegions = [
+      ...sharedRegions,
+      { name: "workspace-tabs", kind: "markup", element: tabs, value: view.tabsMarkup },
+      { name: "workspace-pane", kind: "markup", element: pane, value: view.paneMarkup },
+      { name: "workspace-overlays", kind: "markup", element: overlays, value: view.overlayMarkup }
+    ];
 
-    if (soft && tabs && pane && overlays) {
-      tabs.innerHTML = view.tabsMarkup;
-      pane.innerHTML = view.paneMarkup;
-      overlays.innerHTML = view.overlayMarkup;
+    let changedRegions = new Set();
+    if (tabs && pane && overlays) {
+      changedRegions = regions.apply(routeRegions);
     } else {
-      shell.innerHTML = `
-        <div class="workspace-tabs" data-workspace-tabs>
-          ${view.tabsMarkup}
-        </div>
-        <div class="workspace-pane" data-workspace-pane>
-          ${view.paneMarkup}
-        </div>
-        <div data-workspace-overlays>
-          ${view.overlayMarkup}
-        </div>
-      `;
+      const shellMarkup = renderShellMarkup(view);
+      regions.apply(sharedRegions);
+      const shellChanged = regions.apply(
+        [{ name: "workspace-shell", kind: "markup", element: shell, value: shellMarkup }],
+        { force: true }
+      );
+      changedRegions = new Set([...changedRegions, ...shellChanged]);
+      const nextTabs = shell.querySelector("[data-workspace-tabs]");
+      const nextPane = shell.querySelector("[data-workspace-pane]");
+      const nextOverlays = shell.querySelector("[data-workspace-overlays]");
+      regions.reset();
+      regions.remember([
+        ...sharedRegions,
+        { name: "workspace-tabs", kind: "markup", element: nextTabs, value: view.tabsMarkup },
+        { name: "workspace-pane", kind: "markup", element: nextPane, value: view.paneMarkup },
+        { name: "workspace-overlays", kind: "markup", element: nextOverlays, value: view.overlayMarkup }
+      ]);
     }
     hooks.hydrateWorkspaceEnhancements();
-    if (focusState) restoreFocusState(focusState);
+    if (focusState && changedRegions.size) restoreFocusState(focusState);
   }
 
   return {

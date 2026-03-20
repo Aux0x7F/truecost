@@ -5,7 +5,7 @@ export function renderPublicUserProfileModal(user, deps = {}) {
   const profileInitials = deps.profileInitials || ((value) => String(value || "").slice(0, 2).toUpperCase());
   const safeAvatarUrl = deps.safeAvatarUrl || ((value) => value);
   const safeSocialLinks = deps.safeSocialLinks || (() => []);
-  const displayName = user.displayName || user.username || deps.shortKey?.(user.pubkey) || "Profile";
+  const displayName = user.displayName || user.username || user.claimedUsername || deps.shortKey?.(user.pubkey) || "Profile";
   const avatarUrl = safeAvatarUrl(user.avatarUrl || "");
   const socialLinks = safeSocialLinks(user);
   return `
@@ -28,6 +28,7 @@ export function renderPublicUserProfileModal(user, deps = {}) {
           </div>
           <div class="user-profile-modal__copy">
             ${user.username ? `<strong>@${escapeHtml(user.username)}</strong>` : ""}
+            ${!user.username && user.claimedUsername ? `<strong>Claimed @${escapeHtml(user.claimedUsername)}</strong>` : ""}
             <p>${escapeHtml(user.bio || "No bio added yet.")}</p>
           </div>
         </div>

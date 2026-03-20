@@ -31,11 +31,13 @@ Every live component on the site should follow the same rule:
 
 1. render static or cached baseline immediately
 2. load fresher relay state in the background
-3. patch the mounted component in place
+3. patch the mounted component in place through the feature or component root that actually owns that state
 
 Comments, filters, maps, workspace lists, notifications, and collaborative units should all behave that way.
 
 A loading state is only appropriate when there is no useful cached or static baseline to show.
+
+Network state and local draft UI state should stay separate. Background relay or cache updates must not replace unrelated active form DOM.
 
 ## Code layering
 
@@ -45,6 +47,7 @@ The implementation now follows four layers:
   - transport wrappers
   - cache and public-state normalization
   - subscribed public-state store lifecycle
+  - observed-region routing helpers for mounted shells and feature roots
   - navigation UI state
   - notification state
   - viewer/session/request-signer controllers
@@ -54,6 +57,7 @@ The implementation now follows four layers:
   - reusable rendering helpers for shared controls
 - `scripts/features`
   - route-owned state + logic modules
+  - feature-owned root observation and region routing
   - site runtime/bootstrap lifecycle
   - archive page
   - map page
@@ -101,6 +105,12 @@ The CSS now follows the same split:
 That keeps the CSS boundary closer to the JS surface split instead of letting one root stylesheet keep absorbing every component family.
 
 The codebase now applies this split to navigation, profile-menu state, notifications, archive, comments, investigation detail, static-page editing, submit shell rendering, public profile overlays, workspace rendering, workspace actions, workspace review/log rendering, map shells, editor-shell rendering, shared draft/review helpers, shared rendering helpers, request-signer helpers, workspace cache/access/projection helpers, and a shared `public-state-store` boundary for public, workspace, and editor controllers. Future refactors should keep reducing remaining heavy controllers into composed feature modules backed by explicit shared state helpers.
+
+Mounted shell updates now also follow an observed-region rule:
+
+- if the shell structure is already mounted, features should update only the changed regions
+- unchanged overlays and active form roots must be left in place
+- full shell replacement is only appropriate when the structure itself changes
 
 The next tightening step is thinning the remaining account/profile/upload handler families the same way the workspace shell, tabs, inbox, site-key, selector, and mutation layers were reduced, then continuing feature-facing work on top of the normalized shell: collaborative editor rails, richer entity relationships, and broader live-unit coverage.
 

@@ -6,6 +6,13 @@ It exists so repeated UI patterns are implemented once, reused, and tested again
 
 Component behavior that spans a whole UI family should live in `scripts/surfaces`, not be rebuilt inside page controllers. Route-owned orchestration belongs in `scripts/features`, and shared state/controllers belong in `scripts/core`.
 
+## Feature-owned roots
+
+- Shared state should route into feature-owned roots, then into the specific component regions those features own.
+- Mounted shells should update by observed region, not by replacing the entire shell for every state change.
+- Unrelated state changes must not reset active inputs, open modals, or other local draft UI.
+- Local draft UI state and async public/network state should be treated as separate concerns.
+
 ## Global shell
 
 ### Header and navigation
@@ -70,6 +77,7 @@ Component behavior that spans a whole UI family should live in `scripts/surfaces
 - Workspace panes should render from one list/rail contract per data family, not bespoke per-tab markup.
 - Search, stats, and filters belong in the supporting rail when they drive a list below.
 - Background refresh should patch list rows and counts in place instead of rebuilding the entire workspace pane.
+- Mounted workspace shells should patch tabs, pane, and overlays independently when only one region changes.
 - If cached state already proves the viewer is an admin, admin tabs and admin-only controls should render before relay sync finishes, then patch in place.
 
 ### Notifications and profile menu
@@ -77,6 +85,24 @@ Component behavior that spans a whole UI family should live in `scripts/surfaces
 - Notification state belongs inside the profile menu, not as a separate menu surface.
 - The badge is the compact state; the expanded list is a child state of the same menu.
 - Clearing or consuming notifications should update the list in place without collapsing unrelated controls.
+
+### Account integrity
+
+- Usernames are unique handles at the site level.
+- Sign-in should verify current username ownership before persisting a deterministic session.
+- Logged-out workspace should render directly to the create/login pane instead of a one-item fake tab strip.
+- If a taken username fails sign-in, the login status should explain that the handle already exists, keep the session unsaved, and offer an inline next-available-number action.
+- Profile settings should treat the username as an immutable account handle and only edit the public profile fields attached to it.
+- If cached or live public state shows that a newer pubkey is claiming an already-owned username, the conflicting session is blocked from profile updates, comments, votes, submissions, and encrypted chat.
+- If a pubkey is signed as `removed`, the client should treat that identity as removed from the site:
+  - hide it from normal user-facing and admin-facing lists
+  - exclude it from username ownership resolution
+  - ignore its content and counters in normal state projections
+  - block sessions for that pubkey from acting on the site
+- `removed` is an operator/root-level state label, not an ordinary workspace moderation control.
+- Conflict state should render as a clear warning pane or warning card instead of failing silently.
+- Workspace user management should flag conflicting claims prominently enough to stand out faster than ordinary karma or moderation signals.
+- Public article discussion should replace the normal comment surface with a conflict warning when the current session is blocked.
 
 ## Threads and comments
 
@@ -115,7 +141,7 @@ Expected behavior:
 
 1. render static or cached baseline immediately
 2. load fresher data in the background
-3. patch in place
+3. patch in place through the owning feature or component root
 
 Do not blank useful content while waiting for background state.
 
@@ -211,6 +237,7 @@ The next convergence targets are:
   - media insertion from the toolbar at cursor
 - Metadata does not belong above the document body.
 - The editor shell must stay mounted during background sync or repair.
+- Editor shell replacement should only happen when the shell markup actually changes.
 
 ## Map surfaces
 

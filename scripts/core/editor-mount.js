@@ -1,3 +1,5 @@
+import { applyObservedMarkup } from "./observed-regions.js";
+
 export function destroyMountedEditor(editorState) {
   const editor = editorState?.editor;
   if (editor && typeof editor.destroy === "function") {
@@ -11,6 +13,8 @@ export function destroyMountedEditor(editorState) {
 }
 
 export function replaceEditorShellMarkup(shell, editorState, markup) {
+  if (!shell) return false;
+  if (shell.innerHTML === String(markup ?? "")) return false;
   destroyMountedEditor(editorState);
-  if (shell) shell.innerHTML = markup;
+  return applyObservedMarkup(shell, markup, { force: true });
 }

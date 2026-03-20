@@ -1,6 +1,9 @@
 export function renderWorkspaceView({ workspaceState, deps = {} } = {}) {
   const currentUserIsAdmin = deps.currentUserIsAdmin || (() => false);
   const hasSession = Boolean(workspaceState?.session);
+  const removedSession = deps.currentRemovedSessionAccount ? deps.currentRemovedSessionAccount() : null;
+  const staleSession = deps.currentStaleSessionAccount ? deps.currentStaleSessionAccount() : null;
+  const sessionConflict = deps.currentSessionUsernameConflict ? deps.currentSessionUsernameConflict() : { conflict: false };
   const title = !workspaceState?.session
     ? "Log in"
     : currentUserIsAdmin()
@@ -14,13 +17,22 @@ export function renderWorkspaceView({ workspaceState, deps = {} } = {}) {
   const tabsMarkup = (deps.tabButtons ? deps.tabButtons() : [])
     .map((tab) => deps.renderTabButton(tab))
     .join("");
-  const paneMarkup = hasSession ? renderActivePane(workspaceState, deps) : renderLoginPane();
+  const paneMarkup = hasSession
+    ? removedSession
+      ? renderRemovedPane(deps)
+      : staleSession
+      ? renderStalePane(deps)
+      : sessionConflict.conflict
+      ? renderIntegrityPane(workspaceState, deps)
+      : renderActivePane(workspaceState, deps)
+    : renderLoginPane();
   const overlayMarkup = [
     deps.renderEntityModal?.() || "",
     deps.renderUserProfileModal?.() || "",
     deps.renderUserActionModal?.() || "",
     deps.renderCommentActionModal?.() || "",
-    deps.renderSubmissionModal?.() || ""
+    deps.renderSubmissionModal?.() || "",
+    deps.renderPasswordRotationModal?.() || ""
   ].join("");
 
   return { title, lede, tabsMarkup, paneMarkup, overlayMarkup };
@@ -54,17 +66,71 @@ function renderLoginPane() {
       <form class="tip-form" data-login-form>
         <label>
           <span>Username</span>
-          <input name="username" type="text" maxlength="40" placeholder="username" required>
+          <input name="username" type="text" maxlength="40" placeholder="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
         </label>
         <label>
           <span>Password</span>
-          <input name="password" type="password" maxlength="120" placeholder="••••••••" required>
+          <input name="password" type="password" maxlength="120" placeholder="••••••••" autocomplete="current-password" required>
         </label>
         <div class="button-row">
           <button class="button" type="submit" data-login-submit>Create/Login</button>
         </div>
-        <div class="status-box" data-workspace-status>This site uses your username and password to reopen the same account.</div>
+        <div class="status-box" data-workspace-status>Usernames are unique handles. This site uses your username and password to reopen the same account.</div>
       </form>
+    </section>
+  `;
+}
+
+function renderRemovedPane(deps) {
+  const escapeHtml = deps.escapeHtml || ((value) => String(value || ""));
+  const message = deps.currentRemovedSessionAccountMessage
+    ? deps.currentRemovedSessionAccountMessage()
+    : "This account has been removed from this site.";
+  return `
+    <section class="surface-panel">
+      <div class="eyebrow">Account removed</div>
+      <h2>Access is disabled</h2>
+      <div class="status-box" data-state="error">${escapeHtml(message)}</div>
+      <p class="muted-text">This client blocks profile updates, comments, votes, submissions, and chat for removed identities.</p>
+      <div class="button-row">
+        <button class="button" type="button" data-signout>Sign out</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderIntegrityPane(workspaceState, deps) {
+  const escapeHtml = deps.escapeHtml || ((value) => String(value || ""));
+  const message = deps.currentSessionUsernameConflictMessage
+    ? deps.currentSessionUsernameConflictMessage("publish from this account")
+    : "This username is already taken on the network.";
+  return `
+    <section class="surface-panel">
+      <div class="eyebrow">Username conflict</div>
+      <h2>Choose a different username</h2>
+      <div class="status-box" data-state="error">${escapeHtml(message)}</div>
+      <p class="muted-text">This client blocks profile updates, comments, votes, submissions, and chat from conflicting username claims.</p>
+      <div class="button-row">
+        <button class="button" type="button" data-signout>Sign out</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderStalePane(deps) {
+  const escapeHtml = deps.escapeHtml || ((value) => String(value || ""));
+  const message = deps.currentStaleSessionMessage
+    ? deps.currentStaleSessionMessage("publish from this account")
+    : "This session is using an older password for this account.";
+  return `
+    <section class="surface-panel">
+      <div class="eyebrow">Password changed</div>
+      <h2>Sign in with the current password</h2>
+      <div class="status-box" data-state="error">${escapeHtml(message)}</div>
+      <p class="muted-text">Old keys are blocked once a newer password becomes the active signer for this account.</p>
+      <div class="button-row">
+        <button class="button" type="button" data-signout>Sign out</button>
+      </div>
     </section>
   `;
 }
@@ -105,19 +171,26 @@ function renderDashboardPane(workspaceState, deps) {
 function renderProfilePane(workspaceState, deps) {
   const current = deps.currentUser();
   const karma = deps.resolveWorkspaceUserKarma(workspaceState.viewer?.pubkey || "");
-  const escapeAttribute = deps.escapeAttribute || ((value) => String(value || ""));
   const escapeHtml = deps.escapeHtml || ((value) => String(value || ""));
+  const claimedUsername = String(
+    current?.claimedUsername ||
+      current?.username ||
+      workspaceState?.session?.username ||
+      ""
+  ).trim();
   return `
     <section class="surface-panel">
       <div class="eyebrow">Profile</div>
       <h2>Profile settings</h2>
       <div class="tag-row">
         <span class="tag">Karma ${deps.formatWorkspaceKarma(karma)}</span>
+        ${claimedUsername ? `<span class="tag">@${escapeHtml(claimedUsername)}</span>` : ""}
       </div>
+      <p class="muted-text">Usernames are fixed account handles. Profile settings update the public details attached to your current handle.</p>
       <form class="tip-form" data-profile-form>
         <label>
           <span>Display name</span>
-          <input name="displayName" type="text" maxlength="80" value="${escapeAttribute(current?.displayName || "")}">
+          <input name="displayName" type="text" maxlength="80" value="${deps.escapeAttribute ? deps.escapeAttribute(current?.displayName || "") : String(current?.displayName || "")}">
         </label>
         <label>
           <span>Bio</span>
@@ -133,6 +206,7 @@ function renderProfilePane(workspaceState, deps) {
         </label>
         <div class="button-row">
           <button class="button" type="submit">Save profile</button>
+          <button class="button-ghost" type="button" data-open-password-rotation>Change password</button>
         </div>
         <div class="status-box" data-workspace-status>${deps.currentUserIsAdmin() ? escapeHtml(deps.renderSiteKeyShareStatus()) : "Save changes to update your public profile."}</div>
       </form>

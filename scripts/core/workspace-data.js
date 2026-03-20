@@ -16,6 +16,7 @@ export function findLocalUserCandidate(value, { users = [], normalizeUsername } 
   return (Array.isArray(users) ? users : []).find((user) =>
     (pubkey && user.pubkey === pubkey) ||
     (username && typeof normalizeUsername === "function" && normalizeUsername(user.username) === username) ||
+    (username && typeof normalizeUsername === "function" && normalizeUsername(user.claimedUsername) === username) ||
     lowered === String(user.displayName || "").trim().toLowerCase()
   ) || null;
 }
@@ -36,13 +37,15 @@ export function filterVisibleWorkspaceUsers({
       user.commentCount > 0 ||
       user.moderation ||
       user.username ||
+      user.claimedUsername ||
+      user.usernameConflict ||
       String(user.bio || "").trim() ||
       (Array.isArray(user.socialLinks) && user.socialLinks.length) ||
       user.avatarUrl ||
       user.avatarBlob;
     if (!visible || !karmaBucketMatches(resolveWorkspaceUserKarma(user.pubkey), cleanKarmaBucket)) return false;
     if (!cleanQuery) return true;
-    const haystacks = [user.displayName, user.username, user.bio, user.pubkey]
+    const haystacks = [user.displayName, user.username, user.claimedUsername, user.bio, user.pubkey]
       .map((value) => String(value || "").trim().toLowerCase())
       .filter(Boolean);
     return haystacks.some((value) => value.includes(cleanQuery));

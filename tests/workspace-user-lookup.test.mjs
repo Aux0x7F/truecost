@@ -46,3 +46,34 @@ test("workspace user lookup prefers local matches, falls back to direct pubkeys,
   assert.equal(linkedUserCleared, true);
   assert.ok(renders.length >= 2);
 });
+
+test("workspace user lookup surfaces username conflicts in status copy", async () => {
+  const state = {
+    publicState: { admins: [] },
+    userLookupDebounce: 0,
+    userLookupRequestId: 0,
+    userLookupQuery: "",
+    userLookupResult: null,
+    userLookupLoading: false,
+    userDirectStatus: ""
+  };
+  const controller = createWorkspaceUserLookupController({
+    state,
+    lookupUsers: async () => [],
+    normalizeDirectPubkey: () => "",
+    publicStateHasAdminPubkey: () => false,
+    renderWorkspace: () => {},
+    clearLinkedUser: () => {},
+    findLocalUserCandidate: () => ({
+      pubkey: "b".repeat(64),
+      username: "",
+      claimedUsername: "aux",
+      usernameConflict: true,
+      displayName: "Aux"
+    }),
+    hydrateLookupCandidate: (user) => user
+  });
+
+  await controller.resolve("aux");
+  assert.match(state.userDirectStatus, /conflicting claim/i);
+});

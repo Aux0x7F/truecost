@@ -5,6 +5,7 @@ import {
   chooseInitialWorkspaceTab,
   createWorkspaceAccessController,
   workspaceHasInboxAccess,
+  workspaceTabButtons,
   workspaceUserIsAdmin
 } from "../scripts/core/workspace-access.js";
 
@@ -64,4 +65,43 @@ test("workspace access helpers keep inbox access scoped to trusted admins and ac
   );
   assert.equal(chooseInitialWorkspaceTab("", { hasSession: true, isAdmin: false }), "profile");
   assert.equal(chooseInitialWorkspaceTab("", { hasSession: false, isAdmin: false }), "login");
+  assert.deepEqual(workspaceTabButtons({ hasSession: false, isAdmin: false }), []);
+});
+
+test("workspace access treats a rotated admin session as admin when the identity chain is already known", () => {
+  const rootPubkey = "a".repeat(64);
+  const rotatedPubkey = "b".repeat(64);
+  const state = {
+    session: { pubkey: rotatedPubkey },
+    publicState: {
+      admins: [rootPubkey],
+      rootAdminPubkey: rootPubkey,
+      identityChain: {
+        validLinks: [{ old_pubkey: rootPubkey, new_pubkey: rotatedPubkey }],
+        pendingLinks: [],
+        predecessorByPubkey: new Map([[rotatedPubkey, rootPubkey]]),
+        successorByPubkey: new Map([[rootPubkey, rotatedPubkey]]),
+        canonicalByPubkey: new Map([
+          [rootPubkey, rootPubkey],
+          [rotatedPubkey, rootPubkey]
+        ]),
+        membersByCanonical: new Map([[rootPubkey, [rootPubkey, rotatedPubkey]]])
+      },
+      siteInfo: { activePubkey: "site-pubkey" },
+      pendingAdminKeyRequests: []
+    },
+    siteKeyShare: { sitePubkey: "site-pubkey" },
+    activeTab: ""
+  };
+  const viewerController = {
+    sessionPubkey: () => rotatedPubkey
+  };
+  const access = createWorkspaceAccessController({
+    state,
+    viewerController,
+    resolveSitePubkey: (publicState) => publicState?.siteInfo?.activePubkey || ""
+  });
+
+  assert.equal(access.isAdmin(), true);
+  assert.equal(access.hasInboxAccess(), true);
 });
