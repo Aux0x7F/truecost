@@ -205,3 +205,55 @@ test("rotateAccountPassword rejects short passwords before deriving a new key", 
   );
   assert.equal(deriveCalled, false);
 });
+
+test("rotateAccountPassword repairs a legacy session missing pubkey before validation", async () => {
+  const calls = [];
+  const repairedSession = {
+    username: "testiprofile",
+    secretKeyHex: "a".repeat(64),
+    pubkey: "a".repeat(64)
+  };
+
+  const result = await rotateAccountPassword({
+    session: {
+      username: "testiprofile",
+      secretKeyHex: "a".repeat(64),
+      pubkey: ""
+    },
+    nextPassword: "brand-new-password",
+    currentPublicState: { connected: true, usernameRegistry: [], users: [] },
+    loadPublicState: async () => ({ connected: true, usernameRegistry: [], users: [] }),
+    deriveSecretKeyHex: async () => "f".repeat(64),
+    deriveIdentity: (secretKeyHex) => ({ pubkey: secretKeyHex }),
+    assertNetworkSessionUsernameIntegrity: async (_publicState, session) => {
+      calls.push(["validate", session.pubkey]);
+    },
+    lookupUsers: async () => [],
+    rotateAccountCredentials: async (session) => {
+      calls.push(["rotate", session.pubkey]);
+      return {
+        session: {
+          username: "testiprofile",
+          secretKeyHex: "f".repeat(64),
+          pubkey: "f".repeat(64)
+        },
+        previousPubkey: "a".repeat(64),
+        rotationId: "rotation-legacy",
+        proposed: true,
+        accepted: true
+      };
+    },
+    saveSession: (session) => calls.push(["save", session.pubkey]),
+    rememberAccountRotation: (previousSession, nextSession) =>
+      calls.push(["remember", previousSession.pubkey, nextSession.pubkey])
+  });
+
+  assert.equal(result.session.pubkey, "f".repeat(64));
+  assert.deepEqual(calls, [
+    ["save", repairedSession.pubkey],
+    ["validate", repairedSession.pubkey],
+    ["rotate", repairedSession.pubkey],
+    ["save", "f".repeat(64)],
+    ["remember", repairedSession.pubkey, "f".repeat(64)]
+  ]);
+});

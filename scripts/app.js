@@ -41,7 +41,7 @@ import {
   createNotificationState
 } from "./core/notification-state.js";
 import { createSiteNotificationBuilder } from "./core/notification-builders.js";
-import { getStoredGuestSession, getStoredSession } from "./core/session.js";
+import { getStoredGuestSession, getStoredSession, saveSession } from "./core/session.js";
 import {
   buildToc,
   renderError,
@@ -153,7 +153,8 @@ const viewerController = createViewerController({
   state,
   site: SITE,
   deriveIdentity,
-  hasNostrTools
+  hasNostrTools,
+  persistSession: saveSession
 });
 
 const buildSiteNotifications = createSiteNotificationBuilder({

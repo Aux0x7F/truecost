@@ -266,7 +266,7 @@ export function resolveSessionUsernameConflict(publicState, session = null) {
     rememberSessionUsernameIntegrity(session, stateIntegrity);
     return stateIntegrity;
   }
-  if (stateIntegrity.claimedUsername && !stateIntegrity.conflict && trustedState) {
+  if (stateIntegrity.claimedUsername && !stateIntegrity.conflict && trustedState && stateIntegrity.ownerPubkey) {
     clearCachedSessionUsernameIntegrity(session);
     return stateIntegrity;
   }

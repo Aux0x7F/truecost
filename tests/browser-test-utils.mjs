@@ -91,6 +91,31 @@ export async function seedAdminSession(page, { port, secretKeyHex, pubkey }) {
   }, { secretKeyHex, pubkey });
 }
 
+export async function seedLegacyAdminSession(page, { port, secretKeyHex, username = "smoke-user" }) {
+  await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "domcontentloaded" });
+  await page.evaluate(({ nextSecretKeyHex, nextUsername }) => {
+    localStorage.setItem(
+      "truecost.v2.session",
+      JSON.stringify({ username: nextUsername, secretKeyHex: nextSecretKeyHex })
+    );
+    localStorage.setItem(
+      "truecost.v2.public-state-snapshot",
+      JSON.stringify({
+        admins: [],
+        users: [{ pubkey: "", username: nextUsername, displayName: "Smoke User", socialLinks: [] }],
+        entities: [],
+        approvedEntities: [],
+        drafts: [],
+        allComments: [],
+        comments: [],
+        metrics: {},
+        rawEvents: [{ id: "cached:legacy-session", kind: 0 }],
+        syncInfo: { connected: false, remoteEventCount: 0, cachedEventCount: 1, mergedEventCount: 1 }
+      })
+    );
+  }, { nextSecretKeyHex: secretKeyHex, nextUsername: username });
+}
+
 export async function seedKnownUsernameOwner(page, { port, username = "aux", ownerPubkey = "" }) {
   const canonicalOwnerPubkey = ownerPubkey || "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
   await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "domcontentloaded" });
@@ -135,16 +160,18 @@ export async function seedKnownUsernameOwner(page, { port, username = "aux", own
   );
 }
 
-export async function seedConflictedUsernameSession(page, { port, secretKeyHex, pubkey, claimedUsername = "aux", ownerPubkey = "" }) {
+export async function seedConflictedUsernameSession(page, { port, secretKeyHex, claimedUsername = "aux", ownerPubkey = "" }) {
   const canonicalOwnerPubkey = ownerPubkey || "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
   await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "domcontentloaded" });
   await page.evaluate(
-    ({
+    async ({
       secretKeyHex: nextSecretKeyHex,
-      pubkey: nextPubkey,
       claimedUsername: nextClaimedUsername,
       ownerPubkey: nextOwnerPubkey
     }) => {
+      const nostr = await import("./scripts/core/nostr.js");
+      await nostr.ensureEventToolsLoaded();
+      const nextPubkey = nostr.deriveIdentity(nextSecretKeyHex).pubkey;
       localStorage.setItem(
         "truecost.v2.session",
         JSON.stringify({ username: nextClaimedUsername, secretKeyHex: nextSecretKeyHex, pubkey: nextPubkey })
@@ -211,7 +238,7 @@ export async function seedConflictedUsernameSession(page, { port, secretKeyHex, 
         })
       );
     },
-    { secretKeyHex, pubkey, claimedUsername, ownerPubkey: canonicalOwnerPubkey }
+    { secretKeyHex, claimedUsername, ownerPubkey: canonicalOwnerPubkey }
   );
 }
 
