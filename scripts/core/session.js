@@ -18,6 +18,7 @@ export const {
   getStoredSession,
   saveSession,
   clearSession,
+  repairSession,
   getStoredGuestSession,
   saveGuestSession,
   clearGuestSession,

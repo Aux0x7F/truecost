@@ -225,6 +225,13 @@ test("rotateAccountPassword repairs a legacy session missing pubkey before valid
     loadPublicState: async () => ({ connected: true, usernameRegistry: [], users: [] }),
     deriveSecretKeyHex: async () => "f".repeat(64),
     deriveIdentity: (secretKeyHex) => ({ pubkey: secretKeyHex }),
+    repairAccountSession: async (session, _options) => {
+      calls.push(["save", repairedSession.pubkey]);
+      return {
+        ...session,
+        ...repairedSession
+      };
+    },
     assertNetworkSessionUsernameIntegrity: async (_publicState, session) => {
       calls.push(["validate", session.pubkey]);
     },
