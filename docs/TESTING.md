@@ -18,6 +18,14 @@ Changes to live state, cached state, comments, filters, maps, workspace surfaces
 
 Pure presentation refinements should be checked in manual design runs unless they change runtime behavior or a documented interaction contract.
 
+Authentication and password-rotation work must also cover:
+
+- generic login mismatch behavior for stale or superseded passwords
+- minimum password length enforcement in both rendered fields and action-layer validation
+- synchronous password-reuse rejection before any session/history mutation
+- rotation commit boundaries, so failed follow-up work does not leave local session/history in a contradictory state
+- vendored support-lib contract checks when upstream session primitives change
+
 ## Required live-state cases
 
 Where applicable, cover:
@@ -54,6 +62,8 @@ Where applicable, cover:
 - `node --test tests/submit-shell.test.mjs`
 - `node --test tests/observed-regions.test.mjs`
 - `node --test tests/admin-editor-submit.browser.test.mjs`
+- `node --test tests/account-actions.test.mjs`
+- `node --test tests/session-api-vendor.test.mjs`
 - `node --test tests/stylesheets-bundle.test.mjs`
 - `node --test tests/workspace-shell.test.mjs`
 - `node --test tests/workspace-tabs.test.mjs`

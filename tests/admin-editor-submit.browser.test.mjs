@@ -6,6 +6,7 @@ import {
   createStaticServer,
   loadPlaywright,
   seedAdminSession,
+  seedHistoryCurrentUsernameSession,
   seedKnownUsernameOwner,
   seedConflictedUsernameSession
 } from "./browser-test-utils.mjs";
@@ -60,7 +61,9 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
     const passwordDraftState = await page.evaluate(() => ({
       password: document.querySelector('[data-password-rotation-form] [name="password"]')?.value || "",
       confirmPassword: document.querySelector('[data-password-rotation-form] [name="confirmPassword"]')?.value || "",
-      modalOpen: Boolean(document.querySelector("[data-password-rotation-form]"))
+      modalOpen: Boolean(document.querySelector("[data-password-rotation-form]")),
+      passwordMinLength: document.querySelector('[data-password-rotation-form] [name="password"]')?.minLength || 0,
+      confirmPasswordMinLength: document.querySelector('[data-password-rotation-form] [name="confirmPassword"]')?.minLength || 0
     }));
 
     await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "domcontentloaded" });
@@ -131,7 +134,9 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
     assert.deepEqual(passwordDraftState, {
       password: "observer-pass-1",
       confirmPassword: "observer-pass-1",
-      modalOpen: true
+      modalOpen: true,
+      passwordMinLength: 8,
+      confirmPasswordMinLength: 8
     });
     assert.match(navMarkup, /Explore/);
     assert.match(navMarkup, /Investigations/);
@@ -249,6 +254,7 @@ test("login form rejects a taken username before persisting a session", async (t
     await page.goto(`http://127.0.0.1:${port}/admin.html?tab=login`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector("[data-login-form]", { timeout: 15000 });
     assert.equal(await page.locator("[data-workspace-tab]").count(), 0, "logged-out workspace should not render a fake login tab");
+    assert.equal(await page.locator('[data-login-form] [name="password"]').evaluate((input) => input.minLength), 8);
     await page.fill('[data-login-form] [name="username"]', "aux");
     await page.fill('[data-login-form] [name="password"]', "different-password");
     await page.click("[data-login-submit]");
@@ -274,6 +280,59 @@ test("login form rejects a taken username before persisting a session", async (t
     assert.notEqual(loginState.usernameValue, "aux");
     assert.match(loginState.statusText, new RegExp(`Try @${loginState.usernameValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
     assert.equal(loginState.storedSession, "", "taken usernames should not persist a new session");
+  } finally {
+    await browser.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("workspace keeps the current local account head active when cached conflict data points at an older key", async (t) => {
+  const playwright = await loadPlaywright();
+  if (!playwright?.chromium) {
+    t.skip("Playwright is not available in this workspace.");
+    return;
+  }
+
+  const { server, port } = await createStaticServer(repoRoot);
+  const browser = await playwright.chromium.launch({ headless: true });
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const pageErrors = [];
+  const consoleErrors = [];
+
+  page.on("pageerror", (error) => pageErrors.push(String(error)));
+  captureRelevantConsoleErrors(page, consoleErrors);
+
+  try {
+    await seedHistoryCurrentUsernameSession(page, {
+      port,
+      secretKeyHex,
+      pubkey: "e".repeat(64),
+      claimedUsername: "testiprofile",
+      historicalPubkeys: ["a", "b", "c", "d", "e"].map((ch) => ch.repeat(64)),
+      staleOwnerPubkey: "b".repeat(64)
+    });
+
+    await page.goto(`http://127.0.0.1:${port}/admin.html?tab=profile`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("[data-workspace-pane]", { timeout: 15000 });
+    await page.click("[data-open-password-rotation]");
+    await page.waitForSelector("[data-password-rotation-form]", { timeout: 15000 });
+
+    const workspaceState = await page.evaluate(() => ({
+      paneText: document.querySelector("[data-workspace-pane]")?.textContent || "",
+      hasPasswordModal: Boolean(document.querySelector("[data-password-rotation-form]")),
+      hasConflictPane: Boolean(
+        [...document.querySelectorAll("[data-workspace-pane] h2")].some((heading) =>
+          String(heading.textContent || "").includes("Username conflict")
+        )
+      )
+    }));
+
+    assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(" | ")}`);
+    assert.deepEqual(consoleErrors, [], `console errors: ${consoleErrors.join(" | ")}`);
+    assert.equal(workspaceState.hasPasswordModal, true, "current local account head should keep the password modal open");
+    assert.equal(workspaceState.hasConflictPane, false, "stale ownership from an older local key should not replace the workspace with a conflict pane");
+    assert.doesNotMatch(workspaceState.paneText, /already claimed by another identity/);
   } finally {
     await browser.close();
     await new Promise((resolve) => server.close(resolve));

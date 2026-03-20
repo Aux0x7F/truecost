@@ -2,15 +2,10 @@ import SITE from "./core/site-config.js";
 import { buildDraftMarkdown, createUniqueSlug, splitTags } from "./core/content-utils.js";
 import {
   assertNetworkSessionUsernameIntegrity,
-  buildPasswordReuseMessage,
   buildRemovedAccountMessage,
   buildStaleSessionMessage,
-  createPasswordReuseError,
-  rotationReusesIdentityKey,
   buildUsernameConflictMessage,
   buildUsernameLoginMismatchMessage,
-  isStaleSessionError,
-  isUsernameConflictError,
   resolveRemovedSessionAccount,
   resolveStaleSessionAccount,
   resolveSessionUsernameConflict,
@@ -150,7 +145,13 @@ import { createWorkspaceMutationController } from "./features/workspace-mutation
 import { createWorkspaceShellController } from "./features/workspace-shell.js";
 import { createWorkspaceTabsController } from "./features/workspace-tabs.js";
 import { createWorkspaceUserLookupController } from "./features/workspace-user-lookup.js";
-import { deriveSecretKeyHex, getStoredSession, rebroadcastAccount, rotateAccountCredentials, signInWithCredentials } from "./core/session.js";
+import {
+  buildPasswordLengthMessage,
+  openAccountSession,
+  PASSWORD_MIN_LENGTH,
+  rotateAccountPassword
+} from "./core/account-actions.js";
+import { getStoredSession, rebroadcastAccount, rotateAccountCredentials, saveSession, signInWithCredentials, deriveSecretKeyHex } from "./core/session.js";
 
 let workspacePublicStateStore = null;
 let workspaceRuntime = null;
@@ -968,7 +969,8 @@ function workspaceSurfaceDeps() {
     renderPasswordRotationModal: () => renderWorkspacePasswordRotationModal(),
     renderLogPane: () => renderWorkspaceLogPane(workspaceState, actionDeps),
     renderUserCard: (user) => renderWorkspaceUserCard(user, workspaceState, actionDeps),
-    renderUserIdentityButton
+    renderUserIdentityButton,
+    passwordMinLength: PASSWORD_MIN_LENGTH
   });
 }
 
@@ -1106,44 +1108,42 @@ async function handleLogin(form) {
       status.dataset.state = "pending";
     }
     const formData = new FormData(form);
-      const publicState =
-        (await workspacePublicStateStore
+    const login = await openAccountSession({
+      username: formData.get("username"),
+      password: formData.get("password"),
+      loadPublicState: async () =>
+        ((await workspacePublicStateStore
           .hydrate({
             force: true,
             reason: "login-username-check",
             requestRepair: false
           })
-          .catch(() => ({ value: workspaceState.publicState }))).value || workspaceState.publicState;
-      const validateSession = async (session) => {
-        await assertNetworkSessionUsernameIntegrity(publicState, session, {
-          lookupUsers,
-          requireLookup: true,
-          action: "open this account"
-        });
-      };
-    const session = await signInWithCredentials(formData.get("username"), formData.get("password"), {
-      validateSession
+          .catch(() => ({ value: workspaceState.publicState }))).value || workspaceState.publicState),
+      signInWithCredentials,
+      saveSession,
+      rebroadcastAccount,
+      rememberCurrentAccountSession,
+      assertNetworkSessionUsernameIntegrity,
+      lookupUsers
     });
-    await rebroadcastAccount(session, {}, { validateSession });
-    rememberCurrentAccountSession(session);
+    const session = login.session;
     if (status) {
-      status.textContent = `Signed in as @${session.username}.`;
-      status.dataset.state = "success";
+      status.textContent = login.warning
+        ? `Signed in as @${session.username}. ${login.warning}`
+        : `Signed in as @${session.username}.`;
+      status.dataset.state = login.warning ? "warning" : "success";
     }
     window.dispatchEvent(new CustomEvent("truecost:session-changed"));
     await refreshWorkspace(true);
   } catch (error) {
     if (status) {
-      if (isUsernameConflictError(error)) {
+      if (String(error?.code || "").trim().toUpperCase() === "LOGIN_MISMATCH") {
         setStatusMarkup(status, {
           state: "error",
           html: renderLoginUsernameMismatchMarkup(
             error?.claimedUsername || normalizeUsername(form.querySelector('[name="username"]')?.value || "")
           )
         });
-      } else if (isStaleSessionError(error)) {
-        status.textContent = String(error?.message || "This account is using an older password.");
-        status.dataset.state = "error";
       } else {
         status.textContent = String(error?.message || error || "Login failed.");
         status.dataset.state = "error";
@@ -1261,7 +1261,7 @@ function renderStatusActionMarkup(message, {
 }
 
 function renderDefaultLoginStatusMarkup() {
-  return escapeHtml("Usernames are unique handles. This site uses your username and password to reopen the same account.");
+  return escapeHtml(`Usernames are unique handles. ${buildPasswordLengthMessage(PASSWORD_MIN_LENGTH)} This site uses your username and password to reopen the same account.`);
 }
 
 function renderLoginUsernameMismatchMarkup(username) {
@@ -1291,16 +1291,16 @@ function renderWorkspacePasswordRotationModal() {
         <form class="tip-form" data-password-rotation-form>
           <label>
             <span>New password</span>
-            <input name="password" type="password" maxlength="120" autocomplete="new-password" placeholder="••••••••" required>
+            <input name="password" type="password" maxlength="120" minlength="${PASSWORD_MIN_LENGTH}" autocomplete="new-password" placeholder="••••••••" required>
           </label>
           <label>
             <span>Confirm new password</span>
-            <input name="confirmPassword" type="password" maxlength="120" autocomplete="new-password" placeholder="••••••••" required>
+            <input name="confirmPassword" type="password" maxlength="120" minlength="${PASSWORD_MIN_LENGTH}" autocomplete="new-password" placeholder="••••••••" required>
           </label>
           <div class="button-row">
             <button class="button" type="submit" data-password-rotation-submit>${workspaceState.passwordRotationModal.pending ? "Changing..." : "Change password"}</button>
           </div>
-          <div class="status-box"${statusState ? ` data-state="${escapeAttribute(statusState)}"` : ""}>${escapeHtml(statusMessage || "Use a password you can keep. This account handle stays the same.")}</div>
+          <div class="status-box"${statusState ? ` data-state="${escapeAttribute(statusState)}"` : ""}>${escapeHtml(statusMessage || `Use a password you can keep. ${buildPasswordLengthMessage(PASSWORD_MIN_LENGTH)} This account handle stays the same.`)}</div>
         </form>
       </section>
     </div>
@@ -1360,14 +1360,6 @@ async function handlePasswordRotation(form) {
     const confirmPassword = String(formData.get("confirmPassword") || "");
     if (!password.trim()) throw new Error("Enter a new password.");
     if (password !== confirmPassword) throw new Error("Passwords did not match.");
-    const nextSecretKeyHex = await deriveSecretKeyHex(workspaceState.session.username, password);
-    const nextIdentity = deriveIdentity(nextSecretKeyHex);
-    if (rotationReusesIdentityKey(workspaceState.publicState, workspaceState.session, nextIdentity.pubkey)) {
-      throw createPasswordReuseError({
-        claimedUsername: workspaceState.session.username,
-        message: buildPasswordReuseMessage({ claimedUsername: workspaceState.session.username })
-      });
-    }
     workspaceState.passwordRotationModal = {
       ...(workspaceState.passwordRotationModal || {}),
       pending: true,
@@ -1379,25 +1371,6 @@ async function handlePasswordRotation(form) {
       status.textContent = "Changing password...";
       status.dataset.state = "pending";
     }
-    const publicState =
-      (await workspacePublicStateStore
-        .hydrate({
-          force: true,
-          reason: "password-rotation-check",
-          requestRepair: false
-        })
-        .catch(() => ({ value: workspaceState.publicState }))).value || workspaceState.publicState;
-    await assertNetworkSessionUsernameIntegrity(publicState, workspaceState.session, {
-      lookupUsers,
-      requireLookup: true,
-      action: "rotate this account"
-    });
-    if (rotationReusesIdentityKey(publicState, workspaceState.session, nextIdentity.pubkey)) {
-      throw createPasswordReuseError({
-        claimedUsername: workspaceState.session.username,
-        message: buildPasswordReuseMessage({ claimedUsername: workspaceState.session.username })
-      });
-    }
     const current = currentUser();
     const profilePayload = {
       displayName: current?.displayName || "",
@@ -1407,60 +1380,84 @@ async function handlePasswordRotation(form) {
       socialLinks: Array.isArray(current?.socialLinks) ? current.socialLinks : []
     };
     const priorSession = workspaceState.session;
-    const rotation = await rotateAccountCredentials(workspaceState.session, password, {
-      validateCurrentSession: async (session) => {
-        await assertNetworkSessionUsernameIntegrity(publicState, session, {
-          lookupUsers,
-          requireLookup: true,
-          action: "rotate this account"
+    const rotation = await rotateAccountPassword({
+      session: workspaceState.session,
+      nextPassword: password,
+      currentPublicState: workspaceState.publicState,
+      loadPublicState: async () =>
+        ((await workspacePublicStateStore
+          .hydrate({
+            force: true,
+            reason: "password-rotation-check",
+            requestRepair: false
+          })
+          .catch(() => ({ value: workspaceState.publicState }))).value || workspaceState.publicState),
+      deriveSecretKeyHex,
+      deriveIdentity,
+      assertNetworkSessionUsernameIntegrity,
+      lookupUsers,
+      rotateAccountCredentials,
+      saveSession,
+      rememberAccountRotation,
+      afterCommit: async ({ previousSession, rotation, publicState }) => {
+        const warnings = [];
+        const optimisticRotatedState = applyOptimisticIdentityRotation(
+          workspaceState.publicState,
+          previousSession.pubkey,
+          rotation.session.pubkey
+        );
+        workspaceState.publicState = workspacePublicStateStore.remember(optimisticRotatedState, {
+          notify: true,
+          reason: "password-rotation"
         });
+        if (currentUserIsAdmin() && workspaceState.siteKeyShare?.siteSecretKeyHex) {
+          try {
+            await publishAdminKeyShare(
+              previousSession.secretKeyHex,
+              rotation.session.pubkey,
+              workspaceState.siteKeyShare.siteSecretKeyHex
+            );
+            const optimisticShare = buildWorkspaceSiteKeyShare(
+              workspaceState.siteKeyShare.siteSecretKeyHex,
+              {
+                sender_pubkey: previousSession.pubkey,
+                shared_at: new Date().toISOString()
+              },
+              deriveIdentity
+            );
+            if (optimisticShare) {
+              workspaceState.siteKeyShares = mergeWorkspaceSiteKeyShares([optimisticShare], workspaceState.siteKeyShares);
+              persistCachedWorkspaceSiteKeyShares({
+                storageNamespace: SITE.nostr.storageNamespace,
+                viewerPubkey: rotation.session.pubkey,
+                shares: workspaceState.siteKeyShares
+              });
+            }
+          } catch (error) {
+            warnings.push(String(error?.message || error || "The inbox key share could not be refreshed yet."));
+          }
+        }
+        try {
+          await rebroadcastAccount(rotation.session, profilePayload);
+        } catch (error) {
+          warnings.push(String(error?.message || error || "The account profile could not be refreshed on the network yet."));
+        }
+        workspaceState.siteKeyShare = findWorkspaceSiteKeyShare(
+          workspaceState.siteKeyShares,
+          workspaceSelectors.resolveWorkspaceSitePubkey(publicState)
+        );
+        return { warnings };
       }
     });
-    const optimisticRotatedState = applyOptimisticIdentityRotation(
-      workspaceState.publicState,
-      priorSession.pubkey,
-      rotation.session.pubkey
-    );
-    workspaceState.publicState = workspacePublicStateStore.remember(optimisticRotatedState, {
-      notify: true,
-      reason: "password-rotation"
-    });
-    if (currentUserIsAdmin() && workspaceState.siteKeyShare?.siteSecretKeyHex) {
-      await publishAdminKeyShare(
-        priorSession.secretKeyHex,
-        rotation.session.pubkey,
-        workspaceState.siteKeyShare.siteSecretKeyHex
-      );
-      const optimisticShare = buildWorkspaceSiteKeyShare(
-        workspaceState.siteKeyShare.siteSecretKeyHex,
-        {
-          sender_pubkey: priorSession.pubkey,
-          shared_at: new Date().toISOString()
-        },
-        deriveIdentity
-      );
-      if (optimisticShare) {
-        workspaceState.siteKeyShares = mergeWorkspaceSiteKeyShares([optimisticShare], workspaceState.siteKeyShares);
-        persistCachedWorkspaceSiteKeyShares({
-          storageNamespace: SITE.nostr.storageNamespace,
-          viewerPubkey: rotation.session.pubkey,
-          shares: workspaceState.siteKeyShares
-        });
-      }
-    }
-    rememberAccountRotation(priorSession, rotation.session);
     workspaceState.session = rotation.session;
     workspaceState.viewer = { pubkey: rotation.session.pubkey };
-    await rebroadcastAccount(rotation.session, profilePayload);
-    workspaceState.siteKeyShare = findWorkspaceSiteKeyShare(
-      workspaceState.siteKeyShares,
-      workspaceSelectors.resolveWorkspaceSitePubkey(workspaceState.publicState)
-    );
     window.dispatchEvent(new CustomEvent("truecost:session-changed"));
     workspaceState.passwordRotationModal = {
       pending: false,
-      status: "Password updated. Refreshing account state...",
-      state: "success"
+      status: rotation.warnings?.length
+        ? `Password updated. ${rotation.warnings.join(" ")}`
+        : "Password updated. Refreshing account state...",
+      state: rotation.warnings?.length ? "warning" : "success"
     };
     renderWorkspace();
     window.setTimeout(() => {

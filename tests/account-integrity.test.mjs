@@ -207,6 +207,124 @@ test("network-backed username integrity rejects an older password from local acc
   );
 });
 
+test("local current account history suppresses provisional conflicts from older keys in the same account", async () => {
+  const storage = new Map();
+  globalThis.localStorage = {
+    getItem: (key) => storage.get(key) || null,
+    setItem: (key, value) => storage.set(key, value),
+    removeItem: (key) => storage.delete(key)
+  };
+  storage.set(
+    "truecost.v2.account-history",
+    JSON.stringify({
+      aux: {
+        username: "aux",
+        currentPubkey: "e".repeat(64),
+        knownPubkeys: ["a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64), "e".repeat(64)],
+        updatedAt: Date.now()
+      }
+    })
+  );
+
+  const integrity = resolveSessionUsernameConflict(
+    {
+      connected: true,
+      syncInfo: { remoteEventCount: 2, cachedEventCount: 0, mergedEventCount: 2 },
+      usernameRegistry: [
+        {
+          username: "aux",
+          owner_pubkey: "b".repeat(64),
+          claimant_pubkeys: ["b".repeat(64), "e".repeat(64)],
+          conflict: true
+        }
+      ],
+      users: [
+        {
+          pubkey: "e".repeat(64),
+          username: "",
+          claimedUsername: "aux",
+          usernameConflict: true,
+          usernameOwnerPubkey: "b".repeat(64)
+        }
+      ]
+    },
+    { username: "aux", pubkey: "e".repeat(64) }
+  );
+
+  assert.equal(integrity.conflict, false);
+  assert.equal(integrity.source, "history-current");
+
+  await assert.doesNotReject(
+    assertNetworkSessionUsernameIntegrity(
+      {
+        connected: true,
+        syncInfo: { remoteEventCount: 2, cachedEventCount: 0, mergedEventCount: 2 },
+        usernameRegistry: [],
+        users: []
+      },
+      { username: "aux", pubkey: "e".repeat(64) },
+      {
+        action: "rotate this account",
+        lookupUsers: async () => [
+          {
+            pubkey: "b".repeat(64),
+            username: "aux",
+            claimedUsername: "aux",
+            usernameConflict: false
+          }
+        ],
+        requireLookup: true
+      }
+    )
+  );
+});
+
+test("cached lookup conflicts from older keys do not poison the current local account head", () => {
+  const storage = new Map();
+  globalThis.localStorage = {
+    getItem: (key) => storage.get(key) || null,
+    setItem: (key, value) => storage.set(key, value),
+    removeItem: (key) => storage.delete(key)
+  };
+  storage.set(
+    "truecost.v2.account-history",
+    JSON.stringify({
+      aux: {
+        username: "aux",
+        currentPubkey: "e".repeat(64),
+        knownPubkeys: ["a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64), "e".repeat(64)],
+        updatedAt: Date.now()
+      }
+    })
+  );
+  storage.set(
+    "truecost.v2.username-integrity",
+    JSON.stringify({
+      [`aux:${"e".repeat(64)}`]: {
+        conflict: true,
+        claimedUsername: "aux",
+        ownerPubkey: "b".repeat(64),
+        checkedAt: Date.now(),
+        source: "lookup"
+      }
+    })
+  );
+
+  const integrity = resolveSessionUsernameConflict(
+    {
+      connected: false,
+      syncInfo: { remoteEventCount: 0, cachedEventCount: 0, mergedEventCount: 0 },
+      usernameRegistry: [],
+      users: []
+    },
+    { username: "aux", pubkey: "e".repeat(64) }
+  );
+
+  assert.equal(integrity.conflict, false);
+  assert.equal(integrity.source, "history-current");
+  assert.equal(readCachedSessionUsernameIntegrity({ username: "aux", pubkey: "e".repeat(64) }), null);
+});
+
 test("session username integrity messaging names the taken handle", () => {
   const message = buildUsernameConflictMessage({
     claimedUsername: "aux",
