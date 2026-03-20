@@ -432,6 +432,7 @@ h3 {
 }
 
 .nav-group.is-open .nav-group__panel,
+.nav-group.is-current .nav-group__panel,
 .profile-menu.is-open .profile-menu__panel {
   display: grid;
 }

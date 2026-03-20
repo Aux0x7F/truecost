@@ -518,6 +518,7 @@ h3 {
 }
 
 .nav-group.is-open .nav-group__panel,
+.nav-group.is-current .nav-group__panel,
 .profile-menu.is-open .profile-menu__panel {
   display: grid;
 }
@@ -2124,7 +2125,7 @@ h3 {
 }
 
 .tip-form input[type="file"]::file-selector-button:hover,
-.tip-form input[type="file"]::file-selector-button:focus-visible {
+.tip-form input[type="file"]:focus-visible::file-selector-button {
   background: rgba(156, 29, 24, 0.12);
   outline: none;
 }
