@@ -53,6 +53,7 @@ import {
 } from "./core/rendering.js";
 import { createContentPostStore } from "./core/posts-store.js";
 import { createViewerController } from "./core/viewer-controller.js";
+import { graphEntityHref } from "./core/graph-wiki.js";
 import {
   archiveEntitiesForEntries,
   destroyLeafletPreview,
@@ -69,15 +70,18 @@ import {
 } from "./surfaces/map.js";
 import { createStaticPageEditSurface } from "./surfaces/static-page-edit.js";
 import { createArchivePageFeature } from "./features/archive-page.js";
+import { createGraphPageFeature } from "./features/graph-page.js";
 import { createMapPageFeature } from "./features/map-page.js";
 import { createMarkdownPageFeature } from "./features/markdown-page.js";
 import { createReviewWorkflow } from "./features/review-workflow.js";
 import { createSiteShellFeature } from "./features/site-shell.js";
 import { createSiteRuntime } from "./features/site-runtime.js";
+import { createWikiPageFeature } from "./features/wiki-page.js";
 const NAV_KEYS = {
   home: ["home"],
-  explore: ["investigations", "investigation", "editor", "map"],
+  explore: ["investigations", "investigation", "editor", "map", "graph", "wiki"],
   investigations: ["investigations", "investigation", "editor"],
+  graph: ["graph", "wiki"],
   guide: ["guide"],
   submit: ["submit"],
   "get-involved": ["get-involved"],
@@ -225,7 +229,8 @@ const markdownPageFeature = createMarkdownPageFeature({
   renderMarkedHtml,
   fetchText,
   slugify,
-  enrichEntityReferences
+  enrichEntityReferences,
+  entityHrefBuilder: (slug) => graphEntityHref(slug)
 });
 
 const mapPageFeature = createMapPageFeature({
@@ -241,6 +246,22 @@ const mapPageFeature = createMapPageFeature({
   renderMapPageSurface,
   renderError,
   renderLoadingState
+});
+
+const graphPageFeature = createGraphPageFeature({
+  state,
+  fetchJson,
+  postsStore,
+  getPublicState: (force) => appRuntime.getPublicState(force),
+  viewerController
+});
+
+const wikiPageFeature = createWikiPageFeature({
+  state,
+  fetchJson,
+  postsStore,
+  getPublicState: (force) => appRuntime.getPublicState(force),
+  viewerController
 });
 
 siteShellFeature = createSiteShellFeature({
@@ -336,14 +357,18 @@ document.addEventListener("DOMContentLoaded", () => {
   void investigationDetailSurface.init();
   markdownPageFeature.mount();
   mapPageFeature.mount();
+  void graphPageFeature.mount();
+  void wikiPageFeature.mount();
   void staticPageEditSurface.init();
   appRuntime.connectFeatures({
     archivePageFeature,
+    graphPageFeature,
     investigationDetailSurface,
     markdownPageFeature,
     mapPageFeature,
     siteShellFeature,
-    staticPageEditSurface
+    staticPageEditSurface,
+    wikiPageFeature
   });
   appRuntime.start();
 });

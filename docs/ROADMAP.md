@@ -29,9 +29,17 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - Site fonts are now self-hosted, so public pages no longer need client requests to Google for typography.
 - The workspace controller has been reduced again: admin shell rendering, tab state, inbox/chat flow, site-key handling, selectors, and mutation handlers now live in dedicated workspace modules instead of one large page controller.
 - Mounted workspace/admin, submit, and editor shells now use observed region updates so unrelated async state changes do not replace active form roots or open overlays.
+- A first seeded graph/wiki foundation is now in place:
+  - `graph.html` for graph exploration
+  - `wiki.html` for entity wiki pages and wiki directory search
+  - shared graph model and seeded entity/relationship data
+  - admin-only local draft entities and draft relationships for early product testing
 
 ## Near Term
 
+- Replace the seeded/local-only graph draft layer with published relationship records, review flow, and admin-only proposed relationship extraction from investigation drafts.
+- Deepen the graph explorer so layout, filters, and citations feel like a research tool instead of only a seeded proof of concept.
+- Expand the wiki rail and wiki administration so entity creation and relationship management replace the remaining older entity-management surfaces.
 - Expand the normalized collaborative shell into editor presence, quote-linked discussion, and broader live-unit coverage for entities and the archive.
 - Keep tightening the remaining large CSS families, especially `02-content.css`, `06-workspace.css`, and the still-heavy shared foundation layer, so convergence continues after the bundled-first-paint pass.
 - Continue the same direct reduction work on the remaining controller hotspots, with the account/profile/upload section of `admin.js` now the main target after the latest workspace extraction pass.
@@ -53,7 +61,7 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 
 - Expand transparent page editing beyond hero sections and add stronger review/history handling around queued page snapshots.
 - Deepen image handling inside the document editor, including richer placement controls and polished publish-path validation through the existing blob workflow.
-- Add a navigable entity wiki that can enrich facilities, companies, agencies, and related records with expandable fields, history, clearer cross-links into investigations and the map, and a richer type / class / taxonomy model.
+- Turn the seeded entity wiki and graph explorer into a full evidence-backed research graph with richer relationship types, explicit qualifiers and time bounds, better graph visualization, and deeper type / class / taxonomy coverage.
 - Add collaborative editing for investigations and wiki-like records so more than one approved user can work in the same unit without relying only on queued revisions and review handoffs.
 - Add stronger map and archive views as the entity and location dataset grows.
 - Improve collaboration tools for volunteers, including clearer review states and richer discussion around submissions.

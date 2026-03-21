@@ -89,6 +89,7 @@ export function createMapPageFeature({
           ${Number.isFinite(entity.lat) && Number.isFinite(entity.lng) ? `<span class="tag">${escapeHtml(entity.lat.toFixed(2))}, ${escapeHtml(entity.lng.toFixed(2))}</span>` : ""}
         </div>
         <div class="entity-card__links">
+          <a href="./wiki.html?entity=${encodeURIComponent(entity.slug)}">Open wiki</a>
           ${
             posts.length
               ? posts

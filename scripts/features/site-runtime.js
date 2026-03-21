@@ -149,6 +149,14 @@ export function createSiteRuntime({
       await features.markdownPageFeature?.refreshVisibleCommentThread?.();
     }
 
+    if (document.querySelector("[data-graph-page]")) {
+      await features.graphPageFeature?.refreshVisibleGraph?.();
+    }
+
+    if (document.querySelector("[data-wiki-page]")) {
+      await features.wikiPageFeature?.refreshVisibleWiki?.();
+    }
+
     window.dispatchEvent(new CustomEvent("truecost:public-state-updated", {
       detail: {
         publicState: state.publicState
@@ -199,6 +207,8 @@ export function createSiteRuntime({
         "./index.html",
         "./investigations.html",
         "./map.html",
+        "./graph.html",
+        "./wiki.html",
         "./about.html",
         "./guide.html",
         "./submit.html",
@@ -212,6 +222,7 @@ export function createSiteRuntime({
         fetch(route, { cache: "force-cache" }).catch(() => null);
       }
       fetch("./content/investigations/index.json", { cache: "force-cache" }).catch(() => null);
+      fetch("./content/graph/wiki-seed.json", { cache: "force-cache" }).catch(() => null);
       fetch("./content/pages/guide.md", { cache: "force-cache" }).catch(() => null);
       fetch("./vendor/leaflet.js", { cache: "force-cache" }).catch(() => null);
       fetch("./vendor/leaflet.css", { cache: "force-cache" }).catch(() => null);

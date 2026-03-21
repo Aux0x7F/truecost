@@ -141,12 +141,14 @@ The units already targeted for collaboration are:
 - static pages such as `home`, `about`, `guide`, and other editable public sections
 - investigations
 - entity records and eventual wiki-like enrichment
+- evidence-graph relationships and admin-only draft relationship overlays layered onto entity records
 
 Recommended document ids:
 
 - `page:<page-id>`
 - `post:<slug-or-id>`
 - `entity:<entity-id>`
+- `relationship:<source>:<type>:<target>` when explicit relationship records graduate from local draft overlay into shared state
 
 Each unit should collaborate independently. The site should not use one giant shared document.
 
@@ -162,11 +164,16 @@ Today, True Cost already has:
 - trusted static-page live updates applied after the static baseline loads
 - trusted investigation live updates applied in the editor and detail view on top of the static or draft baseline
 - cached-first admin workspace boot, including admin tabs and inbox-aware state before relay sync completes
+- a seeded evidence-graph and wiki layer:
+  - `graph.html` for high-level graph exploration
+  - `wiki.html` for entity wiki pages and directory search
+  - admin-only local draft entities and draft relationships layered over the shared graph state until real relationship publishing lands
 
 Today, True Cost does not yet have:
 
 - archive-wide and entity-record live overlay coverage
 - periodic PR cadence driven from the live collaborative unit layer instead of the older review queue
+- published shared relationship records and relationship review workflow beyond the current local draft graph overlay
 
 ## Testing contract
 

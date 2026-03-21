@@ -1,0 +1,254 @@
+.graph-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(280px, 0.95fr);
+  gap: 1.2rem;
+  align-items: start;
+}
+
+.graph-board-shell {
+  display: grid;
+  gap: 1rem;
+  min-height: 48rem;
+}
+
+.graph-board {
+  min-height: 42rem;
+  border-radius: calc(var(--radius) - 4px);
+  border: 1px solid rgba(18, 18, 18, 0.08);
+  background:
+    radial-gradient(circle at 20% 10%, rgba(156, 29, 24, 0.08), transparent 24rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(247, 243, 237, 0.92));
+  padding: 1rem;
+}
+
+.graph-canvas {
+  width: 100%;
+  height: 100%;
+  min-height: 40rem;
+}
+
+.graph-edge {
+  stroke: rgba(18, 18, 18, 0.16);
+  stroke-linecap: round;
+  transition: stroke 180ms ease, opacity 180ms ease;
+}
+
+.graph-edge--citation {
+  stroke: rgba(156, 29, 24, 0.18);
+  stroke-dasharray: 8 9;
+}
+
+.graph-edge.is-draft {
+  stroke: rgba(156, 29, 24, 0.42);
+}
+
+.graph-node {
+  cursor: pointer;
+}
+
+.graph-node circle {
+  fill: rgba(255, 255, 255, 0.92);
+  stroke: rgba(18, 18, 18, 0.12);
+  stroke-width: 2px;
+  transition: transform 180ms ease, fill 180ms ease, stroke 180ms ease, filter 180ms ease;
+}
+
+.graph-node text {
+  fill: var(--ink);
+  font: 600 0.9rem/1.2 "IBM Plex Sans", sans-serif;
+}
+
+.graph-node--industry circle {
+  fill: rgba(156, 29, 24, 0.12);
+}
+
+.graph-node--company circle {
+  fill: rgba(18, 18, 18, 0.06);
+}
+
+.graph-node--investigation circle {
+  fill: rgba(18, 18, 18, 0.9);
+  stroke: rgba(255, 255, 255, 0.2);
+}
+
+.graph-node--investigation text {
+  fill: var(--ink);
+}
+
+.graph-node.is-highlighted circle,
+.graph-node:hover circle,
+.graph-node:focus-visible circle {
+  stroke: rgba(156, 29, 24, 0.72);
+  transform: scale(1.06);
+  filter: drop-shadow(0 14px 26px rgba(18, 18, 18, 0.12));
+}
+
+.graph-node.is-selected circle {
+  fill: rgba(156, 29, 24, 0.16);
+  stroke: rgba(156, 29, 24, 0.88);
+  stroke-width: 3px;
+}
+
+.graph-node__label {
+  font-size: 0.88rem;
+}
+
+.graph-rail {
+  position: sticky;
+  top: var(--rail-stick-top);
+  max-height: var(--rail-max-height);
+  overflow: auto;
+}
+
+.graph-rail__stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.graph-rail__panel {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.graph-filter-row {
+  gap: 0.55rem;
+}
+
+.tag--button {
+  border: 0;
+  cursor: pointer;
+}
+
+.tag--button.is-selected {
+  background: var(--accent-gradient);
+  color: #fff;
+}
+
+.graph-summary-card,
+.wiki-rail__list-item {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.graph-summary-card__image,
+.wiki-article__image {
+  width: 100%;
+  border-radius: calc(var(--radius) - 8px);
+  object-fit: cover;
+}
+
+.graph-summary-card__links,
+.wiki-directory__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+}
+
+.metric-inline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.metric-inline strong {
+  color: var(--ink);
+  font-size: 1.08rem;
+}
+
+.metric-inline span {
+  color: var(--ink-soft);
+  font-size: 0.92rem;
+}
+
+.graph-admin-form {
+  gap: 1rem;
+}
+
+.graph-admin-form__actions {
+  display: flex;
+  justify-content: end;
+}
+
+.wiki-layout {
+  align-items: start;
+}
+
+.wiki-index,
+.wiki-article {
+  display: grid;
+  gap: 1rem;
+}
+
+.wiki-index__head {
+  margin-bottom: 0.2rem;
+}
+
+.wiki-directory {
+  display: grid;
+  gap: 1rem;
+}
+
+.wiki-directory__card {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.wiki-directory__card.is-draft,
+.wiki-rail__list-item.is-draft {
+  background: rgba(156, 29, 24, 0.04);
+}
+
+.wiki-directory__head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.wiki-directory__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  color: var(--ink-soft);
+  font-size: 0.95rem;
+}
+
+.wiki-article__body {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.wiki-article__taxonomy {
+  gap: 0.6rem;
+}
+
+@media (max-width: 1080px) {
+  .graph-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .graph-rail {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+@media (max-width: 720px) {
+  .graph-board {
+    min-height: 28rem;
+    padding: 0.6rem;
+  }
+
+  .graph-canvas {
+    min-height: 26rem;
+  }
+
+  .wiki-directory__head,
+  .metric-inline {
+    display: grid;
+    gap: 0.35rem;
+    justify-content: start;
+  }
+}

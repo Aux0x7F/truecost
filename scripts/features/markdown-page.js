@@ -46,7 +46,8 @@ export function createMarkdownPageFeature({
   renderMarkedHtml,
   fetchText,
   slugify,
-  enrichEntityReferences
+  enrichEntityReferences,
+  entityHrefBuilder
 } = {}) {
   function mount() {
     void initMarkdownArticles();
@@ -184,7 +185,9 @@ export function createMarkdownPageFeature({
 
   function enrichArticleEntities(scope, publicState) {
     if (!scope || !publicState?.approvedEntities?.length) return;
-    enrichEntityReferences(scope, publicState.approvedEntities);
+    enrichEntityReferences(scope, publicState.approvedEntities, {
+      hrefBuilder: typeof entityHrefBuilder === "function" ? entityHrefBuilder : undefined
+    });
   }
 
   function bindCommentComposer(panel, postSlug, usernameIntegrity, removedAccount, staleSession) {

@@ -19,7 +19,7 @@ Component behavior that spans a whole UI family should live in `scripts/surfaces
 
 - The site header is static-first and readable before JavaScript enhancement.
 - The mobile nav toggle must have a discernible accessible name in HTML.
-- The primary public nav groups archive browsing under `Explore`, with `Investigations` and `Map` as child destinations.
+- The primary public nav groups archive browsing under `Explore`, with `Investigations`, `Map`, and `Graph` as child destinations.
 - The nav drawer is an overlay surface:
   - the drawer scrolls
   - the page behind it does not
@@ -45,6 +45,21 @@ Component behavior that spans a whole UI family should live in `scripts/surfaces
 - Rails align to the top of the main content they support.
 - Rails scroll internally when they exceed the viewport.
 - On mobile, control rails move above results when they drive the result set.
+
+### Graph and wiki rails
+
+- `graph.html` owns the graph-explorer rail:
+  - search highlights nodes in the current graph
+  - filters reduce the current graph
+  - the current-node tile shows summary, citations, and open links
+- `wiki.html` owns the wiki rail:
+  - quick info
+  - relationships
+  - related investigations
+  - citations
+  - open-in-graph link
+- Graph explorer and wiki pages should share one evidence-graph source of truth instead of duplicating entity and relationship logic in page controllers.
+- Admin-only draft entities and draft relationships currently live behind modal workflows layered over the shared graph view until real relationship publishing lands.
 
 ## Search and filtering
 
@@ -209,6 +224,10 @@ Current extraction targets:
 - `scripts/surfaces/workspace-review-log.js`
 - `scripts/surfaces/map.js`
 - `scripts/surfaces/editor-shell.js`
+- `scripts/features/graph-page.js`
+- `scripts/features/wiki-page.js`
+- `scripts/surfaces/graph-explorer.js`
+- `scripts/surfaces/wiki-page.js`
 
 The next convergence targets are:
 

@@ -7,7 +7,8 @@ export const SITE = Object.freeze({
   youtubeUrl: "https://youtube.com/@truecostproject",
   contactEmail: "tips@example.org",
   content: {
-    seedEntitiesPath: ""
+    seedEntitiesPath: "",
+    graphSeedPath: "./content/graph/wiki-seed.json"
   },
   blobs: {
     baseUrl: "https://blossom.band",
@@ -63,7 +64,8 @@ export const SITE = Object.freeze({
       collabDocument: 34144,
       publicStateRequest: 34145,
       commentVote: 34146,
-      identityRotation: 34147
+      identityRotation: 34147,
+      relationship: 34148
     }
   }
 });

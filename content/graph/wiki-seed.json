@@ -1,0 +1,238 @@
+{
+  "entities": [
+    {
+      "slug": "animal-agriculture",
+      "name": "Animal Agriculture",
+      "type": "industry",
+      "summary": "A top-level industry node used to group facilities, companies, and investigations that trace how public money and records move through animal-agriculture supply chains.",
+      "body": "Animal agriculture is the broad research frame for this demo graph. It is the high-level node that ties together companies, facilities, agencies, and investigations so the graph starts with a readable top layer instead of every granular record showing at once.",
+      "taxonomy": {
+        "domain": "public-records",
+        "industry": "animal-agriculture"
+      },
+      "quickFacts": [
+        { "label": "Node class", "value": "Industry" },
+        { "label": "Default graph layer", "value": "High-level" }
+      ],
+      "status": "approved"
+    },
+    {
+      "slug": "north-valley-foods",
+      "name": "North Valley Foods",
+      "type": "company",
+      "summary": "Holding-company style node for the placeholder processing campus and its related investigation trail.",
+      "body": "North Valley Foods is the parent company in this seeded demo. It exists so ownership and facility-level records can be separated cleanly in the wiki instead of collapsing every fact into one map marker.",
+      "location": "Phoenix, Arizona",
+      "taxonomy": {
+        "industry": "animal-agriculture",
+        "stage": "processing"
+      },
+      "quickFacts": [
+        { "label": "HQ", "value": "Phoenix, Arizona" },
+        { "label": "Role", "value": "Operator / owner" }
+      ],
+      "status": "approved"
+    },
+    {
+      "slug": "county-line-logistics",
+      "name": "County Line Logistics",
+      "type": "company",
+      "summary": "Logistics company seeded to show route, warehousing, and transport relationships in the graph.",
+      "body": "County Line Logistics gives the demo graph a transport-layer company, which lets the graph show vertical relationships between processing and movement instead of only place-to-place citations.",
+      "location": "Tulare County, California",
+      "taxonomy": {
+        "industry": "animal-agriculture",
+        "stage": "transport"
+      },
+      "quickFacts": [
+        { "label": "HQ", "value": "Tulare County, California" },
+        { "label": "Role", "value": "Transport operator" }
+      ],
+      "status": "approved"
+    },
+    {
+      "slug": "north-valley-processing-campus",
+      "name": "North Valley Processing Campus",
+      "type": "facility",
+      "summary": "Processing site used in the placeholder investigation set and one of the main anchor nodes for the demo graph.",
+      "body": "North Valley Processing Campus is the main seeded facility for the placeholder investigations. In the wiki view, it works as the first example of a node that has citations, relationships, location context, and room for a fuller article body.",
+      "location": "Phoenix, Arizona",
+      "lat": 33.4484,
+      "lng": -112.074,
+      "taxonomy": {
+        "industry": "animal-agriculture",
+        "stage": "processing",
+        "facility_type": "campus"
+      },
+      "quickFacts": [
+        { "label": "County", "value": "Maricopa" },
+        { "label": "Facility type", "value": "Processing campus" }
+      ],
+      "status": "approved"
+    },
+    {
+      "slug": "county-line-logistics-yard",
+      "name": "County Line Logistics Yard",
+      "type": "facility",
+      "summary": "Outbound logistics site seeded to show linked investigations, route edges, and admin-only draft relationships.",
+      "body": "County Line Logistics Yard gives the graph a distribution-layer facility. It is intentionally cited by multiple placeholder investigations so the graph and wiki rail can show a useful investigations count and relationship cluster.",
+      "location": "Tulare County, California",
+      "lat": 36.2077,
+      "lng": -119.3473,
+      "taxonomy": {
+        "industry": "animal-agriculture",
+        "stage": "transport",
+        "facility_type": "yard"
+      },
+      "quickFacts": [
+        { "label": "County", "value": "Tulare" },
+        { "label": "Facility type", "value": "Logistics yard" }
+      ],
+      "status": "approved"
+    },
+    {
+      "slug": "eastern-county-field-office",
+      "name": "Eastern County Field Office",
+      "type": "agency",
+      "summary": "Public records office node used to show that agencies and paper trails can live in the same graph as companies and facilities.",
+      "body": "Eastern County Field Office is the seeded agency node for this demo. It exists to show that the wiki can connect agencies, records holdings, and facilities without forcing every relation into a purely commercial graph.",
+      "location": "Modesto, California",
+      "lat": 37.6391,
+      "lng": -120.9969,
+      "taxonomy": {
+        "domain": "public-records",
+        "agency_type": "field-office"
+      },
+      "quickFacts": [
+        { "label": "Jurisdiction", "value": "County" },
+        { "label": "Role", "value": "Records office" }
+      ],
+      "status": "approved"
+    },
+    {
+      "slug": "phoenix-cold-storage",
+      "name": "Phoenix Cold Storage",
+      "type": "facility",
+      "summary": "Draft warehouse node used to show admin-only draft relationships before approval.",
+      "body": "Phoenix Cold Storage is intentionally draft-only right now. It exists so admin sessions can see a draft relationship overlay in the graph without exposing that edge to public users yet.",
+      "location": "Phoenix, Arizona",
+      "taxonomy": {
+        "industry": "animal-agriculture",
+        "stage": "warehousing"
+      },
+      "status": "draft",
+      "visibility": "draft"
+    }
+  ],
+  "relationships": [
+    {
+      "id": "rel:animal-agriculture:industry-participant:north-valley-foods",
+      "source": "animal-agriculture",
+      "target": "north-valley-foods",
+      "type": "industry_participant",
+      "label": "Industry participant",
+      "summary": "North Valley Foods is one of the seeded company nodes within the broader animal-agriculture graph.",
+      "weight": 3,
+      "evidence": [
+        {
+          "investigation": "placeholder-turnstile",
+          "note": "Used as the parent company for the seeded campus and investigation links."
+        }
+      ],
+      "visibility": "public"
+    },
+    {
+      "id": "rel:north-valley-foods:owns:north-valley-processing-campus",
+      "source": "north-valley-foods",
+      "target": "north-valley-processing-campus",
+      "type": "owns",
+      "label": "Owns",
+      "summary": "Parent company to seeded processing facility.",
+      "weight": 4,
+      "evidence": [
+        {
+          "investigation": "placeholder-turnstile",
+          "note": "Ownership appears in placeholder records narrative."
+        }
+      ],
+      "visibility": "public"
+    },
+    {
+      "id": "rel:north-valley-processing-campus:transports-to:county-line-logistics-yard",
+      "source": "north-valley-processing-campus",
+      "target": "county-line-logistics-yard",
+      "type": "transports_to",
+      "label": "Transports to",
+      "summary": "Outbound movement from processing campus to logistics yard.",
+      "qualifiers": {
+        "route": "County Line corridor",
+        "mode": "refrigerated truck"
+      },
+      "weight": 5,
+      "evidence": [
+        {
+          "investigation": "placeholder-turnstile",
+          "note": "The placeholder investigation cites both the campus and the yard together."
+        },
+        {
+          "investigation": "lorem-ipsum-goose",
+          "note": "Secondary placeholder records mention the yard as the next hop."
+        }
+      ],
+      "visibility": "public"
+    },
+    {
+      "id": "rel:county-line-logistics:operates:county-line-logistics-yard",
+      "source": "county-line-logistics",
+      "target": "county-line-logistics-yard",
+      "type": "operates",
+      "label": "Operates",
+      "summary": "County Line Logistics operates the seeded logistics yard.",
+      "weight": 3,
+      "evidence": [
+        {
+          "investigation": "lorem-ipsum-goose",
+          "note": "Placeholder transport records tie the operator to the yard."
+        }
+      ],
+      "visibility": "public"
+    },
+    {
+      "id": "rel:eastern-county-field-office:records-agency-for:north-valley-processing-campus",
+      "source": "eastern-county-field-office",
+      "target": "north-valley-processing-campus",
+      "type": "records_agency_for",
+      "label": "Records agency for",
+      "summary": "The field office is the seeded records holder for this facility trail.",
+      "weight": 2,
+      "evidence": [
+        {
+          "investigation": "phantom-tofu-ledger",
+          "note": "Placeholder agency/facility tie used to show public-records relationships."
+        }
+      ],
+      "visibility": "public"
+    }
+  ],
+  "draft_relationships": [
+    {
+      "id": "draft:county-line-logistics-yard:warehouses-for:phoenix-cold-storage",
+      "source": "county-line-logistics-yard",
+      "target": "phoenix-cold-storage",
+      "type": "warehouses_for",
+      "label": "Warehouses for",
+      "summary": "Draft-only warehouse relationship pending admin review.",
+      "qualifiers": {
+        "status": "draft review"
+      },
+      "weight": 2,
+      "evidence": [
+        {
+          "investigation": "placeholder-turnstile",
+          "note": "Draft interpretation from seeded investigation snapshot."
+        }
+      ],
+      "visibility": "draft"
+    }
+  ]
+}
