@@ -165,9 +165,9 @@ export function createWorkspaceRuntime({
     }
 
     restoreCachedAdminState();
+    state.activeTab = accessController.chooseInitialTab(state.activeTab);
 
-    if (state.publicState) {
-      state.activeTab = accessController.chooseInitialTab(state.activeTab);
+    if (state.publicState || accessController.isAdmin()) {
       hooks.renderWorkspace({ soft: true });
     } else {
       hooks.renderWorkspaceLoading("Looking up workspace...");
