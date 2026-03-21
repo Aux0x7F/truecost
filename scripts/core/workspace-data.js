@@ -25,14 +25,27 @@ export function filterVisibleWorkspaceUsers({
   publicState,
   query = "",
   karmaBucket = "",
+  role = "",
   resolveWorkspaceUserKarma = () => 0,
   karmaBucketMatches = () => true
 } = {}) {
   const cleanQuery = String(query || "").trim().toLowerCase();
   const cleanKarmaBucket = String(karmaBucket || "").trim().toLowerCase();
-  return (publicState?.users || []).filter((user) => {
+  const cleanRole = String(role || "").trim().toLowerCase();
+  const activeUsers = Array.isArray(publicState?.users) ? publicState.users : [];
+  const removedUsers = (Array.isArray(publicState?.removedUsers) ? publicState.removedUsers : []).map((user) => ({
+    ...user,
+    removed: true,
+    isAdmin: false
+  }));
+  const sourceUsers = cleanRole === "removed" ? removedUsers : activeUsers;
+  return sourceUsers.filter((user) => {
+    if (cleanRole === "admin" && !user.isAdmin) return false;
+    if (cleanRole === "member" && (user.isAdmin || user.removed)) return false;
+    if (cleanRole === "removed" && !user.removed) return false;
     const visible =
       user.isAdmin ||
+      user.removed ||
       user.submissionCount > 0 ||
       user.commentCount > 0 ||
       user.moderation ||

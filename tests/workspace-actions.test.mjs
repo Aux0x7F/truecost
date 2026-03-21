@@ -88,6 +88,22 @@ test("renderLookupCandidate stays action-oriented without duplicating roster log
   assert.doesNotMatch(markup, />@author</);
 });
 
+test("renderUserCard marks removed users and suppresses normal management actions", () => {
+  const markup = renderUserCard(
+    {
+      pubkey: "user-3",
+      claimedUsername: "ghost",
+      displayName: "Ghost",
+      removed: true
+    },
+    { publicState: { rootAdminPubkey: "root" }, viewer: { pubkey: "viewer" } },
+    deps()
+  );
+
+  assert.match(markup, /removed/);
+  assert.doesNotMatch(markup, /Take action/);
+});
+
 test("renderSubmissionCard keeps submission controls in the action surface", () => {
   const markup = renderSubmissionCard(
     {

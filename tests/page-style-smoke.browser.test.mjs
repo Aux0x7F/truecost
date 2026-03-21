@@ -86,6 +86,21 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
     assert.equal(expandedMapNavMetrics.mapIsCurrent, true, "map nav item should stay current when Explore opens");
     assert.equal(expandedMapNavMetrics.panelDisplay, "grid", "Explore should open when toggled");
 
+    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Explore" }).click();
+    const homeMapLinkState = await page.evaluate(() => {
+      const mapLink = Array.from(document.querySelectorAll(".nav-group__panel a")).find((link) =>
+        link.textContent?.trim() === "Map"
+      );
+      return {
+        ariaDisabled: mapLink?.getAttribute("aria-disabled") || "",
+        isDisabled: mapLink?.classList.contains("is-disabled") || false
+      };
+    });
+
+    assert.equal(homeMapLinkState.ariaDisabled, "", "map should stay clickable before shared state finishes hydrating");
+    assert.equal(homeMapLinkState.isDisabled, false, "map should not render as disabled in Explore");
+
     await seedAdminSession(page, { port, secretKeyHex, pubkey });
     await page.goto(`http://127.0.0.1:${port}/admin.html?tab=dashboard`, { waitUntil: "networkidle" });
     await page.waitForSelector("[data-workspace-pane]", { timeout: 15000 });

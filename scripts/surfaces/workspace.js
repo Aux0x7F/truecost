@@ -251,12 +251,20 @@ function renderUsersPane(workspaceState, deps) {
               : null,
             loading: workspaceState.userLookupLoading
           })}
-          <label class="workspace-select">
-            <span class="sr-only">Filter users by karma</span>
-            <select data-user-filter-karma>
-              ${deps.renderKarmaSelectOptions(workspaceState.userFilters.karma)}
-            </select>
-          </label>
+          <div class="workspace-filter-bar workspace-filter-bar--duo">
+            <label class="workspace-select">
+              <span class="sr-only">Filter users by karma</span>
+              <select data-user-filter-karma>
+                ${deps.renderKarmaSelectOptions(workspaceState.userFilters.karma)}
+              </select>
+            </label>
+            <label class="workspace-select">
+              <span class="sr-only">Filter users by role</span>
+              <select data-user-filter-role>
+                ${deps.renderRoleSelectOptions(workspaceState.userFilters.role)}
+              </select>
+            </label>
+          </div>
           ${
             workspaceState.userDirectStatus
               ? `<div class="status-box">${deps.escapeHtml(workspaceState.userDirectStatus)}</div>`

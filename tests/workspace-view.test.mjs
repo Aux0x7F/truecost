@@ -97,6 +97,37 @@ test("workspace view does not render a fake login tab and keeps the profile hand
   assert.match(profileView.paneMarkup, /data-password-min-length="8"/);
 });
 
+test("workspace view renders both karma and role filters in the user rail", () => {
+  const usersView = renderWorkspaceView({
+    workspaceState: {
+      session: { username: "aux" },
+      activeTab: "users",
+      viewer: { pubkey: "a".repeat(64) },
+      publicState: {},
+      userFilters: { karma: "", role: "" },
+      userLookupQuery: "",
+      userLookupLoading: false,
+      userDirectStatus: ""
+    },
+    deps: {
+      currentUserIsAdmin: () => true,
+      currentSessionUsernameConflict: () => ({ conflict: false }),
+      visibleWorkspaceUsers: () => [],
+      renderUserCard: () => "",
+      renderSearchField: () => '<div data-search-field></div>',
+      renderKarmaSelectOptions: () => '<option value="">All karma</option>',
+      renderRoleSelectOptions: () => '<option value="">All roles</option><option value="removed">Removed</option>',
+      renderLookupCandidate: () => "",
+      renderUserStatsCard: () => "",
+      escapeHtml: (value) => String(value || "")
+    }
+  });
+
+  assert.match(usersView.paneMarkup, /data-user-filter-karma/);
+  assert.match(usersView.paneMarkup, /data-user-filter-role/);
+  assert.match(usersView.paneMarkup, /Removed/);
+});
+
 test("workspace view includes the password rotation modal in workspace overlays when provided", () => {
   const profileView = renderWorkspaceView({
     workspaceState: {

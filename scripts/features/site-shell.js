@@ -76,7 +76,7 @@ export function createSiteShellFeature({
       notificationsLoading: notificationState.loading,
       profileMenuOpen: state.navigationUi.profileMenuOpen,
       notificationsExpanded,
-      mapEnabled: Boolean(state.publicState?.connected),
+      mapEnabled: true,
       deps: {
         countUnreadNotifications: countNotificationItems,
         escapeAttribute,

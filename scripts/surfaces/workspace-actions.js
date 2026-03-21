@@ -37,7 +37,8 @@ export function renderUserStatsCard(workspaceState, deps = {}) {
 
 export function renderUserCard(user, workspaceState, deps = {}) {
   const isRootAdmin = user.pubkey === workspaceState.publicState?.rootAdminPubkey;
-  const canManage = deps.currentUserIsAdmin() && !isRootAdmin && user.pubkey !== workspaceState.viewer?.pubkey;
+  const isRemoved = Boolean(user?.removed);
+  const canManage = deps.currentUserIsAdmin() && !isRootAdmin && !isRemoved && user.pubkey !== workspaceState.viewer?.pubkey;
   const submissionHref = `./investigations.html?author=${encodeURIComponent(user.username || user.pubkey)}`;
   const commentHref = `./admin.html?tab=comments&user=${encodeURIComponent(user.username || user.pubkey)}`;
   const karma = deps.resolveWorkspaceUserKarma(user.pubkey);
@@ -54,6 +55,7 @@ export function renderUserCard(user, workspaceState, deps = {}) {
           ${usernameConflict ? `<span class="tag tag--danger">Username conflict</span>` : ""}
           <span class="tag">Karma ${deps.formatWorkspaceKarma(karma)}</span>
           ${user.isAdmin ? `<span class="tag">admin</span>` : ""}
+          ${isRemoved ? `<span class="tag">removed</span>` : ""}
           ${user.moderation ? `<span class="tag">${escapeHtml(user.moderation.action)}</span>` : ""}
         </div>
       </div>
@@ -63,8 +65,8 @@ export function renderUserCard(user, workspaceState, deps = {}) {
           : ""
       }
       <div class="workspace-stat-links">
-        <a class="text-link" href="${escapeAttribute(submissionHref)}">${user.submissionCount} submissions</a>
-        <a class="text-link" href="${escapeAttribute(commentHref)}">${user.commentCount} comments</a>
+        <a class="text-link" href="${escapeAttribute(submissionHref)}">${Number(user.submissionCount || 0)} submissions</a>
+        <a class="text-link" href="${escapeAttribute(commentHref)}">${Number(user.commentCount || 0)} comments</a>
       </div>
       ${
         canManage
@@ -90,6 +92,7 @@ export function renderLookupCandidate(workspaceState, deps = {}) {
   const user = workspaceState.userLookupResult;
   if (!user) return "";
   const karma = deps.resolveWorkspaceUserKarma(user.pubkey);
+  const isRemoved = Boolean(user?.removed);
   const usernameConflict = deps.userHasUsernameConflict ? deps.userHasUsernameConflict(user) : Boolean(user?.usernameConflict);
   const escapeAttribute = deps.escapeAttribute || ((value) => String(value || ""));
   return `
@@ -101,6 +104,7 @@ export function renderLookupCandidate(workspaceState, deps = {}) {
         <div class="tag-row">
           ${usernameConflict ? `<span class="tag tag--danger">Username conflict</span>` : ""}
           <span class="tag">Karma ${deps.formatWorkspaceKarma(karma)}</span>
+          ${isRemoved ? `<span class="tag">removed</span>` : ""}
           ${user.isAdmin ? `<span class="tag">admin</span>` : `<span class="tag">member</span>`}
         </div>
       </div>

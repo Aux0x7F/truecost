@@ -37,6 +37,19 @@ export function renderKarmaSelectOptions(selectedValue) {
     .join("");
 }
 
+export function renderRoleSelectOptions(selectedValue) {
+  const current = String(selectedValue || "").trim().toLowerCase();
+  const options = [
+    ["", "All roles"],
+    ["admin", "Admin"],
+    ["member", "Member"],
+    ["removed", "Removed"]
+  ];
+  return options
+    .map(([value, label]) => `<option value="${value}" ${current === value ? "selected" : ""}>${label}</option>`)
+    .join("");
+}
+
 export function commentToneState(score) {
   const numericScore = Number(score);
   if (!Number.isFinite(numericScore) || numericScore > -1) {
