@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import {
   createStaticServer,
   loadPlaywright,
-  seedAdminSession
+  seedAdminSession,
+  seedLegacyAdminSession
 } from "./browser-test-utils.mjs";
 
 const repoRoot = process.cwd();
@@ -24,6 +25,14 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
   const page = await context.newPage();
 
   try {
+    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "Explore" }).click();
+    const earlyExploreDisplay = await page.evaluate(() => {
+      const panel = document.querySelector('[data-nav-group].is-open .nav-group__panel');
+      return panel ? getComputedStyle(panel).display : "";
+    });
+    assert.equal(earlyExploreDisplay, "grid", "public shell should be interactive before background hydrate completes");
+
     await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "networkidle" });
     await page.waitForTimeout(1200);
     const homeMetrics = await page.evaluate(() => {
@@ -93,6 +102,21 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
     assert.equal(expandedMapNavMetrics.mapIsCurrent, true, "map nav item should stay current when Explore opens");
     assert.equal(expandedMapNavMetrics.panelDisplay, "grid", "Explore should open when toggled");
 
+    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Explore" }).click();
+    const homeMapLinkState = await page.evaluate(() => {
+      const mapLink = Array.from(document.querySelectorAll(".nav-group__panel a")).find((link) =>
+        link.textContent?.trim() === "Map"
+      );
+      return {
+        ariaDisabled: mapLink?.getAttribute("aria-disabled") || "",
+        isDisabled: mapLink?.classList.contains("is-disabled") || false
+      };
+    });
+
+    assert.equal(homeMapLinkState.ariaDisabled, "", "map should stay clickable before shared state finishes hydrating");
+    assert.equal(homeMapLinkState.isDisabled, false, "map should not render as disabled in Explore");
+
     await seedAdminSession(page, { port, secretKeyHex, pubkey });
     await page.goto(`http://127.0.0.1:${port}/admin.html?tab=dashboard`, { waitUntil: "networkidle" });
     await page.waitForSelector("[data-workspace-pane]", { timeout: 15000 });
@@ -121,6 +145,43 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
     assert.notEqual(adminMetrics.statPaddingLeft, "0px", "workspace metric cards should keep internal padding");
     assert.notEqual(adminMetrics.snapshotPaddingTop, "0px", "workspace surface panels should keep internal padding");
     assert.notEqual(adminMetrics.snapshotPaddingLeft, "0px", "workspace surface panels should keep internal padding");
+
+    await page.getByRole("button", { name: "User Management" }).click();
+    await page.waitForTimeout(200);
+    const userFilterMetrics = await page.evaluate(() => {
+      const karma = document.querySelector("[data-user-filter-karma]");
+      const role = document.querySelector("[data-user-filter-role]");
+      const karmaLabel = karma?.closest("label");
+      const roleLabel = role?.closest("label");
+      const karmaRect = karmaLabel?.getBoundingClientRect();
+      const roleRect = roleLabel?.getBoundingClientRect();
+      return {
+        karmaLabel: karmaLabel?.textContent?.trim() || "",
+        roleLabel: roleLabel?.textContent?.trim() || "",
+        roleValue: role instanceof HTMLSelectElement ? role.value : "",
+        sameRow: Boolean(karmaRect && roleRect && Math.abs(karmaRect.top - roleRect.top) < 6),
+        widthDelta: karmaRect && roleRect ? Math.abs(karmaRect.width - roleRect.width) : 999
+      };
+    });
+
+    assert.match(userFilterMetrics.karmaLabel, /Karma/);
+    assert.match(userFilterMetrics.roleLabel, /Role/);
+    assert.equal(userFilterMetrics.roleValue, "active", "role filtering should default to active users");
+    assert.equal(userFilterMetrics.sameRow, true, "karma and role controls should share the same row");
+    assert.ok(userFilterMetrics.widthDelta < 8, "karma and role controls should share the available width evenly");
+
+    await seedLegacyAdminSession(page, {
+      port,
+      secretKeyHex,
+      username: "smoke-user",
+      adminPubkey: pubkey
+    });
+    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "networkidle" });
+    await page.click("[data-profile-toggle]");
+    const legacyProfileMenuLabel = await page.evaluate(() =>
+      document.querySelector(".profile-menu__panel a")?.textContent?.trim() || ""
+    );
+    assert.equal(legacyProfileMenuLabel, "Admin", "legacy admin sessions should still render the admin menu label");
   } finally {
     await browser.close();
     await new Promise((resolve) => server.close(resolve));

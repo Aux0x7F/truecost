@@ -34,6 +34,7 @@ The current build is meant to be a practical, low-overhead publishing and coordi
   - `wiki.html` for entity wiki pages and wiki directory search
   - shared graph model and seeded entity/relationship data
   - admin-only local draft entities and draft relationships for early product testing
+- Workspace login, profile save, and password rotation now live behind a dedicated workspace account controller instead of staying embedded in `admin.js`.
 
 ## Near Term
 
@@ -42,7 +43,7 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - Expand the wiki rail and wiki administration so entity creation and relationship management replace the remaining older entity-management surfaces.
 - Expand the normalized collaborative shell into editor presence, quote-linked discussion, and broader live-unit coverage for entities and the archive.
 - Keep tightening the remaining large CSS families, especially `02-content.css`, `06-workspace.css`, and the still-heavy shared foundation layer, so convergence continues after the bundled-first-paint pass.
-- Continue the same direct reduction work on the remaining controller hotspots, with the account/profile/upload section of `admin.js` now the main target after the latest workspace extraction pass.
+- Continue the same direct reduction work on the remaining controller hotspots, with upload and moderation-detail handler families now the main `admin.js` target after the workspace-account extraction pass.
 - Apply the same controller-to-feature reduction pass to the remaining editor/workspace hotspots that still own too much orchestration locally.
 - Extend the live collaborative layer from static pages and investigation detail/editor flows into the archive and entity records without regressing the static-first baseline.
 - Add clearer history and conflict handling for live collaborative units before each bakedown cycle, so operators can see what will ship and why.

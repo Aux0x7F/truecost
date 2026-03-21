@@ -19,7 +19,8 @@ Component behavior that spans a whole UI family should live in `scripts/surfaces
 
 - The site header is static-first and readable before JavaScript enhancement.
 - The mobile nav toggle must have a discernible accessible name in HTML.
-- The primary public nav groups archive browsing under `Explore`, with `Investigations`, `Map`, and `Graph` as child destinations.
+- The primary public nav groups archive browsing under `Explore`, with `Investigations`, `Map`, `Graph`, and `Wiki` as child destinations.
+- `Map` is a public destination and should never be availability-gated by account or relay connection state.
 - The nav drawer is an overlay surface:
   - the drawer scrolls
   - the page behind it does not
@@ -108,7 +109,8 @@ Component behavior that spans a whole UI family should live in `scripts/surfaces
 - Legacy deterministic sessions missing a stored `pubkey` should be repaired through shared session/viewer helpers before account actions use them.
 - Logged-out workspace should render directly to the create/login pane instead of a one-item fake tab strip.
 - If a taken username fails sign-in, the login status should explain that the handle already exists, keep the session unsaved, and offer an inline next-available-number action.
-- Profile settings should treat the username as an immutable account handle and only edit the public profile fields attached to it.
+- Profile settings should treat the username as an immutable account handle.
+- Profile settings should not render editable username or display-name fields; they only edit the remaining public profile fields attached to that handle.
 - All account password fields should enforce a minimum length of 8 characters in both field attributes and action-layer validation.
 - If cached or live public state shows that a newer pubkey is claiming an already-owned username, the conflicting session is blocked from profile updates, comments, votes, submissions, and encrypted chat.
 - If a pubkey is signed as `removed`, the client should treat that identity as removed from the site:
@@ -205,6 +207,7 @@ Current extraction targets:
 - `scripts/features/map-page.js`
 - `scripts/features/markdown-page.js`
 - `scripts/features/review-workflow.js`
+- `scripts/features/workspace-account.js`
 - `scripts/features/workspace-shell.js`
 - `scripts/features/workspace-tabs.js`
 - `scripts/features/workspace-inbox.js`
@@ -232,7 +235,7 @@ Current extraction targets:
 The next convergence targets are:
 
 - editor collaboration rail behavior when that feature lands
-- narrower selectors behind the remaining account/profile/upload flows
+- narrower selectors behind the remaining upload and moderation-detail flows
 - any remaining page-controller-owned notification or moderation detail that still has not moved into shared features or surfaces
 
 ## Modals and action sheets

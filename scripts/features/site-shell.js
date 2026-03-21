@@ -50,15 +50,11 @@ export function createSiteShellFeature({
 
     const page = document.body.dataset.page || "";
     const isLoggedIn = Boolean(state.session);
-    const viewerPubkey = viewerController.sessionPubkey();
+    const viewerPubkey = String(viewerController.resolvedSessionPubkey?.({ deriveWhenAvailable: true }) || viewerController.sessionPubkey() || "").trim();
     const currentUser = isLoggedIn && viewerPubkey
       ? state.publicState?.users?.find((user) => user.pubkey === viewerPubkey) || null
       : null;
-    const isAdmin = Boolean(
-      isLoggedIn &&
-        viewerPubkey &&
-        viewerController.trustedPubkeys(state.publicState).includes(viewerPubkey)
-    );
+    const isAdmin = Boolean(isLoggedIn && viewerController.canEdit(state.publicState));
     const notifications = isLoggedIn ? notificationState.items.slice(0, 8) : [];
     const unreadCount = isLoggedIn ? countNotificationItems(notifications) : 0;
     const notificationsExpanded = clampNotificationsPanel(state.navigationUi, {
@@ -76,7 +72,6 @@ export function createSiteShellFeature({
       notificationsLoading: notificationState.loading,
       profileMenuOpen: state.navigationUi.profileMenuOpen,
       notificationsExpanded,
-      mapEnabled: Boolean(state.publicState?.connected),
       deps: {
         countUnreadNotifications: countNotificationItems,
         escapeAttribute,
@@ -85,10 +80,6 @@ export function createSiteShellFeature({
       }
     });
     renderGlobalOverlays();
-
-    for (const disabled of nav.querySelectorAll('[aria-disabled="true"]')) {
-      disabled.addEventListener("click", (event) => event.preventDefault());
-    }
   }
 
   function renderGlobalOverlays() {

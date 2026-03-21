@@ -65,6 +65,7 @@ The implementation now follows four layers:
   - map page
   - markdown/article page
   - review workflow
+  - workspace account/login/profile/password flows
   - workspace runtime
   - workspace shell
   - workspace tabs
@@ -106,7 +107,7 @@ The CSS now follows the same split:
 
 That keeps the CSS boundary closer to the JS surface split instead of letting one root stylesheet keep absorbing every component family.
 
-The codebase now applies this split to navigation, profile-menu state, notifications, archive, comments, investigation detail, static-page editing, submit shell rendering, public profile overlays, workspace rendering, workspace actions, workspace review/log rendering, map shells, editor-shell rendering, shared draft/review helpers, shared rendering helpers, request-signer helpers, workspace cache/access/projection helpers, and a shared `public-state-store` boundary for public, workspace, and editor controllers. Future refactors should keep reducing remaining heavy controllers into composed feature modules backed by explicit shared state helpers.
+The codebase now applies this split to navigation, profile-menu state, notifications, archive, comments, investigation detail, static-page editing, submit shell rendering, public profile overlays, workspace rendering, workspace actions, workspace review/log rendering, map shells, editor-shell rendering, shared draft/review helpers, shared rendering helpers, request-signer helpers, workspace cache/access/projection helpers, workspace account flows, and a shared `public-state-store` boundary for public, workspace, and editor controllers. Future refactors should keep reducing remaining heavy controllers into composed feature modules backed by explicit shared state helpers.
 
 Mounted shell updates now also follow an observed-region rule:
 
@@ -128,7 +129,7 @@ Account auth flows follow a similar separation:
 - login and password rotation orchestration belongs in a dedicated account action layer
 - login must not leak whether a password was previously valid; stale or superseded credentials should collapse to a generic mismatch at login time
 
-The next tightening step is thinning the remaining account/profile/upload handler families the same way the workspace shell, tabs, inbox, site-key, selector, and mutation layers were reduced, then continuing feature-facing work on top of the normalized shell: collaborative editor rails, richer entity relationships, and broader live-unit coverage.
+The next tightening step is thinning the remaining upload, moderation-detail, and other handler-heavy families the same way the workspace account, shell, tabs, inbox, site-key, selector, and mutation layers were reduced, then continuing feature-facing work on top of the normalized shell: collaborative editor rails, richer entity relationships, and broader live-unit coverage.
 
 ## Trust model
 

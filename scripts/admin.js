@@ -7,15 +7,12 @@ import {
   buildUsernameConflictMessage,
   buildUsernameLoginMismatchMessage,
   resolveRemovedSessionAccount,
+  resolveNextAvailableUsername,
   resolveStaleSessionAccount,
   resolveSessionUsernameConflict,
-  resolveNextAvailableUsername,
   userHasUsernameConflict
 } from "./core/account-integrity.js";
-import {
-  rememberAccountRotation,
-  rememberCurrentAccountSession
-} from "./core/account-management.js";
+import { rememberAccountRotation, rememberCurrentAccountSession } from "./core/account-management.js";
 import {
   cleanSlug,
   decryptUploadedBlob,
@@ -98,7 +95,8 @@ import {
   karmaBucketForScore,
   karmaBucketMatches,
   parseMaybeNumber,
-  renderKarmaSelectOptions
+  renderKarmaSelectOptions,
+  renderRoleSelectOptions
 } from "./core/workspace-formatting.js";
 import { createWorkspaceSelectorController } from "./core/workspace-selectors.js";
 import { createWorkspaceSiteKeyController } from "./core/workspace-site-key.js";
@@ -142,15 +140,11 @@ import { createWorkspaceRuntime } from "./features/workspace-runtime.js";
 import { createWorkspaceDeepLinkController } from "./features/workspace-deep-links.js";
 import { createWorkspaceInboxController } from "./features/workspace-inbox.js";
 import { createWorkspaceMutationController } from "./features/workspace-mutations.js";
+import { createWorkspaceAccountController } from "./features/workspace-account.js";
 import { createWorkspaceShellController } from "./features/workspace-shell.js";
 import { createWorkspaceTabsController } from "./features/workspace-tabs.js";
 import { createWorkspaceUserLookupController } from "./features/workspace-user-lookup.js";
-import {
-  buildPasswordLengthMessage,
-  openAccountSession,
-  PASSWORD_MIN_LENGTH,
-  rotateAccountPassword
-} from "./core/account-actions.js";
+import { buildPasswordLengthMessage, openAccountSession, PASSWORD_MIN_LENGTH, rotateAccountPassword } from "./core/account-actions.js";
 import { getStoredSession, rebroadcastAccount, rotateAccountCredentials, saveSession, signInWithCredentials, deriveSecretKeyHex } from "./core/session.js";
 
 let workspacePublicStateStore = null;
@@ -161,6 +155,7 @@ let workspaceSiteKeys = null;
 let workspaceInbox = null;
 let workspaceDeepLinks = null;
 let workspaceMutations = null;
+let workspaceAccount = null;
 let workspaceShell = null;
 let workspaceTabs = null;
 
@@ -195,7 +190,8 @@ const workspaceState = {
   entityLocationFilterHighlight: -1,
   entityLocationFilterOpen: false,
   userFilters: {
-    karma: ""
+    karma: "",
+    role: "active"
   },
   commentFilters: {
     query: "",
@@ -262,7 +258,8 @@ workspaceSelectors = createWorkspaceSelectorController({
 const workspaceAccess = createWorkspaceAccessController({
   state: workspaceState,
   viewerController,
-  resolveSitePubkey: (publicState) => workspaceSelectors.resolveWorkspaceSitePubkey(publicState)
+  resolveSitePubkey: (publicState) => workspaceSelectors.resolveWorkspaceSitePubkey(publicState),
+  fallbackAdminPubkeys: [SITE.nostr.rootAdminPubkey]
 });
 
 workspaceTabs = createWorkspaceTabsController({
@@ -407,6 +404,50 @@ workspaceShell = createWorkspaceShellController({
   callbacks: {
     createSurfaceDeps: workspaceSurfaceDeps,
     hydrateWorkspaceEnhancements
+  }
+});
+
+workspaceAccount = createWorkspaceAccountController({
+  site: SITE,
+  state: workspaceState,
+  publicStateStore: workspacePublicStateStore,
+  deps: {
+    applyOptimisticIdentityRotation,
+    applyOptimisticWorkspaceProfileUpdate,
+    assertNetworkSessionUsernameIntegrity,
+    buildPasswordLengthMessage,
+    buildSiteKeyShare: buildWorkspaceSiteKeyShare,
+    buildUsernameLoginMismatchMessage,
+    deriveIdentity,
+    deriveSecretKeyHex,
+    escapeAttribute,
+    escapeHtml,
+    findSiteKeyShare: findWorkspaceSiteKeyShare,
+    lookupUsers,
+    mergeSiteKeyShares: mergeWorkspaceSiteKeyShares,
+    normalizeUsername,
+    openAccountSession,
+    PASSWORD_MIN_LENGTH,
+    persistCachedSiteKeyShares: persistCachedWorkspaceSiteKeyShares,
+    publishAdminKeyShare,
+    rebroadcastAccount,
+    rememberAccountRotation,
+    rememberCurrentAccountSession,
+    resolveNextAvailableUsername,
+    rotateAccountCredentials,
+    rotateAccountPassword,
+    saveSession,
+    signInWithCredentials,
+    uploadPublicBlob
+  },
+  callbacks: {
+    currentUser,
+    currentUserIsAdmin,
+    notifySessionChanged: () => window.dispatchEvent(new CustomEvent("truecost:session-changed")),
+    refreshWorkspace,
+    renderWorkspace,
+    resolveWorkspaceSitePubkey: (publicState) => workspaceSelectors.resolveWorkspaceSitePubkey(publicState),
+    syncWorkspace: (force = true) => workspaceRuntime.sync(force)
   }
 });
 
@@ -603,7 +644,7 @@ function bindWorkspace() {
 
     const appendUsernameAction = target.closest("[data-append-next-available-username]");
     if (appendUsernameAction) {
-      await handleAppendNextAvailableUsername(appendUsernameAction);
+      await workspaceAccount.handleAppendNextAvailableUsername(appendUsernameAction);
       return;
     }
 
@@ -732,15 +773,15 @@ function bindWorkspace() {
     event.preventDefault();
 
     if (form.matches("[data-login-form]")) {
-      await handleLogin(form);
+      await workspaceAccount.handleLogin(form);
       return;
     }
     if (form.matches("[data-profile-form]")) {
-      await handleProfileSave(form);
+      await workspaceAccount.handleProfileSave(form);
       return;
     }
     if (form.matches("[data-password-rotation-form]")) {
-      await handlePasswordRotation(form);
+      await workspaceAccount.handlePasswordRotation(form);
       return;
     }
     if (form.matches("[data-entity-form]")) {
@@ -764,7 +805,7 @@ function bindWorkspace() {
       return;
     }
     if (target.matches('[data-login-form] [name="username"], [data-login-form] [name="password"]')) {
-      renderLoginStatusPreview(target.closest("form"));
+      workspaceAccount.renderLoginStatusPreview(target.closest("form"));
       return;
     }
     if (target.matches("[data-comment-filter-query]")) {
@@ -793,6 +834,11 @@ function bindWorkspace() {
     }
     if (target.matches("[data-user-filter-karma]")) {
       workspaceState.userFilters.karma = String(target.value || "").trim().toLowerCase();
+      renderWorkspace({ soft: true });
+      return;
+    }
+    if (target.matches("[data-user-filter-role]")) {
+      workspaceState.userFilters.role = String(target.value || "").trim().toLowerCase();
       renderWorkspace({ soft: true });
       return;
     }
@@ -943,6 +989,7 @@ function workspaceSurfaceDeps() {
     currentSessionUsernameConflictMessage,
     visibleWorkspaceUsers: () => workspaceSelectors.visibleWorkspaceUsers(),
     renderKarmaSelectOptions,
+    renderRoleSelectOptions,
     renderLookupCandidate: () => renderWorkspaceLookupCandidate(workspaceState, actionDeps),
     renderUserStatsCard: () => renderWorkspaceUserStatsCard(workspaceState, actionDeps),
     escapeHtml,
@@ -967,11 +1014,11 @@ function workspaceSurfaceDeps() {
     renderUserActionModal: () => renderWorkspaceUserActionModal(workspaceState, actionDeps),
     renderCommentActionModal: () => renderWorkspaceCommentActionModal(workspaceState, actionDeps),
     renderSubmissionModal: () => renderWorkspaceSubmissionModal(workspaceState, actionDeps),
-    renderPasswordRotationModal: () => renderWorkspacePasswordRotationModal(),
+    renderPasswordRotationModal: () => workspaceAccount.renderPasswordRotationModal(),
     renderLogPane: () => renderWorkspaceLogPane(workspaceState, actionDeps),
     renderUserCard: (user) => renderWorkspaceUserCard(user, workspaceState, actionDeps),
     renderUserIdentityButton,
-    passwordMinLength: PASSWORD_MIN_LENGTH
+    passwordMinLength: workspaceAccount.passwordMinLength
   });
 }
 
@@ -1097,389 +1144,6 @@ function userNeedsCurrentSiteKey(user) {
     siteKeyShare: workspaceState.siteKeyShare,
     activeSitePubkey: activeSitePubkey()
   });
-}
-
-async function handleLogin(form) {
-  const status = form.querySelector("[data-workspace-status]");
-  const submitButton = form.querySelector("[data-login-submit]");
-  try {
-    setLoginPending(submitButton, true);
-    if (status) {
-      status.textContent = "Opening account...";
-      status.dataset.state = "pending";
-    }
-    const formData = new FormData(form);
-    const login = await openAccountSession({
-      username: formData.get("username"),
-      password: formData.get("password"),
-      loadPublicState: async () =>
-        ((await workspacePublicStateStore
-          .hydrate({
-            force: true,
-            reason: "login-username-check",
-            requestRepair: false
-          })
-          .catch(() => ({ value: workspaceState.publicState }))).value || workspaceState.publicState),
-      signInWithCredentials,
-      saveSession,
-      rebroadcastAccount,
-      rememberCurrentAccountSession,
-      assertNetworkSessionUsernameIntegrity,
-      lookupUsers
-    });
-    const session = login.session;
-    if (status) {
-      status.textContent = login.warning
-        ? `Signed in as @${session.username}. ${login.warning}`
-        : `Signed in as @${session.username}.`;
-      status.dataset.state = login.warning ? "warning" : "success";
-    }
-    window.dispatchEvent(new CustomEvent("truecost:session-changed"));
-    await refreshWorkspace(true);
-  } catch (error) {
-    if (status) {
-      if (String(error?.code || "").trim().toUpperCase() === "LOGIN_MISMATCH") {
-        setStatusMarkup(status, {
-          state: "error",
-          html: renderLoginUsernameMismatchMarkup(
-            error?.claimedUsername || normalizeUsername(form.querySelector('[name="username"]')?.value || "")
-          )
-        });
-      } else {
-        status.textContent = String(error?.message || error || "Login failed.");
-        status.dataset.state = "error";
-      }
-    }
-  } finally {
-    setLoginPending(submitButton, false);
-  }
-}
-
-function setLoginPending(button, pending) {
-  if (!(button instanceof HTMLButtonElement)) return;
-  button.disabled = pending;
-  button.dataset.busy = pending ? "yes" : "no";
-  button.innerHTML = pending
-    ? `<span class="loading-spinner" aria-hidden="true"></span><span>Opening account...</span>`
-    : "Create/Login";
-}
-
-async function handleProfileSave(form) {
-  const status = form.querySelector("[data-workspace-status]");
-  try {
-    const formData = new FormData(form);
-    const publicState =
-      (await workspacePublicStateStore
-        .hydrate({
-          force: true,
-          reason: "profile-username-check",
-          requestRepair: false
-        })
-        .catch(() => ({ value: workspaceState.publicState }))).value || workspaceState.publicState;
-    await assertNetworkSessionUsernameIntegrity(publicState, workspaceState.session, {
-      lookupUsers,
-      requireLookup: true,
-      action: "update this profile"
-    });
-    const current = currentUser();
-    let avatarUrl = String(current?.avatarUrl || "").trim();
-    let avatarBlob = current?.avatarBlob || null;
-    const profilePayload = {
-      displayName: formData.get("displayName"),
-      avatarUrl,
-      avatarBlob,
-      bio: formData.get("bio"),
-      socialLinks: String(formData.get("socialLinks") || "")
-        .split(/\r?\n/)
-        .map((item) => item.trim())
-        .filter(Boolean)
-    };
-    const avatarFile = formData.get("avatarFile");
-    if (avatarFile instanceof File && avatarFile.size > 0) {
-      const upload = await uploadPublicBlob(
-        workspaceState.session.secretKeyHex,
-        avatarFile,
-        { purpose: "avatar" }
-      );
-      avatarUrl = upload.url;
-      avatarBlob = upload;
-      profilePayload.avatarUrl = avatarUrl;
-      profilePayload.avatarBlob = avatarBlob;
-    }
-    await rebroadcastAccount(workspaceState.session, profilePayload, {
-        validateSession: async (session) => {
-          await assertNetworkSessionUsernameIntegrity(publicState, session, {
-            lookupUsers,
-            requireLookup: true,
-            action: "update this profile"
-          });
-        }
-      });
-    workspacePublicStateStore.remember(
-      applyOptimisticWorkspaceProfileUpdate(workspaceState.publicState, workspaceState.session, profilePayload),
-      { notify: true, reason: "profile-save" }
-    );
-    window.dispatchEvent(new CustomEvent("truecost:session-changed"));
-    if (status) {
-      status.textContent = "Profile updated.";
-      status.dataset.state = "success";
-    }
-    window.setTimeout(() => {
-      void workspaceRuntime.sync(true);
-    }, 1400);
-  } catch (error) {
-    if (status) {
-      status.textContent = String(error?.message || error || "Profile save failed.");
-      status.dataset.state = "error";
-    }
-  }
-}
-
-function setStatusMarkup(status, { state = "", html = "", text = "" } = {}) {
-  if (!(status instanceof HTMLElement)) return;
-  if (state) {
-    status.dataset.state = state;
-  } else {
-    delete status.dataset.state;
-  }
-  status.innerHTML = html || escapeHtml(text || "");
-}
-
-function renderStatusActionMarkup(message, {
-  actionLabel = "",
-  actionAttributes = {}
-} = {}) {
-  const messageMarkup = `<div>${escapeHtml(message)}</div>`;
-  if (!actionLabel) return messageMarkup;
-  return `
-    ${messageMarkup}
-    <div class="status-box__actions">
-      <button class="status-box__inline-action" type="button"${Object.entries(actionAttributes)
-        .map(([key, value]) => ` ${escapeAttribute(key)}="${escapeAttribute(value)}"`)
-        .join("")}>${escapeHtml(actionLabel)}</button>
-    </div>
-  `;
-}
-
-function renderDefaultLoginStatusMarkup() {
-  return escapeHtml(`Usernames are unique handles. ${buildPasswordLengthMessage(PASSWORD_MIN_LENGTH)} This site uses your username and password to reopen the same account.`);
-}
-
-function renderLoginUsernameMismatchMarkup(username) {
-  return renderStatusActionMarkup(buildUsernameLoginMismatchMessage(username), {
-    actionLabel: "Append the next available number",
-    actionAttributes: {
-      "data-append-next-available-username": "login"
-    }
-  });
-}
-
-function renderWorkspacePasswordRotationModal() {
-  if (!workspaceState.passwordRotationModal || !workspaceState.session) return "";
-  const statusMessage = String(workspaceState.passwordRotationModal.status || "").trim();
-  const statusState = String(workspaceState.passwordRotationModal.state || "").trim();
-  return `
-    <div class="modal-backdrop">
-      <section class="modal-card">
-        <div class="workspace-list__row">
-          <div>
-            <div class="eyebrow">Password</div>
-            <h2>Change password</h2>
-          </div>
-          <button class="button-ghost" type="button" data-modal-close>Close</button>
-        </div>
-        <p class="muted-text">This rotates the account key for @${escapeHtml(workspaceState.session.username)} and keeps the same username.</p>
-        <form class="tip-form" data-password-rotation-form>
-          <label>
-            <span>New password</span>
-            <input name="password" type="password" maxlength="120" minlength="${PASSWORD_MIN_LENGTH}" autocomplete="new-password" placeholder="••••••••" required>
-          </label>
-          <label>
-            <span>Confirm new password</span>
-            <input name="confirmPassword" type="password" maxlength="120" minlength="${PASSWORD_MIN_LENGTH}" autocomplete="new-password" placeholder="••••••••" required>
-          </label>
-          <div class="button-row">
-            <button class="button" type="submit" data-password-rotation-submit>${workspaceState.passwordRotationModal.pending ? "Changing..." : "Change password"}</button>
-          </div>
-          <div class="status-box"${statusState ? ` data-state="${escapeAttribute(statusState)}"` : ""}>${escapeHtml(statusMessage || `Use a password you can keep. ${buildPasswordLengthMessage(PASSWORD_MIN_LENGTH)} This account handle stays the same.`)}</div>
-        </form>
-      </section>
-    </div>
-  `;
-}
-
-function renderLoginStatusPreview(form) {
-  const status = form?.querySelector?.("[data-workspace-status]");
-  if (!(status instanceof HTMLElement)) return;
-  setStatusMarkup(status, {
-    html: renderDefaultLoginStatusMarkup()
-  });
-}
-
-async function handleAppendNextAvailableUsername(button) {
-  const form = button.closest("form");
-  const input = form?.querySelector?.('[name="username"]');
-  if (!(form instanceof HTMLFormElement) || !(input instanceof HTMLInputElement)) return;
-  const status = form.querySelector("[data-workspace-status]");
-  const requestedUsername = normalizeUsername(input.value || "");
-  if (!(status instanceof HTMLElement) || !requestedUsername) return;
-  setStatusMarkup(status, {
-    state: "pending",
-    text: "Checking the next available username..."
-  });
-  const nextCandidate = await resolveNextAvailableUsername(workspaceState.publicState, requestedUsername, {
-    lookupUsers: null
-  });
-  if (!nextCandidate?.username) {
-    setStatusMarkup(status, {
-      state: "error",
-      text: "Could not find a nearby available username yet. Try again."
-    });
-    return;
-  }
-  input.value = nextCandidate.username;
-  input.focus();
-  try {
-    input.setSelectionRange(input.value.length, input.value.length);
-  } catch {
-    // Ignore selection errors on unsupported input modes.
-  }
-  setStatusMarkup(status, {
-    state: nextCandidate.verified ? "success" : "warning",
-    text: nextCandidate.verified
-      ? `Try @${nextCandidate.username}.`
-      : `Try @${nextCandidate.username}. It will be verified again when you submit.`
-  });
-}
-
-async function handlePasswordRotation(form) {
-  const status = form.querySelector(".status-box");
-  const submitButton = form.querySelector("[data-password-rotation-submit]");
-  try {
-    const formData = new FormData(form);
-    const password = String(formData.get("password") || "");
-    const confirmPassword = String(formData.get("confirmPassword") || "");
-    if (!password.trim()) throw new Error("Enter a new password.");
-    if (password !== confirmPassword) throw new Error("Passwords did not match.");
-    workspaceState.passwordRotationModal = {
-      ...(workspaceState.passwordRotationModal || {}),
-      pending: true,
-      status: "Changing password...",
-      state: "pending"
-    };
-    if (submitButton instanceof HTMLButtonElement) submitButton.disabled = true;
-    if (status instanceof HTMLElement) {
-      status.textContent = "Changing password...";
-      status.dataset.state = "pending";
-    }
-    const current = currentUser();
-    const profilePayload = {
-      displayName: current?.displayName || "",
-      avatarUrl: current?.avatarUrl || "",
-      avatarBlob: current?.avatarBlob || null,
-      bio: current?.bio || "",
-      socialLinks: Array.isArray(current?.socialLinks) ? current.socialLinks : []
-    };
-    const priorSession = workspaceState.session;
-    const rotation = await rotateAccountPassword({
-      session: workspaceState.session,
-      nextPassword: password,
-      currentPublicState: workspaceState.publicState,
-      loadPublicState: async () =>
-        ((await workspacePublicStateStore
-          .hydrate({
-            force: true,
-            reason: "password-rotation-check",
-            requestRepair: false
-          })
-          .catch(() => ({ value: workspaceState.publicState }))).value || workspaceState.publicState),
-      deriveSecretKeyHex,
-      deriveIdentity,
-      assertNetworkSessionUsernameIntegrity,
-      lookupUsers,
-      rotateAccountCredentials,
-      saveSession,
-      rememberAccountRotation,
-      afterCommit: async ({ previousSession, rotation, publicState }) => {
-        const warnings = [];
-        const optimisticRotatedState = applyOptimisticIdentityRotation(
-          workspaceState.publicState,
-          previousSession.pubkey,
-          rotation.session.pubkey
-        );
-        workspaceState.publicState = workspacePublicStateStore.remember(optimisticRotatedState, {
-          notify: true,
-          reason: "password-rotation"
-        });
-        if (currentUserIsAdmin() && workspaceState.siteKeyShare?.siteSecretKeyHex) {
-          try {
-            await publishAdminKeyShare(
-              previousSession.secretKeyHex,
-              rotation.session.pubkey,
-              workspaceState.siteKeyShare.siteSecretKeyHex
-            );
-            const optimisticShare = buildWorkspaceSiteKeyShare(
-              workspaceState.siteKeyShare.siteSecretKeyHex,
-              {
-                sender_pubkey: previousSession.pubkey,
-                shared_at: new Date().toISOString()
-              },
-              deriveIdentity
-            );
-            if (optimisticShare) {
-              workspaceState.siteKeyShares = mergeWorkspaceSiteKeyShares([optimisticShare], workspaceState.siteKeyShares);
-              persistCachedWorkspaceSiteKeyShares({
-                storageNamespace: SITE.nostr.storageNamespace,
-                viewerPubkey: rotation.session.pubkey,
-                shares: workspaceState.siteKeyShares
-              });
-            }
-          } catch (error) {
-            warnings.push(String(error?.message || error || "The inbox key share could not be refreshed yet."));
-          }
-        }
-        try {
-          await rebroadcastAccount(rotation.session, profilePayload);
-        } catch (error) {
-          warnings.push(String(error?.message || error || "The account profile could not be refreshed on the network yet."));
-        }
-        workspaceState.siteKeyShare = findWorkspaceSiteKeyShare(
-          workspaceState.siteKeyShares,
-          workspaceSelectors.resolveWorkspaceSitePubkey(publicState)
-        );
-        return { warnings };
-      }
-    });
-    workspaceState.session = rotation.session;
-    workspaceState.viewer = { pubkey: rotation.session.pubkey };
-    window.dispatchEvent(new CustomEvent("truecost:session-changed"));
-    workspaceState.passwordRotationModal = {
-      pending: false,
-      status: rotation.warnings?.length
-        ? `Password updated. ${rotation.warnings.join(" ")}`
-        : "Password updated. Refreshing account state...",
-      state: rotation.warnings?.length ? "warning" : "success"
-    };
-    renderWorkspace();
-    window.setTimeout(() => {
-      workspaceState.passwordRotationModal = null;
-      renderWorkspace();
-      void workspaceRuntime.sync(true);
-    }, 900);
-  } catch (error) {
-    workspaceState.passwordRotationModal = {
-      ...(workspaceState.passwordRotationModal || {}),
-      pending: false,
-      status: String(error?.message || error || "Password change failed."),
-      state: "error"
-    };
-    if (status instanceof HTMLElement) {
-      status.textContent = String(error?.message || error || "Password change failed.");
-      status.dataset.state = "error";
-    }
-  } finally {
-    if (submitButton instanceof HTMLButtonElement) submitButton.disabled = false;
-  }
 }
 
 async function handleAttachmentDownload(button) {
@@ -1671,7 +1335,7 @@ function loadDraft(slug) {
 function hydrateWorkspaceEnhancements() {
   renderEntityPickerResults("primaryEntity");
   renderEntityPickerResults("entityRefs");
-  renderLoginStatusPreview(document.querySelector("[data-login-form]"));
+  workspaceAccount.renderLoginStatusPreview(document.querySelector("[data-login-form]"));
 }
 
 function createEntityModalState(trigger) {

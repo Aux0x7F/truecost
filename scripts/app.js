@@ -356,14 +356,8 @@ const staticPageEditSurface = createStaticPageEditSurface({
 });
 
 document.addEventListener("DOMContentLoaded", () => {
+  const page = document.body.dataset.page || "";
   siteShellFeature.mount();
-  archivePageFeature.mount();
-  void investigationDetailSurface.init();
-  markdownPageFeature.mount();
-  mapPageFeature.mount();
-  void graphPageFeature.mount();
-  void wikiPageFeature.mount();
-  void staticPageEditSurface.init();
   appRuntime.connectFeatures({
     archivePageFeature,
     graphPageFeature,
@@ -375,4 +369,44 @@ document.addEventListener("DOMContentLoaded", () => {
     wikiPageFeature
   });
   appRuntime.start();
+  schedulePageFeatureMounts(page);
 });
+
+function schedulePageFeatureMounts(page) {
+  const mount = () => {
+    mountPageFeatures(page);
+  };
+  if (typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(mount);
+    return;
+  }
+  window.setTimeout(mount, 0);
+}
+
+function mountPageFeatures(page) {
+  switch (page) {
+    case "home":
+    case "investigations":
+      archivePageFeature.mount();
+      break;
+    case "guide":
+      markdownPageFeature.mount();
+      break;
+    case "investigation":
+      void investigationDetailSurface.init();
+      markdownPageFeature.mount();
+      break;
+    case "map":
+      void mapPageFeature.mount();
+      break;
+    case "graph":
+      void graphPageFeature.mount();
+      break;
+    case "wiki":
+      void wikiPageFeature.mount();
+      break;
+    default:
+      break;
+  }
+  void staticPageEditSurface.init();
+}

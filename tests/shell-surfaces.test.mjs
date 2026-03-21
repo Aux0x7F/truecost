@@ -27,7 +27,6 @@ test("renderNavigationMarkup builds the admin explore shell with notifications",
     notificationsLoading: false,
     profileMenuOpen: true,
     notificationsExpanded: true,
-    mapEnabled: true,
     deps: {
       countUnreadNotifications: (items) => items.length,
       escapeAttribute: (value) => String(value || ""),

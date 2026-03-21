@@ -190,10 +190,6 @@ function renderProfilePane(workspaceState, deps, passwordMinLength = 8) {
       <p class="muted-text">Usernames are fixed account handles. Profile settings update the public details attached to your current handle.</p>
       <form class="tip-form" data-profile-form>
         <label>
-          <span>Display name</span>
-          <input name="displayName" type="text" maxlength="80" value="${deps.escapeAttribute ? deps.escapeAttribute(current?.displayName || "") : String(current?.displayName || "")}">
-        </label>
-        <label>
           <span>Bio</span>
           <textarea name="bio" placeholder="Short bio">${escapeHtml(current?.bio || "")}</textarea>
         </label>
@@ -251,12 +247,20 @@ function renderUsersPane(workspaceState, deps) {
               : null,
             loading: workspaceState.userLookupLoading
           })}
-          <label class="workspace-select">
-            <span class="sr-only">Filter users by karma</span>
-            <select data-user-filter-karma>
-              ${deps.renderKarmaSelectOptions(workspaceState.userFilters.karma)}
-            </select>
-          </label>
+          <div class="workspace-filter-row">
+            <label class="workspace-filter-field">
+              <span>Karma</span>
+              <select data-user-filter-karma>
+                ${deps.renderKarmaSelectOptions(workspaceState.userFilters.karma)}
+              </select>
+            </label>
+            <label class="workspace-filter-field">
+              <span>Role</span>
+              <select data-user-filter-role>
+                ${deps.renderRoleSelectOptions(workspaceState.userFilters.role)}
+              </select>
+            </label>
+          </div>
           ${
             workspaceState.userDirectStatus
               ? `<div class="status-box">${deps.escapeHtml(workspaceState.userDirectStatus)}</div>`

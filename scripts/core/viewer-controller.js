@@ -1,7 +1,6 @@
 import {
   expandCanonicalIdentityPubkeys,
-  normalizeAdminPubkeys,
-  publicStateHasAdminPubkey
+  normalizeAdminPubkeys
 } from "./public-state.js";
 
 export function createViewerController({
@@ -68,6 +67,10 @@ export function createViewerController({
     return String(primeFromSession(false)?.pubkey || "").trim();
   }
 
+  function resolvedSessionPubkey({ deriveWhenAvailable = false } = {}) {
+    return String(primeFromSession(Boolean(deriveWhenAvailable))?.pubkey || "").trim();
+  }
+
   function trustedPubkeys(publicState) {
     const admins = new Set(normalizeAdminPubkeys(publicState));
     const rootAdminPubkey = String(publicState?.rootAdminPubkey || site?.nostr?.rootAdminPubkey || "").trim();
@@ -79,14 +82,15 @@ export function createViewerController({
 
   function canEdit(publicState) {
     if (!state.session) return false;
-    const viewerPubkey = sessionPubkey();
+    const viewerPubkey = resolvedSessionPubkey({ deriveWhenAvailable: hasNostrTools() });
     if (!viewerPubkey) return false;
-    return publicStateHasAdminPubkey(publicState, viewerPubkey);
+    return trustedPubkeys(publicState).includes(viewerPubkey);
   }
 
   return {
     get,
     primeFromSession,
+    resolvedSessionPubkey,
     sessionPubkey,
     trustedPubkeys,
     canEdit

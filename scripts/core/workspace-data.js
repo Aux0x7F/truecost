@@ -25,14 +25,41 @@ export function filterVisibleWorkspaceUsers({
   publicState,
   query = "",
   karmaBucket = "",
+  role = "",
   resolveWorkspaceUserKarma = () => 0,
   karmaBucketMatches = () => true
 } = {}) {
   const cleanQuery = String(query || "").trim().toLowerCase();
   const cleanKarmaBucket = String(karmaBucket || "").trim().toLowerCase();
-  return (publicState?.users || []).filter((user) => {
+  const cleanRole = String(role || "active").trim().toLowerCase();
+  const isRemovedUser = (user) => {
+    if (!user) return false;
+    if (user.removed) return true;
+    return String(user?.moderation?.action || "").trim().toLowerCase() === "removed";
+  };
+  const allUsers = Array.isArray(publicState?.users) ? publicState.users : [];
+  const activeUsers = allUsers.filter((user) => !isRemovedUser(user));
+  const removedUsers = [
+    ...(Array.isArray(publicState?.removedUsers) ? publicState.removedUsers : []).map((user) => ({
+      ...user,
+      removed: true,
+      isAdmin: false
+    })),
+    ...allUsers.filter((user) => isRemovedUser(user)).map((user) => ({
+      ...user,
+      removed: true
+    }))
+  ].filter((user, index, values) =>
+    values.findIndex((candidate) => String(candidate?.pubkey || "").trim().toLowerCase() === String(user?.pubkey || "").trim().toLowerCase()) === index
+  );
+  const sourceUsers = cleanRole === "removed" ? removedUsers : activeUsers;
+  return sourceUsers.filter((user) => {
+    if (cleanRole === "admin" && (!user.isAdmin || isRemovedUser(user))) return false;
+    if (cleanRole === "active" && isRemovedUser(user)) return false;
+    if (cleanRole === "removed" && !isRemovedUser(user)) return false;
     const visible =
       user.isAdmin ||
+      isRemovedUser(user) ||
       user.submissionCount > 0 ||
       user.commentCount > 0 ||
       user.moderation ||

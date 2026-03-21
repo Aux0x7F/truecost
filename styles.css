@@ -1143,6 +1143,7 @@ h3 {
   .workspace-search__input,
   .archive-status-menu__toggle,
   .workspace-select select,
+  .workspace-filter-field select,
   .tip-form input:not([type="checkbox"]):not([type="file"]),
   .tip-form select,
   .tip-form textarea,
@@ -1272,7 +1273,7 @@ h3 {
   cursor: pointer;
 }
 
-:where(.archive-status-menu__toggle, .workspace-select select) {
+:where(.archive-status-menu__toggle, .workspace-select select, .workspace-filter-field select) {
   min-height: var(--control-height);
   padding: var(--control-padding);
   border-radius: var(--control-radius);
@@ -2850,6 +2851,31 @@ h3 {
 
 .workspace-filter-bar--stacked {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace-filter-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+  margin-top: 0.8rem;
+}
+
+.workspace-filter-field {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.workspace-filter-field > span {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(74, 71, 66, 0.72);
+}
+
+.workspace-filter-field select {
+  width: 100%;
 }
 
 .workspace-user-link {

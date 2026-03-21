@@ -52,7 +52,6 @@ export function renderNavigationMarkup({
   notificationsLoading = false,
   profileMenuOpen = false,
   notificationsExpanded = false,
-  mapEnabled = true,
   deps = {}
 } = {}) {
   const escapeHtml = deps.escapeHtml || ((value) => String(value || ""));
@@ -118,7 +117,7 @@ export function renderNavigationMarkup({
       </button>
       <div class="nav-group__panel">
         <a class="${navLinkClass(page, navKeys, "investigations")}" href="./investigations.html">Investigations</a>
-        <a class="${navLinkClass(page, navKeys, "map", !mapEnabled && !navKeys.map?.includes(page))}" href="./map.html" ${!mapEnabled && !navKeys.map?.includes(page) ? 'aria-disabled="true"' : ""}>Map</a>
+        <a class="${navLinkClass(page, navKeys, "map")}" href="./map.html">Map</a>
         <a class="${navLinkClass(page, navKeys, "graph")}" href="./graph.html">Graph</a>
         <a class="${navLinkClass(page, navKeys, "wiki")}" href="./wiki.html">Wiki</a>
         ${isAdmin ? `<a class="nav-link" href="./editor.html">Create Investigation</a>` : ""}
