@@ -1,13 +1,23 @@
 import { identityPubkeysMatch, publicStateHasAdminPubkey } from "./public-state.js";
 
+function normalizePubkey(value = "") {
+  return String(value || "").trim().toLowerCase();
+}
+
 export function currentWorkspaceUser(publicState, viewerPubkey = "") {
   const cleanPubkey = String(viewerPubkey || "").trim().toLowerCase();
   if (!cleanPubkey) return null;
   return (publicState?.users || []).find((user) => identityPubkeysMatch(publicState, user?.pubkey, cleanPubkey)) || null;
 }
 
-export function workspaceUserIsAdmin(publicState, viewerPubkey = "") {
-  return publicStateHasAdminPubkey(publicState, viewerPubkey);
+export function workspaceUserIsAdmin(publicState, viewerPubkey = "", fallbackAdminPubkeys = []) {
+  const cleanViewerPubkey = normalizePubkey(viewerPubkey);
+  if (!cleanViewerPubkey) return false;
+  if (publicStateHasAdminPubkey(publicState, cleanViewerPubkey)) return true;
+  return (Array.isArray(fallbackAdminPubkeys) ? fallbackAdminPubkeys : [])
+    .map((pubkey) => normalizePubkey(pubkey))
+    .filter(Boolean)
+    .includes(cleanViewerPubkey);
 }
 
 export function workspaceHasInboxAccess({ publicState, viewerPubkey = "", siteKeyShare = null, activeSitePubkey = "" } = {}) {
@@ -71,7 +81,8 @@ export function captureWorkspaceAccessState({
 export function createWorkspaceAccessController({
   state,
   viewerController,
-  resolveSitePubkey
+  resolveSitePubkey,
+  fallbackAdminPubkeys = []
 } = {}) {
   function viewerPubkey() {
     return String(viewerController?.sessionPubkey?.() || "").trim().toLowerCase();
@@ -82,7 +93,7 @@ export function createWorkspaceAccessController({
   }
 
   function isAdmin() {
-    return workspaceUserIsAdmin(state.publicState, viewerPubkey());
+    return workspaceUserIsAdmin(state.publicState, viewerPubkey(), fallbackAdminPubkeys);
   }
 
   function activeSitePubkey() {

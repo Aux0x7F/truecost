@@ -127,3 +127,105 @@ test("workspace runtime renders cached admin state before full sync and restores
   assert.deepEqual(state.inboxSubmissions.map((item) => item.id), ["sub-2"]);
   assert.ok(renderCalls.some((entry) => entry.soft === false && entry.activeTab === "dashboard"));
 });
+
+test("workspace runtime renders the root admin shell immediately while full hydrate is still pending", async () => {
+  installWorkspaceDom();
+  const state = {
+    session: { pubkey: "root-admin-pubkey", secretKeyHex: "sekret" },
+    viewer: null,
+    publicState: null,
+    siteKeyShares: [],
+    siteKeyShare: null,
+    inboxSubmissions: [],
+    inboxLoading: false,
+    activeTab: "",
+    staticSlugs: [],
+    keyRequestTimer: 0,
+    backgroundSyncTimer: 0,
+    backgroundSyncInFlight: false,
+    keyRequestState: ""
+  };
+  const renderCalls = [];
+  let releaseHydrate;
+  const hydrateGate = new Promise((resolve) => {
+    releaseHydrate = resolve;
+  });
+  const runtime = createWorkspaceRuntime({
+    site: { nostr: { storageNamespace: "truecost.test" } },
+    state,
+    viewerController: {
+      primeFromSession: () => ({ pubkey: "root-admin-pubkey" })
+    },
+    accessController: {
+      viewerPubkey: () => "root-admin-pubkey",
+      activeSitePubkey: () => "",
+      hasInboxAccess: () => false,
+      isAdmin: () => true,
+      chooseInitialTab: () => "dashboard",
+      captureAccessState: () => JSON.stringify({
+        viewer: "root-admin-pubkey",
+        admin: true
+      })
+    },
+    publicStateStore: {
+      hydrate: async () => {
+        await hydrateGate;
+        return {
+          value: {
+            admins: ["root-admin-pubkey"],
+            siteInfo: { activePubkey: "" },
+            pendingAdminKeyRequests: [],
+            users: [{ pubkey: "root-admin-pubkey", username: "aux" }]
+          }
+        };
+      }
+    },
+    deps: {
+      ensureEventToolsLoaded: async () => {},
+      getStoredSession: () => ({ pubkey: "root-admin-pubkey", secretKeyHex: "sekret" }),
+      loadCachedSiteKeyShares: () => [],
+      loadCachedInboxSubmissions: () => [],
+      loadAdminKeyShares: async () => [],
+      loadAdminKeyShare: async () => null,
+      loadInboxSubmissions: async () => [],
+      loadStaticSlugs: async () => [],
+      mergeSiteKeyShares: (primary, secondary) => [...(primary || []), ...(secondary || [])],
+      findSiteKeyShare: () => null,
+      persistCachedSiteKeyShares: () => {},
+      persistCachedInboxSubmissions: () => {}
+    },
+    callbacks: {
+      captureDataState: () => JSON.stringify({ tab: state.activeTab }),
+      maybeAutoRespondToKeyRequests: async () => {},
+      maybeEnsureCurrentKeyRequest: async () => {},
+      maybeOpenAdminChatFromUrl: async () => {},
+      maybeResolveCommentDeepLink: () => {},
+      maybeResolveUserDeepLink: async () => {},
+      renderWorkspace: (options = {}) => {
+        renderCalls.push({
+          loading: false,
+          soft: Boolean(options.soft),
+          activeTab: state.activeTab
+        });
+      },
+      renderWorkspaceLoading: () => {
+        renderCalls.push({ loading: true });
+      },
+      shouldSoftRefreshWorkspace: () => true
+    }
+  });
+
+  const refreshPromise = runtime.refresh(false);
+  await Promise.resolve();
+
+  assert.deepEqual(renderCalls[0], {
+    loading: false,
+    soft: true,
+    activeTab: "dashboard"
+  });
+
+  releaseHydrate();
+  await refreshPromise;
+
+  assert.ok(renderCalls.some((entry) => entry.loading === false && entry.soft === false && entry.activeTab === "dashboard"));
+});

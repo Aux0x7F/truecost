@@ -68,6 +68,32 @@ test("workspace access helpers keep inbox access scoped to trusted admins and ac
   assert.deepEqual(workspaceTabButtons({ hasSession: false, isAdmin: false }), []);
 });
 
+test("workspace access can recognize the configured root admin before public state finishes hydrating", () => {
+  const rootPubkey = "f".repeat(64);
+  const state = {
+    session: { pubkey: rootPubkey },
+    publicState: null,
+    siteKeyShare: null,
+    activeTab: ""
+  };
+  const viewerController = {
+    sessionPubkey: () => rootPubkey
+  };
+  const access = createWorkspaceAccessController({
+    state,
+    viewerController,
+    resolveSitePubkey: () => "",
+    fallbackAdminPubkeys: [rootPubkey]
+  });
+
+  assert.equal(access.isAdmin(), true);
+  assert.equal(access.chooseInitialTab(""), "dashboard");
+  assert.deepEqual(
+    access.tabButtons().map((tab) => tab.id),
+    ["dashboard", "profile", "comments", "users", "submissions", "entities", "review", "log"]
+  );
+});
+
 test("workspace access treats a rotated admin session as admin when the identity chain is already known", () => {
   const rootPubkey = "a".repeat(64);
   const rotatedPubkey = "b".repeat(64);

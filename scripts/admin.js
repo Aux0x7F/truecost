@@ -262,7 +262,8 @@ workspaceSelectors = createWorkspaceSelectorController({
 const workspaceAccess = createWorkspaceAccessController({
   state: workspaceState,
   viewerController,
-  resolveSitePubkey: (publicState) => workspaceSelectors.resolveWorkspaceSitePubkey(publicState)
+  resolveSitePubkey: (publicState) => workspaceSelectors.resolveWorkspaceSitePubkey(publicState),
+  fallbackAdminPubkeys: [SITE.nostr.rootAdminPubkey]
 });
 
 workspaceTabs = createWorkspaceTabsController({
