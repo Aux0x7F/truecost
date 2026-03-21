@@ -197,7 +197,7 @@ const workspaceState = {
   entityLocationFilterOpen: false,
   userFilters: {
     karma: "",
-    role: ""
+    role: "active"
   },
   commentFilters: {
     query: "",

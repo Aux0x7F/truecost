@@ -38,11 +38,10 @@ export function renderKarmaSelectOptions(selectedValue) {
 }
 
 export function renderRoleSelectOptions(selectedValue) {
-  const current = String(selectedValue || "").trim().toLowerCase();
+  const current = String(selectedValue || "active").trim().toLowerCase();
   const options = [
-    ["", "All roles"],
+    ["active", "Active"],
     ["admin", "Admin"],
-    ["member", "Member"],
     ["removed", "Removed"]
   ];
   return options

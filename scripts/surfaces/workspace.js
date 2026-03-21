@@ -251,15 +251,15 @@ function renderUsersPane(workspaceState, deps) {
               : null,
             loading: workspaceState.userLookupLoading
           })}
-          <div class="workspace-filter-bar workspace-filter-bar--duo">
-            <label class="workspace-select">
-              <span class="sr-only">Filter users by karma</span>
+          <div class="workspace-filter-row">
+            <label class="workspace-filter-field">
+              <span>Karma</span>
               <select data-user-filter-karma>
                 ${deps.renderKarmaSelectOptions(workspaceState.userFilters.karma)}
               </select>
             </label>
-            <label class="workspace-select">
-              <span class="sr-only">Filter users by role</span>
+            <label class="workspace-filter-field">
+              <span>Role</span>
               <select data-user-filter-role>
                 ${deps.renderRoleSelectOptions(workspaceState.userFilters.role)}
               </select>
