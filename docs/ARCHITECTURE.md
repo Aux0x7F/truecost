@@ -100,10 +100,14 @@ Public pages now also have an immediate-shell boundary:
 - `scripts/shell.js`
   - renders the nav/profile shell from local session state as soon as the document is ready
   - keeps public navigation interactive before the heavier runtime and route features finish booting
+  - owns the global auth modal and service-worker registration
 - `scripts/app.js`
   - upgrades that shell with live public state, notifications, overlays, and route-owned features
+  - loads heavier route features through a shared feature manifest instead of importing every public feature synchronously
 - `scripts/core/page-router.js`
   - provides the shared route-mount pattern so page entry files stop hand-rolling their own scheduling logic
+- `scripts/core/feature-manifest.js`
+  - caches and preloads route feature modules so public boot can stay interactive before every feature payload arrives
 
 The CSS now follows the same split:
 
@@ -114,8 +118,13 @@ The CSS now follows the same split:
   - shared control, dropdown, comment, workspace, editor, and responsive selector families should collapse into the early partials instead of being recopied per surface
 - `tooling/build-styles.mjs`
   - rebuilds `styles.css` from the ordered source partials
+- `site-src/`
+  - source page bodies and template inputs used by the build
+  - page definitions carry bakedown-relevant metadata such as template kind, content collections, and interactive mounts
 - `build.mjs`
-  - creates a minified `dist/` artifact with bundled browser entrypoints and minified HTML for deploys
+  - renders checked-in root HTML from `site-src`
+  - creates a minified `dist/` artifact with ESM code-split browser entrypoints and minified HTML for deploys
+  - emits a versioned service worker aligned with the rendered page/input manifest
 
 That keeps the CSS boundary closer to the JS surface split instead of letting one root stylesheet keep absorbing every component family.
 
@@ -133,6 +142,13 @@ URL query params follow the same pattern:
 - features subscribe only to the params they consume
 - features route query changes to the DOM roots they own
 - param writes should go through the shared query-state helper so history, popstate, and mounted surfaces stay in sync
+
+Static markup now follows a matching source/build rule:
+
+- source HTML bodies live in `site-src/main/*.html`
+- page metadata and bakedown-facing template inputs live in `site-src/pages.mjs`
+- checked-in root HTML is generated output, not the authoring source
+- page shells and bakedown inputs should stay aligned so static snapshots can be materialized from the same page definitions the build already uses
 
 Account auth flows follow a similar separation:
 
@@ -189,6 +205,17 @@ Today, True Cost already has:
   - `graph.html` for high-level graph exploration
   - `wiki.html` for entity wiki pages and directory search
   - admin-only local draft entities and draft relationships layered over the shared graph state until real relationship publishing lands
+- source-templated page generation:
+  - `site-src/main/*.html` for page bodies
+  - `site-src/pages.mjs` for page definitions and bakedown-facing template inputs
+  - `build.mjs` as the source of generated root HTML and `dist/`
+- shell-owned auth entry:
+  - logged-out navigation opens a global create/login modal on any public page
+  - session changes are routed back into workspace, submit, and editor shells through shared events
+- deferred route feature loading:
+  - shell and page chrome mount immediately
+  - route features load by manifest and reconcile in the background
+- a versioned service worker for static pages, first-paint assets, and content/index warm cache
 
 Today, True Cost does not yet have:
 

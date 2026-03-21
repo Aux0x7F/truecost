@@ -27,6 +27,10 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - Pages now load a bundled `styles.css` file rebuilt from ordered source partials in `styles/`, so first paint no longer waits on an import chain or a pile of separate stylesheet requests.
 - The stylesheet convergence pass now pushes repeated dropdown, shell, workspace, and comment rules up into the shared cascade instead of only redistributing them across files.
 - Site fonts are now self-hosted, so public pages no longer need client requests to Google for typography.
+- Public pages now build from `site-src` page bodies and page-definition inputs instead of treating checked-in root HTML as hand-edited source.
+- Logged-out navigation now opens a global shell-owned auth modal, so create/login is available from any public page.
+- Public route features now load through a shared feature manifest, keeping the shell interactive before heavier route modules reconcile.
+- A versioned service worker now caches rendered pages, first-paint assets, and key content/index payloads against the generated build manifest.
 - The workspace controller has been reduced again: admin shell rendering, tab state, inbox/chat flow, site-key handling, selectors, and mutation handlers now live in dedicated workspace modules instead of one large page controller.
 - Mounted workspace/admin, submit, and editor shells now use observed region updates so unrelated async state changes do not replace active form roots or open overlays.
 - A first seeded graph/wiki foundation is now in place:
@@ -45,6 +49,7 @@ The current build is meant to be a practical, low-overhead publishing and coordi
 - Keep tightening the remaining large CSS families, especially `02-content.css`, `06-workspace.css`, and the still-heavy shared foundation layer, so convergence continues after the bundled-first-paint pass.
 - Continue the same direct reduction work on the remaining controller hotspots, with upload and moderation-detail handler families now the main `admin.js` target after the workspace-account extraction pass.
 - Apply the same controller-to-feature reduction pass to the remaining editor/workspace hotspots that still own too much orchestration locally.
+- Move admin/editor/workspace pages onto the same source-template and deferred-feature discipline now in place for the public shell, so the heavier controllers stop behaving like special cases.
 - Extend the live collaborative layer from static pages and investigation detail/editor flows into the archive and entity records without regressing the static-first baseline.
 - Add clearer history and conflict handling for live collaborative units before each bakedown cycle, so operators can see what will ship and why.
 - Expand end-to-end browser validation around submissions, moderation, publishing, comment handling, and browser-compat fallbacks before each release.

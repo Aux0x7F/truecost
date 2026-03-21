@@ -107,7 +107,7 @@ export function renderNavigationMarkup({
         </div>
       </div>
     `
-    : `<a class="profile-cta" href="./admin.html?tab=login" aria-label="Create or log in">Create/Login</a>`;
+    : `<button class="profile-cta" type="button" data-auth-open aria-label="Create or log in">Create/Login</button>`;
 
   return `
     <a class="${navLinkClass(page, navKeys, "home")}" href="./index.html">Home</a>

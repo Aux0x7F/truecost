@@ -15,6 +15,8 @@ Changes to live state, cached state, comments, filters, maps, workspace surfaces
 - a clear statement of what user behavior was verified
 - a compatibility note when introducing non-baseline browser features
 - a bundle or source-contract check when a change alters first-paint assets such as `styles.css`
+- a source-template / build-contract check when page markup generation changes
+- a service-worker manifest check when shell/assets/content cache policy changes
 
 Pure presentation refinements should be checked in manual design runs unless they change runtime behavior or a documented interaction contract.
 
@@ -65,6 +67,9 @@ Where applicable, cover:
 - `node --test tests/account-actions.test.mjs`
 - `node --test tests/session-api-vendor.test.mjs`
 - `node --test tests/stylesheets-bundle.test.mjs`
+- `node --test tests/site-template-build.test.mjs`
+- `node --test tests/feature-manifest.test.mjs`
+- `node --test tests/service-worker.test.mjs`
 - `node --test tests/page-router.test.mjs`
 - `node --test tests/workspace-shell.test.mjs`
 - `node --test tests/workspace-tabs.test.mjs`
@@ -83,4 +88,6 @@ Use the checked-in browser regression whenever a fix touches:
 - attached autocomplete close behavior on `Enter` or blur
 - mounted-shell rerender boundaries, such as password modal inputs surviving unrelated workspace pane updates
 - immediate-shell boot and first-interaction timing for public navigation
+- deferred route loading and feature-manifest boot behavior
+- service-worker-backed asset/page cache behavior when the shell/build contract changes
 - other runtime paths that unit tests can miss because the failure only appears in a real browser

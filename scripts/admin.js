@@ -454,10 +454,18 @@ workspaceAccount = createWorkspaceAccountController({
 document.addEventListener("DOMContentLoaded", () => {
   if (!document.querySelector("[data-workspace-page]")) return;
   bindWorkspace();
+  window.addEventListener("truecost:session-changed", handleWorkspaceSessionChanged);
   document.addEventListener("visibilitychange", handleWorkspaceVisibilityChange);
   window.addEventListener("focus", handleWorkspaceWindowFocus);
   void refreshWorkspace();
 });
+
+async function handleWorkspaceSessionChanged() {
+  workspaceState.session = getStoredSession();
+  workspaceState.viewer = null;
+  workspaceState.passwordRotationModal = null;
+  await refreshWorkspace(true);
+}
 
 function bindWorkspace() {
   const shell = document.querySelector("[data-workspace-shell]");

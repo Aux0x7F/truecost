@@ -43,6 +43,30 @@ test("renderNavigationMarkup builds the admin explore shell with notifications",
   assert.match(markup, />Admin</);
 });
 
+test("renderNavigationMarkup exposes the shell auth trigger when logged out", () => {
+  const markup = renderNavigationMarkup({
+    page: "home",
+    navKeys: {
+      home: ["home"],
+      explore: ["investigations", "map", "graph", "wiki"],
+      investigations: ["investigations"],
+      map: ["map"],
+      graph: ["graph"],
+      wiki: ["wiki"],
+      "get-involved": ["get-involved"],
+      guide: ["guide"],
+      submit: ["submit"],
+      about: ["about"],
+      merch: ["merch"],
+      workspace: ["workspace"]
+    },
+    isLoggedIn: false
+  });
+
+  assert.match(markup, /data-auth-open/);
+  assert.doesNotMatch(markup, /admin\.html\?tab=login/);
+});
+
 test("renderWorkspaceView keeps login and comments panes as separate surfaces", () => {
   const loginView = renderWorkspaceView({
     workspaceState: { session: null, activeTab: "login" },

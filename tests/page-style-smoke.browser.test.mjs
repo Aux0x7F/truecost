@@ -36,6 +36,16 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
       return panel ? getComputedStyle(panel).display : "";
     });
     assert.equal(earlyExploreDisplay, "grid", "public shell should be interactive before background hydrate completes");
+    await page.getByRole("button", { name: "Create or log in" }).click();
+    await page.waitForSelector("[data-auth-modal]", { timeout: 5000 });
+    const authModalMetrics = await page.evaluate(() => ({
+      hasForm: Boolean(document.querySelector("[data-auth-form]")),
+      minLength:
+        document.querySelector('[data-auth-form] input[name=\"password\"]')?.getAttribute("minlength") || ""
+    }));
+    assert.equal(authModalMetrics.hasForm, true, "global auth modal should open from the public shell");
+    assert.equal(authModalMetrics.minLength, "8", "global auth modal should enforce password minimums");
+    await page.click("[data-auth-close]");
 
     await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "networkidle" });
     await page.waitForTimeout(1200);

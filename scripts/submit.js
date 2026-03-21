@@ -59,8 +59,20 @@ const submitState = {
 document.addEventListener("DOMContentLoaded", () => {
   if (!document.querySelector("[data-submit-page]")) return;
   bindSubmitPage();
+  window.addEventListener("truecost:session-changed", handleSubmitSessionChanged);
   void refreshSubmitPage();
 });
+
+function handleSubmitSessionChanged() {
+  submitState.formModal = null;
+  submitState.chatModal = null;
+  submitState.searchUi = {
+    entityRefs: { highlight: -1, closedValue: "" },
+    location: { highlight: -1, closedValue: "" },
+    suggestedEntity: { highlight: -1, closedValue: "" }
+  };
+  void refreshSubmitPage(true);
+}
 
 function bindSubmitPage() {
   const shell = document.querySelector("[data-submit-shell]");

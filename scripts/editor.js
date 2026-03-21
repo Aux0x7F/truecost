@@ -66,8 +66,16 @@ editorPublicStateStore.subscribe((snapshot) => {
 
 document.addEventListener("DOMContentLoaded", () => {
   if (!document.querySelector("[data-editor-page]")) return;
+  window.addEventListener("truecost:session-changed", handleEditorSessionChanged);
   void initEditorPage();
 });
+
+async function handleEditorSessionChanged() {
+  destroyLiveInvestigationOverlay();
+  editorState.entityModal = null;
+  editorState.imageModal = null;
+  await initEditorPage(true);
+}
 
 async function initEditorPage(force = false) {
   editorState.session = getStoredSession();
