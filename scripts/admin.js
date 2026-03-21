@@ -98,7 +98,8 @@ import {
   karmaBucketForScore,
   karmaBucketMatches,
   parseMaybeNumber,
-  renderKarmaSelectOptions
+  renderKarmaSelectOptions,
+  renderRoleSelectOptions
 } from "./core/workspace-formatting.js";
 import { createWorkspaceSelectorController } from "./core/workspace-selectors.js";
 import { createWorkspaceSiteKeyController } from "./core/workspace-site-key.js";
@@ -195,7 +196,8 @@ const workspaceState = {
   entityLocationFilterHighlight: -1,
   entityLocationFilterOpen: false,
   userFilters: {
-    karma: ""
+    karma: "",
+    role: ""
   },
   commentFilters: {
     query: "",
@@ -797,6 +799,11 @@ function bindWorkspace() {
       renderWorkspace({ soft: true });
       return;
     }
+    if (target.matches("[data-user-filter-role]")) {
+      workspaceState.userFilters.role = String(target.value || "").trim().toLowerCase();
+      renderWorkspace({ soft: true });
+      return;
+    }
     if (target.matches("[data-entity-filter-query]")) {
       workspaceState.entityFilters.query = String(target.value || "");
       renderWorkspace({ soft: true });
@@ -944,6 +951,7 @@ function workspaceSurfaceDeps() {
     currentSessionUsernameConflictMessage,
     visibleWorkspaceUsers: () => workspaceSelectors.visibleWorkspaceUsers(),
     renderKarmaSelectOptions,
+    renderRoleSelectOptions,
     renderLookupCandidate: () => renderWorkspaceLookupCandidate(workspaceState, actionDeps),
     renderUserStatsCard: () => renderWorkspaceUserStatsCard(workspaceState, actionDeps),
     escapeHtml,

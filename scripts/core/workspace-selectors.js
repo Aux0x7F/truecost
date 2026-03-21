@@ -51,6 +51,7 @@ export function createWorkspaceSelectorController({
       publicState: state.publicState,
       query: state.userLookupQuery,
       karmaBucket: state.userFilters.karma,
+      role: state.userFilters.role,
       resolveWorkspaceUserKarma: runtime.resolveWorkspaceUserKarma,
       karmaBucketMatches: runtime.karmaBucketMatches
     });
