@@ -91,9 +91,9 @@ export async function seedAdminSession(page, { port, secretKeyHex, pubkey }) {
   }, { secretKeyHex, pubkey });
 }
 
-export async function seedLegacyAdminSession(page, { port, secretKeyHex, username = "smoke-user" }) {
+export async function seedLegacyAdminSession(page, { port, secretKeyHex, username = "smoke-user", adminPubkey = "" }) {
   await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "domcontentloaded" });
-  await page.evaluate(({ nextSecretKeyHex, nextUsername }) => {
+  await page.evaluate(({ nextSecretKeyHex, nextUsername, nextAdminPubkey }) => {
     localStorage.setItem(
       "truecost.v2.session",
       JSON.stringify({ username: nextUsername, secretKeyHex: nextSecretKeyHex })
@@ -101,8 +101,9 @@ export async function seedLegacyAdminSession(page, { port, secretKeyHex, usernam
     localStorage.setItem(
       "truecost.v2.public-state-snapshot",
       JSON.stringify({
-        admins: [],
-        users: [{ pubkey: "", username: nextUsername, displayName: "Smoke User", socialLinks: [] }],
+        admins: nextAdminPubkey ? [nextAdminPubkey] : [],
+        rootAdminPubkey: nextAdminPubkey || "",
+        users: [{ pubkey: nextAdminPubkey || "", username: nextUsername, displayName: "Smoke User", socialLinks: [] }],
         entities: [],
         approvedEntities: [],
         drafts: [],
@@ -113,7 +114,7 @@ export async function seedLegacyAdminSession(page, { port, secretKeyHex, usernam
         syncInfo: { connected: false, remoteEventCount: 0, cachedEventCount: 1, mergedEventCount: 1 }
       })
     );
-  }, { nextSecretKeyHex: secretKeyHex, nextUsername: username });
+  }, { nextSecretKeyHex: secretKeyHex, nextUsername: username, nextAdminPubkey: adminPubkey });
 }
 
 export async function seedKnownUsernameOwner(page, { port, username = "aux", ownerPubkey = "" }) {

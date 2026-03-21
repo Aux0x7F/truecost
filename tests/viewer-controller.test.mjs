@@ -49,3 +49,24 @@ test("viewer controller keeps an existing session pubkey intact", () => {
   assert.equal(viewer?.pubkey, "b".repeat(64));
   assert.equal(state.session.pubkey, "b".repeat(64));
 });
+
+test("viewer controller can resolve admin access from a legacy session once identity derivation is available", () => {
+  const pubkey = "a".repeat(64);
+  const state = {
+    session: {
+      username: "aux",
+      secretKeyHex: "seed-secret",
+      pubkey: ""
+    },
+    viewer: null
+  };
+  const controller = createViewerController({
+    state,
+    site: { nostr: { rootAdminPubkey: pubkey } },
+    deriveIdentity: () => ({ pubkey }),
+    hasNostrTools: () => true
+  });
+
+  assert.equal(controller.canEdit({ admins: [] }), true);
+  assert.equal(state.session.pubkey, pubkey);
+});
