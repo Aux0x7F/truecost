@@ -37,9 +37,11 @@ import {
   reviewStatusForAction
 } from "./core/page-drafts.js";
 import { createNavigationUiState } from "./core/navigation-state.js";
+import NAV_KEYS from "./core/nav-keys.js";
 import {
   createNotificationState
 } from "./core/notification-state.js";
+import { createPageRouter } from "./core/page-router.js";
 import { createSiteNotificationBuilder } from "./core/notification-builders.js";
 import { getStoredGuestSession, getStoredSession, saveSession } from "./core/session.js";
 import { createQueryState } from "./core/query-state.js";
@@ -77,20 +79,6 @@ import { createReviewWorkflow } from "./features/review-workflow.js";
 import { createSiteShellFeature } from "./features/site-shell.js";
 import { createSiteRuntime } from "./features/site-runtime.js";
 import { createWikiPageFeature } from "./features/wiki-page.js";
-const NAV_KEYS = {
-  home: ["home"],
-  explore: ["investigations", "investigation", "editor", "map", "graph", "wiki"],
-  investigations: ["investigations", "investigation", "editor"],
-  graph: ["graph"],
-  wiki: ["wiki"],
-  guide: ["guide"],
-  submit: ["submit"],
-  "get-involved": ["get-involved"],
-  about: ["about"],
-  merch: ["merch"],
-  map: ["map"],
-  workspace: ["workspace"]
-};
 
 let appRuntime = null;
 const queryState = createQueryState();
@@ -357,6 +345,7 @@ const staticPageEditSurface = createStaticPageEditSurface({
 
 document.addEventListener("DOMContentLoaded", () => {
   const page = document.body.dataset.page || "";
+  window.__truecostImmediateShell?.destroy?.();
   siteShellFeature.mount();
   appRuntime.connectFeatures({
     archivePageFeature,
@@ -369,44 +358,24 @@ document.addEventListener("DOMContentLoaded", () => {
     wikiPageFeature
   });
   appRuntime.start();
-  schedulePageFeatureMounts(page);
-});
-
-function schedulePageFeatureMounts(page) {
-  const mount = () => {
-    mountPageFeatures(page);
-  };
-  if (typeof window.requestAnimationFrame === "function") {
-    window.requestAnimationFrame(mount);
-    return;
-  }
-  window.setTimeout(mount, 0);
-}
-
-function mountPageFeatures(page) {
-  switch (page) {
-    case "home":
-    case "investigations":
-      archivePageFeature.mount();
-      break;
-    case "guide":
-      markdownPageFeature.mount();
-      break;
-    case "investigation":
+  createPageRouter({ page })
+    .when(["home", "investigations"], () => archivePageFeature.mount())
+    .when("guide", () => markdownPageFeature.mount())
+    .when("investigation", () => {
       void investigationDetailSurface.init();
       markdownPageFeature.mount();
-      break;
-    case "map":
+    })
+    .when("map", () => {
       void mapPageFeature.mount();
-      break;
-    case "graph":
+    })
+    .when("graph", () => {
       void graphPageFeature.mount();
-      break;
-    case "wiki":
+    })
+    .when("wiki", () => {
       void wikiPageFeature.mount();
-      break;
-    default:
-      break;
-  }
-  void staticPageEditSurface.init();
-}
+    })
+    .always(() => {
+      void staticPageEditSurface.init();
+    })
+    .mount();
+});

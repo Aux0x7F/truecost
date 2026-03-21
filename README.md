@@ -10,6 +10,7 @@ The reusable framework now lives separately in the sibling `nostr-site` repo.
 - `scripts/core/`: shared services, stores, controllers, formatting, and transport helpers
 - `scripts/features/`: route-owned feature orchestration and lifecycle modules
 - `scripts/surfaces/`: shared presentational UI families
+- `scripts/shell.js`: immediate public-shell bootstrap for nav/profile interactivity before heavier page features hydrate
 - `docs/`: contract, operations, and roadmap documents for the current site
 - `docs/README.md`: index of architecture, component, testing, browser-support, and operating contracts
 - `vendor/nostr-site-support.esm.js`: vendored minified browser bundle built from `nostr-site/support-lib`
@@ -63,6 +64,14 @@ Update `scripts/core/site-config.js` for project links, relay list, and keys:
 ## Smoke testing
 
 The generic live-browser smoke harness now lives in `nostr-site/tooling/browser-smoke`.
+
+## Build
+
+- `npm run build`
+  - rebuilds `styles.css`
+  - bundles and minifies the browser entry scripts into `dist/scripts`
+  - minifies HTML into `dist/`
+  - copies content, vendor assets, and font files needed for static deploys
 
 ## Hardening
 

@@ -26,6 +26,10 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
 
   try {
     await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "domcontentloaded" });
+    const initialNavLinks = await page.evaluate(() =>
+      document.querySelectorAll("[data-site-nav] a, [data-site-nav] button[data-submenu-toggle]").length
+    );
+    assert.ok(initialNavLinks > 0, "public shell should render navigation links by DOMContentLoaded");
     await page.getByRole("button", { name: "Explore" }).click();
     const earlyExploreDisplay = await page.evaluate(() => {
       const panel = document.querySelector('[data-nav-group].is-open .nav-group__panel');

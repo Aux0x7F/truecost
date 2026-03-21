@@ -65,10 +65,12 @@ Where applicable, cover:
 - `node --test tests/account-actions.test.mjs`
 - `node --test tests/session-api-vendor.test.mjs`
 - `node --test tests/stylesheets-bundle.test.mjs`
+- `node --test tests/page-router.test.mjs`
 - `node --test tests/workspace-shell.test.mjs`
 - `node --test tests/workspace-tabs.test.mjs`
 - `node --test tests/workspace-site-key.test.mjs`
 - `node --test tests/workspace-selectors.test.mjs`
+- `npm run build`
 Use the checked-in browser regression whenever a fix touches:
 
 - admin/workspace boot
@@ -80,4 +82,5 @@ Use the checked-in browser regression whenever a fix touches:
 - attached autocomplete/dropdown geometry
 - attached autocomplete close behavior on `Enter` or blur
 - mounted-shell rerender boundaries, such as password modal inputs surviving unrelated workspace pane updates
+- immediate-shell boot and first-interaction timing for public navigation
 - other runtime paths that unit tests can miss because the failure only appears in a real browser

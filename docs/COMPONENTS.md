@@ -18,6 +18,7 @@ Component behavior that spans a whole UI family should live in `scripts/surfaces
 ### Header and navigation
 
 - The site header is static-first and readable before JavaScript enhancement.
+- The nav shell should render from local state as soon as the document is ready, then upgrade in place when heavier runtime state arrives.
 - The mobile nav toggle must have a discernible accessible name in HTML.
 - The primary public nav groups archive browsing under `Explore`, with `Investigations`, `Map`, `Graph`, and `Wiki` as child destinations.
 - `Map` is a public destination and should never be availability-gated by account or relay connection state.

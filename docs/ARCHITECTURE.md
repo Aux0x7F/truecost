@@ -95,6 +95,16 @@ The implementation now follows four layers:
 
 `app.js` should stay a bootstrap and route-mount file, not a dumping ground for feature logic. Page files should compose shared features and surfaces. They should not reintroduce duplicate escaping, duplicate comment threading, duplicate request-signer logic, or duplicate attached-search behavior.
 
+Public pages now also have an immediate-shell boundary:
+
+- `scripts/shell.js`
+  - renders the nav/profile shell from local session state as soon as the document is ready
+  - keeps public navigation interactive before the heavier runtime and route features finish booting
+- `scripts/app.js`
+  - upgrades that shell with live public state, notifications, overlays, and route-owned features
+- `scripts/core/page-router.js`
+  - provides the shared route-mount pattern so page entry files stop hand-rolling their own scheduling logic
+
 The CSS now follows the same split:
 
 - `styles.css`
@@ -104,6 +114,8 @@ The CSS now follows the same split:
   - shared control, dropdown, comment, workspace, editor, and responsive selector families should collapse into the early partials instead of being recopied per surface
 - `tooling/build-styles.mjs`
   - rebuilds `styles.css` from the ordered source partials
+- `build.mjs`
+  - creates a minified `dist/` artifact with bundled browser entrypoints and minified HTML for deploys
 
 That keeps the CSS boundary closer to the JS surface split instead of letting one root stylesheet keep absorbing every component family.
 
