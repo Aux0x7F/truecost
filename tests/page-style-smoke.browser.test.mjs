@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import {
   createStaticServer,
   loadPlaywright,
-  seedAdminSession
+  seedAdminSession,
+  seedLegacyAdminSession
 } from "./browser-test-utils.mjs";
 
 const repoRoot = process.cwd();
@@ -153,6 +154,19 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
     assert.equal(userFilterMetrics.roleValue, "active", "role filtering should default to active users");
     assert.equal(userFilterMetrics.sameRow, true, "karma and role controls should share the same row");
     assert.ok(userFilterMetrics.widthDelta < 8, "karma and role controls should share the available width evenly");
+
+    await seedLegacyAdminSession(page, {
+      port,
+      secretKeyHex,
+      username: "smoke-user",
+      adminPubkey: pubkey
+    });
+    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "networkidle" });
+    await page.click("[data-profile-toggle]");
+    const legacyProfileMenuLabel = await page.evaluate(() =>
+      document.querySelector(".profile-menu__panel a")?.textContent?.trim() || ""
+    );
+    assert.equal(legacyProfileMenuLabel, "Admin", "legacy admin sessions should still render the admin menu label");
   } finally {
     await browser.close();
     await new Promise((resolve) => server.close(resolve));
