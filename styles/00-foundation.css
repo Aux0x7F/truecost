@@ -432,9 +432,13 @@ h3 {
 }
 
 .nav-group.is-open .nav-group__panel,
-.nav-group.is-current .nav-group__panel,
 .profile-menu.is-open .profile-menu__panel {
   display: grid;
+}
+
+.nav-group__panel .nav-link.is-current {
+  background: rgba(18, 18, 18, 0.08);
+  color: var(--ink);
 }
 
 .nav-group__panel a,
