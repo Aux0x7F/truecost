@@ -32,11 +32,37 @@ test("graph explorer and wiki pages render seeded graph content", async (t) => {
 
     const graphMetrics = await page.evaluate(() => ({
       nodeCount: document.querySelectorAll("[data-graph-node]").length,
-      railText: document.querySelector("[data-graph-rail]")?.textContent || ""
+      railText: document.querySelector("[data-graph-rail]")?.textContent || "",
+      explorePanelDisplay: getComputedStyle(document.querySelector(".nav-group__panel")).display
     }));
 
     assert.ok(graphMetrics.nodeCount >= 3, "graph page should render seeded nodes");
     assert.match(graphMetrics.railText, /Current node/);
+    assert.equal(graphMetrics.explorePanelDisplay, "none", "Explore should not stay open just because Graph is current");
+
+    await page.getByRole("button", { name: "Explore" }).click();
+    const graphNavExpanded = await page.evaluate(() => {
+      const graphLink = Array.from(document.querySelectorAll(".nav-group__panel a")).find((link) =>
+        link.textContent?.trim() === "Graph"
+      );
+      const panel = graphLink?.closest(".nav-group__panel");
+      return {
+        panelDisplay: panel ? getComputedStyle(panel).display : "",
+        graphIsCurrent: graphLink?.classList.contains("is-current") || false
+      };
+    });
+    assert.equal(graphNavExpanded.panelDisplay, "grid");
+    assert.equal(graphNavExpanded.graphIsCurrent, true);
+
+    await page.getByRole("button", { name: "Explore" }).click();
+    const graphNavCollapsed = await page.evaluate(() => {
+      const graphLink = Array.from(document.querySelectorAll(".nav-group__panel a")).find((link) =>
+        link.textContent?.trim() === "Graph"
+      );
+      const panel = graphLink?.closest(".nav-group__panel");
+      return panel ? getComputedStyle(panel).display : "";
+    });
+    assert.equal(graphNavCollapsed, "none", "Explore should collapse again when toggled from Graph");
 
     await page.goto(`http://127.0.0.1:${port}/wiki.html?entity=north-valley-processing-campus`, { waitUntil: "networkidle" });
     await page.waitForFunction(
@@ -52,6 +78,19 @@ test("graph explorer and wiki pages render seeded graph content", async (t) => {
     assert.match(wikiMetrics.railText, /Relationships/);
     assert.match(wikiMetrics.railText, /Related investigations/);
     assert.match(wikiMetrics.railText, /Open in graph/);
+
+    const wikiNavMetrics = await page.evaluate(() => {
+      const graphLink = Array.from(document.querySelectorAll(".nav-group__panel a")).find((link) =>
+        link.textContent?.trim() === "Graph"
+      );
+      const panel = graphLink?.closest(".nav-group__panel");
+      return {
+        panelDisplay: panel ? getComputedStyle(panel).display : "",
+        exploreIsCurrent: document.querySelector("[data-nav-group].is-current")?.querySelector("[data-submenu-toggle]")?.textContent?.trim() || ""
+      };
+    });
+    assert.equal(wikiNavMetrics.exploreIsCurrent, "Explore");
+    assert.equal(wikiNavMetrics.panelDisplay, "none", "Wiki should keep Explore highlighted without forcing it open");
 
     await seedAdminSession(page, { port, secretKeyHex, pubkey });
     await page.goto(`http://127.0.0.1:${port}/graph.html`, { waitUntil: "networkidle" });
