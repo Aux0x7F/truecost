@@ -31,7 +31,7 @@ export const SITE = Object.freeze({
     relays: ["wss://relay.primal.net", "wss://nos.lol"],
     authorityRelays: ["wss://relay.primal.net", "wss://nos.lol"],
     inboxPubkey: "a2841b1f4971d2a646b476982a353d0165df07f8ae88d795e4a75cd1e0d3d42f",
-    rootAdminPubkey: "4e1b9528032c874fb5f2ad864afd29d26e31613fbff15150b8d5cd28c3a74933",
+    rootAdminPubkey: "00fcff0a9d42b4b83d1e5e632a662336307cdb10a07e7f707f21842f8ead43eb",
     maxAttachmentBytes: 90000,
     connectTimeoutMs: 3200,
     authorityConnectTimeoutMs: 9000,
