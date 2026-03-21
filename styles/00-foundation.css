@@ -436,6 +436,11 @@ h3 {
   display: grid;
 }
 
+.nav-group__panel .nav-link.is-current {
+  background: rgba(18, 18, 18, 0.08);
+  color: var(--ink);
+}
+
 .nav-group__panel a,
 .profile-menu__panel a,
 .profile-menu__panel button {

@@ -50,6 +50,42 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
       "desktop featured cards should not collapse into a single full-width column"
     );
 
+    await page.goto(`http://127.0.0.1:${port}/map.html`, { waitUntil: "networkidle" });
+    await page.waitForTimeout(300);
+    const mapNavMetrics = await page.evaluate(() => {
+      const exploreGroup = document.querySelector('[data-nav-group].is-current');
+      const mapLink = Array.from(document.querySelectorAll(".nav-group__panel a")).find((link) =>
+        link.textContent?.trim() === "Map"
+      );
+      const panel = mapLink?.closest(".nav-group__panel");
+      const panelStyle = panel ? getComputedStyle(panel) : null;
+      return {
+        currentGroupLabel: exploreGroup?.querySelector("[data-submenu-toggle]")?.textContent?.trim() || "",
+        mapIsCurrent: mapLink?.classList.contains("is-current") || false,
+        panelDisplay: panelStyle?.display || ""
+      };
+    });
+
+    assert.equal(mapNavMetrics.currentGroupLabel, "Explore");
+    assert.equal(mapNavMetrics.mapIsCurrent, true, "map nav item should be marked current on the map page");
+    assert.equal(mapNavMetrics.panelDisplay, "none", "desktop nav groups should stay collapsed until opened");
+
+    await page.getByRole("button", { name: "Explore" }).click();
+    const expandedMapNavMetrics = await page.evaluate(() => {
+      const mapLink = Array.from(document.querySelectorAll(".nav-group__panel a")).find((link) =>
+        link.textContent?.trim() === "Map"
+      );
+      const panel = mapLink?.closest(".nav-group__panel");
+      const panelStyle = panel ? getComputedStyle(panel) : null;
+      return {
+        mapIsCurrent: mapLink?.classList.contains("is-current") || false,
+        panelDisplay: panelStyle?.display || ""
+      };
+    });
+
+    assert.equal(expandedMapNavMetrics.mapIsCurrent, true, "map nav item should stay current when Explore opens");
+    assert.equal(expandedMapNavMetrics.panelDisplay, "grid", "Explore should open when toggled");
+
     await seedAdminSession(page, { port, secretKeyHex, pubkey });
     await page.goto(`http://127.0.0.1:${port}/admin.html?tab=dashboard`, { waitUntil: "networkidle" });
     await page.waitForSelector("[data-workspace-pane]", { timeout: 15000 });

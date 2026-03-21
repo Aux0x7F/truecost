@@ -38,3 +38,9 @@ test("generated stylesheet rewrites self-hosted font paths relative to bundled o
   assert.match(content, /url\("\.\/styles\/fonts\/spectral-700-latin\.woff2"\)/);
   assert.doesNotMatch(content, /url\("\.\/fonts\//);
 });
+
+test("generated stylesheet avoids invalid file-selector-button focus selectors", async () => {
+  const content = await fs.readFile(path.join(repoRoot, "styles.css"), "utf8");
+  assert.match(content, /\.tip-form input\[type="file"\]:focus-visible::file-selector-button/);
+  assert.doesNotMatch(content, /\.tip-form input\[type="file"\]::file-selector-button:focus-visible/);
+});
