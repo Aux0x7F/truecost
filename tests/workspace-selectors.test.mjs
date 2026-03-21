@@ -51,7 +51,8 @@ test("workspace user filtering hides removed users by default and shows them whe
   const publicState = {
     users: [
       { pubkey: "admin-pubkey", username: "aux", displayName: "Aux", isAdmin: true, commentCount: 1, submissionCount: 0 },
-      { pubkey: "member-pubkey", username: "field", displayName: "Field", isAdmin: false, commentCount: 1, submissionCount: 0 }
+      { pubkey: "member-pubkey", username: "field", displayName: "Field", isAdmin: false, commentCount: 1, submissionCount: 0 },
+      { pubkey: "moderated-removed", username: "gone", displayName: "Gone", moderation: { action: "removed" } }
     ],
     removedUsers: [
       { pubkey: "removed-pubkey", claimedUsername: "ghost", displayName: "Ghost" }
@@ -76,6 +77,6 @@ test("workspace user filtering hides removed users by default and shows them whe
     resolveWorkspaceUserKarma: () => 0,
     karmaBucketMatches: () => true
   });
-  assert.deepEqual(visible.map((user) => user.pubkey), ["removed-pubkey"]);
+  assert.deepEqual(visible.map((user) => user.pubkey), ["removed-pubkey", "moderated-removed"]);
   assert.equal(visible[0].removed, true);
 });
