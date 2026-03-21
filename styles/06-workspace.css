@@ -99,6 +99,31 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
+.workspace-filter-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+  margin-top: 0.8rem;
+}
+
+.workspace-filter-field {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.workspace-filter-field > span {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(74, 71, 66, 0.72);
+}
+
+.workspace-filter-field select {
+  width: 100%;
+}
+
 .workspace-user-link {
   display: inline-flex;
   align-items: center;

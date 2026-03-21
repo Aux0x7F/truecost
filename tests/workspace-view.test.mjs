@@ -104,7 +104,7 @@ test("workspace view renders both karma and role filters in the user rail", () =
       activeTab: "users",
       viewer: { pubkey: "a".repeat(64) },
       publicState: {},
-      userFilters: { karma: "", role: "" },
+      userFilters: { karma: "", role: "active" },
       userLookupQuery: "",
       userLookupLoading: false,
       userDirectStatus: ""
@@ -116,7 +116,7 @@ test("workspace view renders both karma and role filters in the user rail", () =
       renderUserCard: () => "",
       renderSearchField: () => '<div data-search-field></div>',
       renderKarmaSelectOptions: () => '<option value="">All karma</option>',
-      renderRoleSelectOptions: () => '<option value="">All roles</option><option value="removed">Removed</option>',
+      renderRoleSelectOptions: () => '<option value="active">Active</option><option value="admin">Admin</option><option value="removed">Removed</option>',
       renderLookupCandidate: () => "",
       renderUserStatsCard: () => "",
       escapeHtml: (value) => String(value || "")
@@ -125,6 +125,9 @@ test("workspace view renders both karma and role filters in the user rail", () =
 
   assert.match(usersView.paneMarkup, /data-user-filter-karma/);
   assert.match(usersView.paneMarkup, /data-user-filter-role/);
+  assert.match(usersView.paneMarkup, />Karma</);
+  assert.match(usersView.paneMarkup, />Role</);
+  assert.match(usersView.paneMarkup, /Active/);
   assert.match(usersView.paneMarkup, /Removed/);
 });
 

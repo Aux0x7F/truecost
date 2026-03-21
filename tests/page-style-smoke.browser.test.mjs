@@ -129,6 +129,30 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
     assert.notEqual(adminMetrics.statPaddingLeft, "0px", "workspace metric cards should keep internal padding");
     assert.notEqual(adminMetrics.snapshotPaddingTop, "0px", "workspace surface panels should keep internal padding");
     assert.notEqual(adminMetrics.snapshotPaddingLeft, "0px", "workspace surface panels should keep internal padding");
+
+    await page.getByRole("button", { name: "User Management" }).click();
+    await page.waitForTimeout(200);
+    const userFilterMetrics = await page.evaluate(() => {
+      const karma = document.querySelector("[data-user-filter-karma]");
+      const role = document.querySelector("[data-user-filter-role]");
+      const karmaLabel = karma?.closest("label");
+      const roleLabel = role?.closest("label");
+      const karmaRect = karmaLabel?.getBoundingClientRect();
+      const roleRect = roleLabel?.getBoundingClientRect();
+      return {
+        karmaLabel: karmaLabel?.textContent?.trim() || "",
+        roleLabel: roleLabel?.textContent?.trim() || "",
+        roleValue: role instanceof HTMLSelectElement ? role.value : "",
+        sameRow: Boolean(karmaRect && roleRect && Math.abs(karmaRect.top - roleRect.top) < 6),
+        widthDelta: karmaRect && roleRect ? Math.abs(karmaRect.width - roleRect.width) : 999
+      };
+    });
+
+    assert.match(userFilterMetrics.karmaLabel, /Karma/);
+    assert.match(userFilterMetrics.roleLabel, /Role/);
+    assert.equal(userFilterMetrics.roleValue, "active", "role filtering should default to active users");
+    assert.equal(userFilterMetrics.sameRow, true, "karma and role controls should share the same row");
+    assert.ok(userFilterMetrics.widthDelta < 8, "karma and role controls should share the available width evenly");
   } finally {
     await browser.close();
     await new Promise((resolve) => server.close(resolve));
