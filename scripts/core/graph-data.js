@@ -1,4 +1,5 @@
 import SITE from "./site-config.js";
+import { normalizeQuerySlug } from "./query-state.js";
 import {
   buildSiteEvidenceGraph,
   loadGraphSeed
@@ -37,18 +38,9 @@ export async function loadGraphDataset({
 }
 
 export function requestedGraphFocus(search = window.location.search) {
-  return cleanQuerySlug(new URLSearchParams(search).get("focus") || "");
+  return normalizeQuerySlug(new URLSearchParams(search).get("focus") || "");
 }
 
 export function requestedWikiEntity(search = window.location.search) {
-  return cleanQuerySlug(new URLSearchParams(search).get("entity") || "");
-}
-
-function cleanQuerySlug(value) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  return normalizeQuerySlug(new URLSearchParams(search).get("entity") || "");
 }

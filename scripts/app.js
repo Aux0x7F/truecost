@@ -42,6 +42,7 @@ import {
 } from "./core/notification-state.js";
 import { createSiteNotificationBuilder } from "./core/notification-builders.js";
 import { getStoredGuestSession, getStoredSession, saveSession } from "./core/session.js";
+import { createQueryState } from "./core/query-state.js";
 import {
   buildToc,
   renderError,
@@ -65,7 +66,6 @@ import {
   queueLeafletBoundsFit,
   renderLeafletMapSurface,
   renderMapPageSurface,
-  requestedMapEntity,
   scheduleMapEntityFocus as scheduleSurfaceMapEntityFocus
 } from "./surfaces/map.js";
 import { createStaticPageEditSurface } from "./surfaces/static-page-edit.js";
@@ -81,7 +81,8 @@ const NAV_KEYS = {
   home: ["home"],
   explore: ["investigations", "investigation", "editor", "map", "graph", "wiki"],
   investigations: ["investigations", "investigation", "editor"],
-  graph: ["graph", "wiki"],
+  graph: ["graph"],
+  wiki: ["wiki"],
   guide: ["guide"],
   submit: ["submit"],
   "get-involved": ["get-involved"],
@@ -92,6 +93,7 @@ const NAV_KEYS = {
 };
 
 let appRuntime = null;
+const queryState = createQueryState();
 
 const publicStateStore = createPublicStateStore({
   getSessionSecretKey: async () => (appRuntime ? appRuntime.getRequestSignerSecretKey() : ""),
@@ -237,11 +239,11 @@ const mapPageFeature = createMapPageFeature({
   state,
   postsStore,
   getPublicState: (force) => appRuntime.getPublicState(force),
+  queryState,
   cleanSlug,
   collectEntityRefsFromText,
   renderLeafletMapSurface,
   bindMapEntityCards: bindMapSurfaceEntityCards,
-  requestedMapEntity,
   scheduleLeafletFocus: scheduleSurfaceMapEntityFocus,
   renderMapPageSurface,
   renderError,
@@ -253,7 +255,8 @@ const graphPageFeature = createGraphPageFeature({
   fetchJson,
   postsStore,
   getPublicState: (force) => appRuntime.getPublicState(force),
-  viewerController
+  viewerController,
+  queryState
 });
 
 const wikiPageFeature = createWikiPageFeature({
@@ -261,7 +264,8 @@ const wikiPageFeature = createWikiPageFeature({
   fetchJson,
   postsStore,
   getPublicState: (force) => appRuntime.getPublicState(force),
-  viewerController
+  viewerController,
+  queryState
 });
 
 siteShellFeature = createSiteShellFeature({

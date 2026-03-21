@@ -48,6 +48,7 @@ The implementation now follows four layers:
   - cache and public-state normalization
   - subscribed public-state store lifecycle
   - observed-region routing helpers for mounted shells and feature roots
+  - query-state helpers for observed URL param routing
   - account action orchestration for login and password rotation commit boundaries
   - navigation UI state
   - notification state
@@ -112,6 +113,13 @@ Mounted shell updates now also follow an observed-region rule:
 - if the shell structure is already mounted, features should update only the changed regions
 - unchanged overlays and active form roots must be left in place
 - full shell replacement is only appropriate when the structure itself changes
+
+URL query params follow the same pattern:
+
+- query params are shared observed state, not ad hoc page globals
+- features subscribe only to the params they consume
+- features route query changes to the DOM roots they own
+- param writes should go through the shared query-state helper so history, popstate, and mounted surfaces stay in sync
 
 Account auth flows follow a similar separation:
 

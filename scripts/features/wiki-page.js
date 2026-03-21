@@ -1,7 +1,8 @@
 import SITE from "../core/site-config.js";
 import { createObservedRegionRouter } from "../core/observed-regions.js";
+import { normalizeQuerySlug } from "../core/query-state.js";
 import { appendDraftEntity, appendDraftRelationship, saveGraphDraftState } from "../core/graph-drafts.js";
-import { loadGraphDataset, requestedWikiEntity } from "../core/graph-data.js";
+import { loadGraphDataset } from "../core/graph-data.js";
 import { buildEntityWikiView, buildSiteEvidenceGraph } from "../core/graph-wiki.js";
 import { renderGraphModal } from "../surfaces/graph-explorer.js";
 import { renderWikiIndexView, renderWikiPageView } from "../surfaces/wiki-page.js";
@@ -11,22 +12,26 @@ export function createWikiPageFeature({
   fetchJson,
   postsStore,
   getPublicState,
-  viewerController
+  viewerController,
+  queryState
 } = {}) {
   const regions = createObservedRegionRouter();
   const viewState = {
     loaded: false,
     bound: false,
+    queryBound: false,
     dataset: null,
     query: "",
     typeFilters: [],
     currentSlug: "",
+    requestedEntity: "",
     modal: null
   };
 
   async function mount() {
     if (!pageReady()) return;
     bindInteractions();
+    bindQueryState();
     if (!viewState.loaded) {
       regions.apply([
         { name: "wiki-hero-title", selector: "[data-wiki-hero-title]", kind: "text", value: "Loading wiki..." },
@@ -62,7 +67,7 @@ export function createWikiPageFeature({
     });
     if (!viewState.loaded) {
       viewState.typeFilters = [...(viewState.dataset.graphState.graph.availableNodeTypes || [])].filter((type) => type !== "investigation");
-      viewState.currentSlug = requestedWikiEntity(window.location.search);
+      viewState.currentSlug = viewState.requestedEntity;
       viewState.loaded = true;
     }
     render();
@@ -74,6 +79,22 @@ export function createWikiPageFeature({
     document.addEventListener("input", handleInput);
     document.addEventListener("click", handleClick);
     document.addEventListener("submit", handleSubmit);
+  }
+
+  function bindQueryState() {
+    if (viewState.queryBound || !queryState) return;
+    viewState.queryBound = true;
+    queryState.subscribe(["entity"], ({ entity }) => {
+      viewState.requestedEntity = String(entity || "");
+      if (!viewState.loaded) return;
+      if (viewState.currentSlug === viewState.requestedEntity) return;
+      viewState.currentSlug = viewState.requestedEntity;
+      render();
+    }, {
+      normalizers: {
+        entity: normalizeQuerySlug
+      }
+    });
   }
 
   function handleInput(event) {
@@ -240,12 +261,13 @@ export function createWikiPageFeature({
   }
 
   function syncCurrentSlug() {
-    const url = new URL(window.location.href);
-    if (viewState.currentSlug) {
-      url.searchParams.set("entity", viewState.currentSlug);
-    } else {
-      url.searchParams.delete("entity");
+    if (queryState) {
+      queryState.set("entity", viewState.currentSlug, { normalize: normalizeQuerySlug });
+      return;
     }
+    const url = new URL(window.location.href);
+    if (viewState.currentSlug) url.searchParams.set("entity", viewState.currentSlug);
+    else url.searchParams.delete("entity");
     history.replaceState({}, "", url);
   }
 

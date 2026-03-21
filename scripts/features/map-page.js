@@ -5,20 +5,23 @@ export function createMapPageFeature({
   state,
   postsStore,
   getPublicState,
+  queryState,
   cleanSlug,
   collectEntityRefsFromText,
   renderLeafletMapSurface,
   bindMapEntityCards,
-  requestedMapEntity,
   scheduleLeafletFocus,
   renderMapPageSurface,
   renderError,
   renderLoadingState
 } = {}) {
+  let queryBound = false;
+
   async function mount() {
     const list = document.querySelector("[data-map-list]");
     const canvas = document.querySelector("[data-map-canvas]");
     if (!(list instanceof HTMLElement) || !(canvas instanceof HTMLElement)) return;
+    bindQueryState();
     const mapReady = Boolean(state.map && state.mapCanvas === canvas);
     const cachedEntities = visibleMapEntities(state.publicState);
     const renderedCachedMap = Boolean(cachedEntities.length);
@@ -27,7 +30,9 @@ export function createMapPageFeature({
     } else {
       const hasStableMapData = Array.isArray(state.lastGoodMapEntities) && state.lastGoodMapEntities.length;
       if (!hasStableMapData) list.innerHTML = renderLoadingState("Looking up map entries...");
-      if (!mapReady) canvas.innerHTML = renderLoadingState("Looking up map data...");
+      if (!mapReady) {
+        mapSurfaceDeps().renderLeafletMapSurface(canvas, []);
+      }
     }
 
     try {
@@ -35,7 +40,9 @@ export function createMapPageFeature({
       const entities = visibleMapEntities(publicState);
       if (!entities.length) {
         list.innerHTML = `<div class="empty-state">Published entities will appear here once approved entries are available.</div>`;
-        canvas.innerHTML = `<div class="map-empty">Map data unavailable.</div>`;
+        mapSurfaceDeps().renderLeafletMapSurface(canvas, []);
+        focusRequestedEntity();
+        state.mapViewDigest = dataDigest({ approvedEntities: [] });
         return;
       }
       state.lastGoodMapEntities = entities.map((entity) => ({ ...entity }));
@@ -49,6 +56,20 @@ export function createMapPageFeature({
         canvas.innerHTML = `<div class="map-empty">Map data unavailable.</div>`;
       }
     }
+  }
+
+  function bindQueryState() {
+    if (queryBound || !queryState) return;
+    queryBound = true;
+    queryState.subscribe(["entity"], ({ entity }) => {
+      const requested = cleanSlug(entity || "");
+      if (!requested || !pageReady()) return;
+      scheduleMapEntityFocus(requested);
+    }, {
+      normalizers: {
+        entity: cleanSlug
+      }
+    });
   }
 
   function visibleMapEntities(publicState) {
@@ -136,9 +157,13 @@ export function createMapPageFeature({
   }
 
   function focusRequestedEntity() {
-    const requested = requestedMapEntity(window.location.search, cleanSlug);
+    const requested = queryState ? queryState.get("entity", cleanSlug) : cleanSlug(new URLSearchParams(window.location.search).get("entity") || "");
     if (!requested) return;
     scheduleMapEntityFocus(requested);
+  }
+
+  function pageReady() {
+    return Boolean(document.querySelector("[data-map-shell]"));
   }
 
   return {

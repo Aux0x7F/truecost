@@ -124,6 +124,11 @@
   color: #fff;
 }
 
+.graph-filter-clear {
+  border: 1px dashed rgba(18, 18, 18, 0.16);
+  background: rgba(18, 18, 18, 0.04);
+}
+
 .graph-summary-card,
 .wiki-rail__list-item {
   display: grid;

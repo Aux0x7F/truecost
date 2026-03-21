@@ -120,6 +120,7 @@ export function renderNavigationMarkup({
         <a class="${navLinkClass(page, navKeys, "investigations")}" href="./investigations.html">Investigations</a>
         <a class="${navLinkClass(page, navKeys, "map", !mapEnabled && !navKeys.map?.includes(page))}" href="./map.html" ${!mapEnabled && !navKeys.map?.includes(page) ? 'aria-disabled="true"' : ""}>Map</a>
         <a class="${navLinkClass(page, navKeys, "graph")}" href="./graph.html">Graph</a>
+        <a class="${navLinkClass(page, navKeys, "wiki")}" href="./wiki.html">Wiki</a>
         ${isAdmin ? `<a class="nav-link" href="./editor.html">Create Investigation</a>` : ""}
       </div>
     </div>

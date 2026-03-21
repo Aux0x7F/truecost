@@ -95,6 +95,7 @@ export function renderGraphRail({
         <strong>Relationships</strong>
         <div class="tag-row graph-filter-row">
           ${availableRelationshipTypes.map((type) => renderFilterChip(type, relationshipTypeFilters.includes(type), "relationship-type")).join("")}
+          <button class="tag tag--button graph-filter-clear" type="button" data-graph-clear-filters>Clear filters</button>
         </div>
       </article>
 

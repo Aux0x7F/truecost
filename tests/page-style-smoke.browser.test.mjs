@@ -51,7 +51,12 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
     );
 
     await page.goto(`http://127.0.0.1:${port}/map.html`, { waitUntil: "networkidle" });
-    await page.waitForTimeout(300);
+    await page.waitForFunction(
+      () =>
+        Boolean(document.querySelector(".leaflet-container")) ||
+        Boolean(document.querySelector("[data-map-canvas] .map-empty")),
+      { timeout: 15000 }
+    );
     const mapNavMetrics = await page.evaluate(() => {
       const exploreGroup = document.querySelector('[data-nav-group].is-current');
       const mapLink = Array.from(document.querySelectorAll(".nav-group__panel a")).find((link) =>
@@ -62,13 +67,15 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
       return {
         currentGroupLabel: exploreGroup?.querySelector("[data-submenu-toggle]")?.textContent?.trim() || "",
         mapIsCurrent: mapLink?.classList.contains("is-current") || false,
-        panelDisplay: panelStyle?.display || ""
+        panelDisplay: panelStyle?.display || "",
+        hasLeaflet: Boolean(document.querySelector(".leaflet-container"))
       };
     });
 
     assert.equal(mapNavMetrics.currentGroupLabel, "Explore");
     assert.equal(mapNavMetrics.mapIsCurrent, true, "map nav item should be marked current on the map page");
     assert.equal(mapNavMetrics.panelDisplay, "none", "desktop nav groups should stay collapsed until opened");
+    assert.equal(mapNavMetrics.hasLeaflet, true, "map page should still initialize the map shell");
 
     await page.getByRole("button", { name: "Explore" }).click();
     const expandedMapNavMetrics = await page.evaluate(() => {

@@ -67,6 +67,7 @@ test("graph rail renders search, filters, and selected entity summary", () => {
   assert.match(markup, /Current node/);
   assert.match(markup, /North Valley Foods/);
   assert.match(markup, /Open wiki/);
+  assert.match(markup, /Clear filters/);
   assert.match(markup, /Create entity/);
 });
 

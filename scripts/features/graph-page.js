@@ -1,7 +1,8 @@
 import SITE from "../core/site-config.js";
 import { createObservedRegionRouter } from "../core/observed-regions.js";
+import { normalizeQuerySlug } from "../core/query-state.js";
 import { appendDraftEntity, appendDraftRelationship, saveGraphDraftState } from "../core/graph-drafts.js";
-import { loadGraphDataset, requestedGraphFocus } from "../core/graph-data.js";
+import { loadGraphDataset } from "../core/graph-data.js";
 import { buildEntityWikiView, buildSiteEvidenceGraph, filterEvidenceGraph } from "../core/graph-wiki.js";
 import {
   renderGraphCanvas,
@@ -14,23 +15,27 @@ export function createGraphPageFeature({
   fetchJson,
   postsStore,
   getPublicState,
-  viewerController
+  viewerController,
+  queryState
 } = {}) {
   const regions = createObservedRegionRouter();
   const viewState = {
     loaded: false,
     bound: false,
+    queryBound: false,
     dataset: null,
     query: "",
     nodeTypeFilters: [],
     relationshipTypeFilters: [],
     selectedNodeId: "",
+    requestedFocus: "",
     modal: null
   };
 
   async function mount() {
     if (!pageReady()) return;
     bindInteractions();
+    bindQueryState();
     if (!viewState.loaded) {
       regions.apply([
         { name: "graph-canvas", selector: "[data-graph-canvas-shell]", value: `<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span>Building graph explorer...</span></div>` },
@@ -66,7 +71,7 @@ export function createGraphPageFeature({
     if (!viewState.loaded) {
       viewState.nodeTypeFilters = [...(dataset.graphState.graph.defaultNodeTypes || [])];
       viewState.relationshipTypeFilters = [...(dataset.graphState.graph.availableRelationshipTypes || [])];
-      viewState.selectedNodeId = resolveRequestedNodeId(dataset.graphState, requestedGraphFocus(window.location.search));
+      viewState.selectedNodeId = resolveRequestedNodeId(dataset.graphState, viewState.requestedFocus);
     }
     viewState.loaded = true;
     render();
@@ -78,6 +83,23 @@ export function createGraphPageFeature({
     document.addEventListener("input", handleInput);
     document.addEventListener("click", handleClick);
     document.addEventListener("submit", handleSubmit);
+  }
+
+  function bindQueryState() {
+    if (viewState.queryBound || !queryState) return;
+    viewState.queryBound = true;
+    queryState.subscribe(["focus"], ({ focus }) => {
+      viewState.requestedFocus = String(focus || "");
+      if (!viewState.loaded || !viewState.dataset) return;
+      const nextSelectedNodeId = resolveRequestedNodeId(viewState.dataset.graphState, viewState.requestedFocus);
+      if (nextSelectedNodeId === viewState.selectedNodeId) return;
+      viewState.selectedNodeId = nextSelectedNodeId;
+      render();
+    }, {
+      normalizers: {
+        focus: normalizeQuerySlug
+      }
+    });
   }
 
   function handleInput(event) {
@@ -105,7 +127,7 @@ export function createGraphPageFeature({
     }
 
     const node = target.closest("[data-graph-node]");
-    if (node instanceof HTMLElement) {
+    if (node instanceof Element) {
       event.preventDefault();
       selectNode(node.getAttribute("data-graph-node") || "");
       return;
@@ -118,6 +140,12 @@ export function createGraphPageFeature({
         filter.getAttribute("data-graph-filter-kind") || "",
         filter.getAttribute("data-graph-filter-value") || ""
       );
+      return;
+    }
+
+    if (target.closest("[data-graph-clear-filters]")) {
+      event.preventDefault();
+      clearFilters();
       return;
     }
 
@@ -189,7 +217,7 @@ export function createGraphPageFeature({
     });
     const selectedNodeId = resolveSelectedNodeId(filteredGraph);
     viewState.selectedNodeId = selectedNodeId;
-    syncFocusUrl(selectedNodeId);
+    syncFocusSelection(selectedNodeId);
     const selectedSummary = buildSelectedNodeSummary(viewState.dataset.graphState, selectedNodeId);
 
     regions.apply([
@@ -222,6 +250,13 @@ export function createGraphPageFeature({
 
   function selectNode(nodeId) {
     viewState.selectedNodeId = String(nodeId || "").trim();
+    const selectedNode = findSelectedNode(viewState.selectedNodeId);
+    const focusValue = selectedNode?.slug || viewState.selectedNodeId;
+    if (queryState) {
+      queryState.set("focus", focusValue, { normalize: normalizeQuerySlug });
+      render();
+      return;
+    }
     render();
   }
 
@@ -246,6 +281,12 @@ export function createGraphPageFeature({
     render();
   }
 
+  function clearFilters() {
+    viewState.nodeTypeFilters = [...(viewState.dataset?.graphState?.graph?.defaultNodeTypes || [])];
+    viewState.relationshipTypeFilters = [...(viewState.dataset?.graphState?.graph?.availableRelationshipTypes || [])];
+    render();
+  }
+
   function persistDraftGraph() {
     viewState.dataset.draftGraph = saveGraphDraftState(SITE.nostr.storageNamespace, viewState.dataset.draftGraph);
   }
@@ -264,7 +305,7 @@ export function createGraphPageFeature({
     const visibleNodes = Array.isArray(filteredGraph?.nodes) ? filteredGraph.nodes : [];
     const visibleIds = new Set(visibleNodes.map((node) => node.id));
     if (viewState.selectedNodeId && visibleIds.has(viewState.selectedNodeId)) return viewState.selectedNodeId;
-    const requested = resolveRequestedNodeId(viewState.dataset?.graphState, requestedGraphFocus(window.location.search));
+    const requested = resolveRequestedNodeId(viewState.dataset?.graphState, viewState.requestedFocus);
     if (requested && visibleIds.has(requested)) return requested;
     return visibleNodes[0]?.id || "";
   }
@@ -295,16 +336,21 @@ export function createGraphPageFeature({
     };
   }
 
-  function syncFocusUrl(selectedNodeId) {
-    const url = new URL(window.location.href);
-    const selectedNode = (viewState.dataset?.graphState?.graph?.nodes || []).find((node) => node.id === selectedNodeId) || null;
+  function syncFocusSelection(selectedNodeId) {
+    const selectedNode = findSelectedNode(selectedNodeId);
     const focusValue = String(selectedNode?.slug || selectedNodeId || "").trim();
-    if (focusValue) {
-      url.searchParams.set("focus", focusValue);
-    } else {
-      url.searchParams.delete("focus");
+    if (queryState) {
+      queryState.set("focus", focusValue, { normalize: normalizeQuerySlug });
+      return;
     }
+    const url = new URL(window.location.href);
+    if (focusValue) url.searchParams.set("focus", focusValue);
+    else url.searchParams.delete("focus");
     history.replaceState({}, "", url);
+  }
+
+  function findSelectedNode(selectedNodeId) {
+    return (viewState.dataset?.graphState?.graph?.nodes || []).find((node) => node.id === selectedNodeId) || null;
   }
 
   function pageReady() {
