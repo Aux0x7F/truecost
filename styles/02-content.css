@@ -160,6 +160,7 @@
   .workspace-search__input,
   .archive-status-menu__toggle,
   .workspace-select select,
+  .workspace-filter-field select,
   .tip-form input:not([type="checkbox"]):not([type="file"]),
   .tip-form select,
   .tip-form textarea,
@@ -289,7 +290,7 @@
   cursor: pointer;
 }
 
-:where(.archive-status-menu__toggle, .workspace-select select) {
+:where(.archive-status-menu__toggle, .workspace-select select, .workspace-filter-field select) {
   min-height: var(--control-height);
   padding: var(--control-padding);
   border-radius: var(--control-radius);
