@@ -190,6 +190,7 @@ Current extraction targets:
 - `scripts/features/map-page.js`
 - `scripts/features/markdown-page.js`
 - `scripts/features/review-workflow.js`
+- `scripts/features/workspace-account.js`
 - `scripts/features/workspace-shell.js`
 - `scripts/features/workspace-tabs.js`
 - `scripts/features/workspace-inbox.js`
@@ -213,7 +214,7 @@ Current extraction targets:
 The next convergence targets are:
 
 - editor collaboration rail behavior when that feature lands
-- narrower selectors behind the remaining account/profile/upload flows
+- narrower selectors behind the remaining upload and moderation-detail flows
 - any remaining page-controller-owned notification or moderation detail that still has not moved into shared features or surfaces
 
 ## Modals and action sheets
