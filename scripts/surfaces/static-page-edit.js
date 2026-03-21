@@ -9,6 +9,12 @@ import {
 import { escapeHtml } from "../core/text-utils.js";
 import { bindReviewPreviewPanel, renderReviewPreviewPanel } from "./review-preview.js";
 
+export const STATIC_EDIT_SHORTCUT_LABEL = "Ctrl+Alt+E";
+
+export function isStaticEditShortcut(event) {
+  return !!event?.ctrlKey && !!event?.altKey && String(event?.key || "").toLowerCase() === "e";
+}
+
 export function createStaticPageEditSurface({ site, state, deps = {} } = {}) {
   const getPublicState = deps.getPublicState || (async () => null);
   const editorEntryAllowed = deps.editorEntryAllowed || (() => false);
@@ -94,8 +100,8 @@ export function createStaticPageEditSurface({ site, state, deps = {} } = {}) {
       historyIndex: 0,
       enabled: false,
       status: storedSnapshot?.savedAt
-        ? `Local snapshot ready from ${formatLocalTimestamp(storedSnapshot.savedAt)}. Press Ctrl+Shift+E to resume it.`
-        : "Press Ctrl+Shift+E to edit this page.",
+        ? `Local snapshot ready from ${formatLocalTimestamp(storedSnapshot.savedAt)}. Press ${STATIC_EDIT_SHORTCUT_LABEL} to resume it.`
+        : `Press ${STATIC_EDIT_SHORTCUT_LABEL} to edit this page.`,
       savedAt: Number(storedSnapshot?.savedAt || 0),
       saveState: storedSnapshot?.savedAt ? "saved" : "idle",
       pendingLiveContent: null,
@@ -175,8 +181,8 @@ export function createStaticPageEditSurface({ site, state, deps = {} } = {}) {
       }
       if (!state.staticEdit.enabled) {
         state.staticEdit.status = state.staticEdit.savedAt
-          ? `Local snapshot ready from ${formatLocalTimestamp(state.staticEdit.savedAt)}. Press Ctrl+Shift+E to resume it.`
-          : "Press Ctrl+Shift+E to edit this page.";
+          ? `Local snapshot ready from ${formatLocalTimestamp(state.staticEdit.savedAt)}. Press ${STATIC_EDIT_SHORTCUT_LABEL} to resume it.`
+          : `Press ${STATIC_EDIT_SHORTCUT_LABEL} to edit this page.`;
         renderBar();
       }
     }
@@ -235,7 +241,7 @@ export function createStaticPageEditSurface({ site, state, deps = {} } = {}) {
       cancelChanges();
       return;
     }
-    if (!event.ctrlKey || !event.shiftKey || event.key.toLowerCase() !== "e") return;
+    if (!isStaticEditShortcut(event)) return;
     event.preventDefault();
     toggleMode();
   }
@@ -265,7 +271,7 @@ export function createStaticPageEditSurface({ site, state, deps = {} } = {}) {
         : "Editing this page directly. Snapshot when ready."
       : editState.savedAt
         ? `Local snapshot saved ${formatLocalTimestamp(editState.savedAt)}.`
-        : "Press Ctrl+Shift+E to edit this page.";
+        : `Press ${STATIC_EDIT_SHORTCUT_LABEL} to edit this page.`;
     renderBar();
   }
 
