@@ -1,10 +1,17 @@
+import {
+  loadSiteRuntimeValue,
+  rememberSiteRuntimeValue
+} from "./runtime-local-state.js";
+
 export function createRequestSigner({
   state,
   site,
   ensureEventToolsLoaded,
   getOrCreateGuestSession,
   ensureBlobAvailable,
-  publishTaggedJson
+  publishTaggedJson,
+  loadVisitPulseMarker = loadSiteRuntimeValue,
+  rememberVisitPulseMarker = rememberSiteRuntimeValue
 } = {}) {
   async function getSecretKey() {
     if (state.session?.secretKeyHex) return state.session.secretKeyHex;
@@ -19,8 +26,11 @@ export function createRequestSigner({
       const secretKeyHex = await getSecretKey();
       if (!secretKeyHex || !site?.nostr?.kinds?.visitPulse) return;
       const day = new Date().toISOString().slice(0, 10);
-      const markerKey = `${site.nostr.storageNamespace}.visitPulse.${day}`;
-      if (window.localStorage.getItem(markerKey)) return;
+      const marker = await loadVisitPulseMarker("visitPulseMarker", { day }, {
+        reason: "visit-pulse-check",
+        preferFresh: false
+      }).catch(() => null);
+      if (marker) return;
       await publishTaggedJson({
         kind: site.nostr.kinds.visitPulse,
         secretKeyHex,
@@ -33,7 +43,12 @@ export function createRequestSigner({
           page: document.body.dataset.page || "site"
         }
       });
-      window.localStorage.setItem(markerKey, String(Date.now()));
+      await rememberVisitPulseMarker("visitPulseMarker", { day }, {
+        page: document.body.dataset.page || "site",
+        recordedAt: Date.now()
+      }, {
+        source: "visit-pulse"
+      });
     } catch {
       return;
     }

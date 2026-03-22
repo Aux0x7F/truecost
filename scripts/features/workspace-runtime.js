@@ -10,11 +10,12 @@ export function createWorkspaceRuntime({
   const runtime = {
     clearTimeout: (timerId) => window.clearTimeout(timerId),
     ensureEventToolsLoaded: async () => {},
+    resolveStoredSession: async () => null,
     getStoredSession: () => null,
     loadAdminKeyShare: async () => null,
     loadAdminKeyShares: async () => [],
-    loadCachedInboxSubmissions: () => [],
-    loadCachedSiteKeyShares: () => [],
+    loadCachedInboxSubmissions: async () => [],
+    loadCachedSiteKeyShares: async () => [],
     loadInboxSubmissions: async () => [],
     loadStaticSlugs: async () => [],
     mergeSiteKeyShares: (primary, secondary) => [...(Array.isArray(primary) ? primary : []), ...(Array.isArray(secondary) ? secondary : [])],
@@ -48,45 +49,78 @@ export function createWorkspaceRuntime({
     }
   }
 
-  function primeSession(deriveWhenAvailable = false) {
-    state.session = runtime.getStoredSession();
+  async function primeSession(deriveWhenAvailable = false, { resolve = false } = {}) {
+    state.session = resolve
+      ? await Promise.resolve(runtime.resolveStoredSession()).catch(() => runtime.getStoredSession())
+      : runtime.getStoredSession();
     state.viewer = viewerController.primeFromSession(deriveWhenAvailable);
     return state.viewer;
   }
 
-  function restoreCachedAdminState() {
+  function sameJson(left, right) {
+    return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+  }
+
+  async function restoreCachedAdminState({ render = false } = {}) {
     const viewerPubkey = accessController.viewerPubkey();
     const activeSitePubkey = accessController.activeSitePubkey();
-    state.siteKeyShares = runtime.mergeSiteKeyShares(
-      runtime.loadCachedSiteKeyShares({
-        storageNamespace: site?.nostr?.storageNamespace || "",
-        viewerPubkey
-      }),
+    const nextSiteKeyShares = runtime.mergeSiteKeyShares(
+      await Promise.resolve(
+        runtime.loadCachedSiteKeyShares({
+          storageNamespace: site?.nostr?.storageNamespace || "",
+          viewerPubkey
+        })
+      ).catch(() => []),
       state.siteKeyShares
     );
-    state.siteKeyShare = runtime.findSiteKeyShare(state.siteKeyShares, activeSitePubkey);
-    if (accessController.hasInboxAccess()) {
-      const cachedSubmissions = runtime.loadCachedInboxSubmissions({
-        storageNamespace: site?.nostr?.storageNamespace || "",
-        viewerPubkey,
-        sitePubkey: activeSitePubkey
-      });
-      if (Array.isArray(cachedSubmissions) && cachedSubmissions.length) {
+    const nextSiteKeyShare = runtime.findSiteKeyShare(nextSiteKeyShares, activeSitePubkey);
+    const hadSiteKeyState = !sameJson(state.siteKeyShares, nextSiteKeyShares) || !sameJson(state.siteKeyShare, nextSiteKeyShare);
+    state.siteKeyShares = nextSiteKeyShares;
+    state.siteKeyShare = nextSiteKeyShare;
+
+    let didChange = hadSiteKeyState;
+    if (accessController.isAdmin() && activeSitePubkey) {
+      const cachedSubmissions = await Promise.resolve(
+        runtime.loadCachedInboxSubmissions({
+          storageNamespace: site?.nostr?.storageNamespace || "",
+          viewerPubkey,
+          sitePubkey: activeSitePubkey
+        })
+      ).catch(() => []);
+      if (Array.isArray(cachedSubmissions) && !sameJson(state.inboxSubmissions, cachedSubmissions)) {
         state.inboxSubmissions = cachedSubmissions;
+        didChange = true;
       }
-      return;
+      if (state.inboxLoading) {
+        state.inboxLoading = false;
+        didChange = true;
+      }
+    } else {
+      if (state.inboxSubmissions.length) {
+        state.inboxSubmissions = [];
+        didChange = true;
+      }
+      if (state.inboxLoading) {
+        state.inboxLoading = false;
+        didChange = true;
+      }
     }
-    state.inboxSubmissions = [];
-    state.inboxLoading = false;
+
+    if (render && didChange) {
+      hooks.renderWorkspace({ soft: true });
+    }
+    return didChange;
   }
 
   async function hydrate(force = false) {
-    primeSession(true);
+    await primeSession(true);
     const viewerPubkey = accessController.viewerPubkey();
-    const cachedShares = runtime.loadCachedSiteKeyShares({
-      storageNamespace: site?.nostr?.storageNamespace || "",
-      viewerPubkey
-    });
+    const cachedShares = await Promise.resolve(
+      runtime.loadCachedSiteKeyShares({
+        storageNamespace: site?.nostr?.storageNamespace || "",
+        viewerPubkey
+      })
+    ).catch(() => []);
     const [publicStateResult, remoteShares] = await Promise.all([
       publicStateStore.hydrate({ force, reason: force ? "workspace-force" : "workspace-hydrate" }),
       state.session
@@ -153,7 +187,7 @@ export function createWorkspaceRuntime({
 
   async function refresh(force = false) {
     clearTimers();
-    primeSession(false);
+    await primeSession(false, { resolve: true });
     if (!state.session) {
       state.siteKeyShares = [];
       state.siteKeyShare = null;
@@ -164,16 +198,20 @@ export function createWorkspaceRuntime({
       return;
     }
 
-    restoreCachedAdminState();
     state.activeTab = accessController.chooseInitialTab(state.activeTab);
+    const canRenderImmediately = Boolean(state.publicState || accessController.isAdmin());
+    const cachedAdminStatePromise = restoreCachedAdminState({
+      render: canRenderImmediately
+    });
 
-    if (state.publicState || accessController.isAdmin()) {
+    if (canRenderImmediately) {
       hooks.renderWorkspace({ soft: true });
     } else {
       hooks.renderWorkspaceLoading("Looking up workspace...");
     }
 
     await runtime.ensureEventToolsLoaded();
+    await cachedAdminStatePromise;
     await hydrate(force);
     state.staticSlugs = await runtime.loadStaticSlugs().catch(() => state.staticSlugs || []);
     state.activeTab = accessController.chooseInitialTab(state.activeTab);
@@ -201,13 +239,17 @@ export function createWorkspaceRuntime({
       scheduleSync();
       return;
     }
-    if (!runtime.getStoredSession()) return;
+    const resolvedSession = await Promise.resolve(runtime.resolveStoredSession()).catch(() => runtime.getStoredSession());
+    if (!resolvedSession) return;
+    state.session = resolvedSession;
+    state.viewer = viewerController.primeFromSession(false);
 
     const beforeAccess = accessController.captureAccessState();
     const beforeData = hooks.captureDataState();
     state.backgroundSyncInFlight = true;
     let didRefresh = false;
     try {
+      await restoreCachedAdminState({ render: false });
       await runtime.ensureEventToolsLoaded();
       await hydrate(force);
       state.keyRequestState = "";

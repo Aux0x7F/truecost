@@ -9,6 +9,10 @@ Changes to live state, cached state, comments, filters, maps, workspace surfaces
 - a focused deterministic test for the data/state contract
 - a focused feature/runtime test when route-owned logic moves out of a root controller
 - a focused surface test when a new render family is extracted from a page controller
+- a focused runtime-client / worker-host regression when shared-worker projection or action plumbing changes
+- a focused durable-state regression when IndexedDB-backed projection or document storage changes
+- a focused projection-envelope regression when runtime projections change `value`, `status`, or last-good retention behavior
+- a focused document-store regression when static-page or investigation draft persistence moves between page scripts and runtime-backed document controllers
 - a browser regression when the failure mode is a runtime boot error, DOM lifecycle error, or broken attached-field interaction
 - a browser or controller regression when the failure mode is an unrelated rerender wiping active local input state
 - syntax validation for touched modules
@@ -17,6 +21,8 @@ Changes to live state, cached state, comments, filters, maps, workspace surfaces
 - a bundle or source-contract check when a change alters first-paint assets such as `styles.css`
 - a source-template / build-contract check when page markup generation changes
 - a service-worker manifest check when shell/assets/content cache policy changes
+- a document-controller or exporter regression when structured-document storage or export rules change
+- a graph/wiki projection regression when relationship candidates or draft overlays affect graph derivation
 
 Pure presentation refinements should be checked in manual design runs unless they change runtime behavior or a documented interaction contract.
 
@@ -27,6 +33,19 @@ Authentication and password-rotation work must also cover:
 - synchronous password-reuse rejection before any session/history mutation
 - rotation commit boundaries, so failed follow-up work does not leave local session/history in a contradictory state
 - vendored support-lib contract checks when upstream session primitives change
+
+Structured-document work must also cover:
+
+- immediate local restore from durable document state
+- round-trip of structured document fields through storage and export
+- preservation of citations, entity refs, and relationship candidates
+- investigation image-placement round-trip for:
+  - float left
+  - float right
+  - center
+  - full width
+  - fill-crop
+- compatibility of the transitional editor adapter with the structured stored document
 
 ## Required live-state cases
 
@@ -64,6 +83,7 @@ Where applicable, cover:
 - `node --test tests/submit-shell.test.mjs`
 - `node --test tests/observed-regions.test.mjs`
 - `node --test tests/admin-editor-submit.browser.test.mjs`
+- Submit page state should be exercised through the shared runtime-backed public-state store boundary rather than direct page-local `loadPublicState()` calls.
 - `node --test tests/account-actions.test.mjs`
 - `node --test tests/session-api-vendor.test.mjs`
 - `node --test tests/stylesheets-bundle.test.mjs`
@@ -90,4 +110,7 @@ Use the checked-in browser regression whenever a fix touches:
 - immediate-shell boot and first-interaction timing for public navigation
 - deferred route loading and feature-manifest boot behavior
 - service-worker-backed asset/page cache behavior when the shell/build contract changes
+- shared-worker action and projection behavior when same-origin tab/runtime state changes
+- durable projection restore when IndexedDB-backed runtime state changes
+- projection status-only updates that should not wipe the last good visible value
 - other runtime paths that unit tests can miss because the failure only appears in a real browser

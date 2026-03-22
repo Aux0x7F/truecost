@@ -25,6 +25,7 @@ function installDom() {
     dispatchEvent: () => {}
   };
   globalThis.fetch = async () => ({ ok: true });
+  return { documentListeners, windowListeners };
 }
 
 function createStore() {
@@ -103,4 +104,65 @@ test("site runtime hydrates public state through the shared store and remembers 
   const optimistic = runtime.commitLocalPublicState({ admins: ["pub", "aux"] });
   assert.deepEqual(optimistic.admins, ["pub", "aux"]);
   assert.equal(publicStateStore.digest, "digest-remembered");
+});
+
+test("site runtime no longer drives projection-backed graph refreshes on session change", async () => {
+  const { windowListeners } = installDom();
+  globalThis.document.querySelector = (selector) => {
+    if (selector === "[data-graph-page]") return {};
+    return null;
+  };
+
+  const state = {
+    session: { username: "aux", secretKeyHex: "sekret", pubkey: "pub" },
+    guestSession: null,
+    viewer: null,
+    publicState: null,
+    publicStateDigest: "",
+    staticEdit: null,
+    userProfileModalPubkey: ""
+  };
+
+  const runtime = createSiteRuntime({
+    site: { nostr: { storageNamespace: "tc", kinds: {}, appTag: "tc" } },
+    state,
+    publicStateStore: createStore(),
+    viewerController: {
+      primeFromSession: () => ({ pubkey: "pub" }),
+      canEdit: () => true
+    },
+    notificationState: {
+      reset() {},
+      hydrate: async () => {}
+    },
+    postsStore: { refresh: async () => [] },
+    ensureEventToolsLoaded: async () => {},
+    hasNostrTools: () => true,
+    stopPublicStateRepairPeer: () => {},
+    ensureBlobAvailable: async () => {},
+    publishTaggedJson: async () => {},
+    loadUserSubmissions: async () => [],
+    loadAdminKeyShare: async () => null
+  });
+
+  runtime.connectFeatures({
+    siteShellFeature: {
+      closeProfileMenus() {},
+      renderNavigation() {},
+      renderGlobalOverlays() {}
+    },
+    staticPageEditSurface: {
+      destroyOverlay() {},
+      init: async () => {}
+    },
+    investigationDetailSurface: {
+      destroy() {}
+    }
+  });
+
+  runtime.start();
+  const handler = windowListeners.get("truecost:session-changed");
+  assert.equal(typeof handler, "function");
+  await handler();
+  assert.equal(typeof windowListeners.get("truecost:session-changed"), "function");
 });

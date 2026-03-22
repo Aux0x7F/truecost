@@ -26,8 +26,9 @@ import {
   sanitizeTrustedHtml,
   stopPublicStateRepairPeer
 } from "./core/nostr.js";
-import { createPublicStateStore } from "./core/public-state-store.js";
 import { publicStateHasAdminPubkey } from "./core/public-state.js";
+import { getSiteRuntimeClient } from "./core/runtime-client.js";
+import { createRuntimePublicStateStore } from "./core/runtime-public-state-store.js";
 import {
   draftOwnerPubkey,
   isPageDraft,
@@ -40,11 +41,16 @@ import NAV_KEYS from "./core/nav-keys.js";
 import { createNotificationState } from "./core/notification-state.js";
 import { createPageRouter } from "./core/page-router.js";
 import { createSiteNotificationBuilder } from "./core/notification-builders.js";
+import {
+  loadSiteRuntimeValue,
+  rememberSiteRuntimeValue
+} from "./core/runtime-local-state.js";
 import { getStoredGuestSession, getStoredSession, saveSession } from "./core/session.js";
 import { createQueryState } from "./core/query-state.js";
 import {
   buildToc,
   renderError,
+  renderInvestigationArticleHtml,
   renderLoadingState,
   renderMarkedHtml,
   renderMiniMarkdown,
@@ -62,7 +68,7 @@ let siteShellFeature = null;
 const queryState = createQueryState();
 const navigationUi = createNavigationUiState();
 
-const publicStateStore = createPublicStateStore({
+const publicStateStore = createRuntimePublicStateStore({
   getSessionSecretKey: async () => (appRuntime ? appRuntime.getRequestSignerSecretKey() : ""),
   page: () => document.body.dataset.page || "site",
   refreshDelayMs: () => {
@@ -95,8 +101,6 @@ const state = {
   viewer: null,
   publicState: publicStateStore.value,
   publicStateDigest: publicStateStore.digest,
-  posts: postsStore.hydrateCache(),
-  postsPromise: null,
   commentReply: null,
   navigationUi,
   userProfileModalPubkey: "",
@@ -144,6 +148,15 @@ const notificationState = createNotificationState({
   getSession: () => state.session,
   getViewerPubkey: () => state.viewer?.pubkey || "",
   getPublicState: (force) => appRuntime?.getPublicState(force),
+  loadDismissedIds: async (viewerPubkey) => {
+    const value = await loadSiteRuntimeValue("dismissedNotifications", { viewerPubkey }).catch(() => []);
+    return Array.isArray(value) ? value : [];
+  },
+  saveDismissedIds: async (viewerPubkey, ids) => {
+    await rememberSiteRuntimeValue("dismissedNotifications", { viewerPubkey }, Array.from(ids || []), {
+      source: "notification-dismissed"
+    });
+  },
   buildNotifications: ({ publicState }) => buildSiteNotifications({
     publicState,
     viewer: state.viewer,
@@ -215,6 +228,7 @@ const featureManifest = createFeatureManifest({
       sanitizeTrustedHtml,
       buildToc,
       renderError,
+      renderInvestigationArticleHtml,
       renderLoadingState,
       renderMiniMarkdown,
       renderMarkedHtml,
@@ -243,6 +257,14 @@ const featureManifest = createFeatureManifest({
       state,
       postsStore,
       getPublicState: (force) => appRuntime.getPublicState(force),
+      getProjection: (channel, params = {}, options = {}) =>
+        getSiteRuntimeClient().then((runtimeClient) =>
+          runtimeClient.getProjection(channel, params, options)
+        ),
+      subscribeProjection: (channel, params = {}, listener = () => {}, options = {}) =>
+        getSiteRuntimeClient().then((runtimeClient) =>
+          runtimeClient.subscribeProjection(channel, params, listener, options)
+        ),
       queryState,
       cleanSlug,
       collectEntityRefsFromText,
@@ -263,6 +285,22 @@ const featureManifest = createFeatureManifest({
       fetchJson,
       postsStore,
       getPublicState: (force) => appRuntime.getPublicState(force),
+      getProjection: (channel, params = {}, options = {}) =>
+        getSiteRuntimeClient().then((runtimeClient) =>
+          runtimeClient.getProjection(channel, params, options)
+        ),
+      refreshProjection: (channel, params = {}, options = {}) =>
+        getSiteRuntimeClient().then((runtimeClient) =>
+          runtimeClient.refreshProjection(channel, params, options)
+        ),
+      subscribeProjection: (channel, params = {}, listener = () => {}, options = {}) =>
+        getSiteRuntimeClient().then((runtimeClient) =>
+          runtimeClient.subscribeProjection(channel, params, listener, options)
+        ),
+      rememberProjection: (channel, params = {}, value = null, meta = {}) =>
+        getSiteRuntimeClient().then((runtimeClient) =>
+          runtimeClient.rememberProjection(channel, params, value, meta)
+        ),
       viewerController,
       queryState
     });
@@ -276,6 +314,22 @@ const featureManifest = createFeatureManifest({
       fetchJson,
       postsStore,
       getPublicState: (force) => appRuntime.getPublicState(force),
+      getProjection: (channel, params = {}, options = {}) =>
+        getSiteRuntimeClient().then((runtimeClient) =>
+          runtimeClient.getProjection(channel, params, options)
+        ),
+      refreshProjection: (channel, params = {}, options = {}) =>
+        getSiteRuntimeClient().then((runtimeClient) =>
+          runtimeClient.refreshProjection(channel, params, options)
+        ),
+      subscribeProjection: (channel, params = {}, listener = () => {}, options = {}) =>
+        getSiteRuntimeClient().then((runtimeClient) =>
+          runtimeClient.subscribeProjection(channel, params, listener, options)
+        ),
+      rememberProjection: (channel, params = {}, value = null, meta = {}) =>
+        getSiteRuntimeClient().then((runtimeClient) =>
+          runtimeClient.rememberProjection(channel, params, value, meta)
+        ),
       viewerController,
       queryState
     });
@@ -368,8 +422,10 @@ const featureManifest = createFeatureManifest({
         loadDraftBySlug: reviewBundle.reviewWorkflow.loadDraftBySlug,
         publishReviewDecision: reviewBundle.reviewWorkflow.publishReviewDecision,
         queueLeafletBoundsFit: mapSurface.queueLeafletBoundsFit,
+        getCachedPosts: () => postsStore.current(),
         refreshPosts: () => postsStore.refresh(),
         renderComments: (slug, publicState) => markdownBundle.markdownPageFeature.renderComments(slug, publicState),
+        renderArticleBody: (node, post) => markdownBundle.markdownPageFeature.renderArticleBody(node, post),
         renderError,
         renderInvestigationCard: archiveBundle.archivePageFeature.renderInvestigationCard,
         renderLeafletPreviewMap: archiveSurface.renderLeafletPreviewMap,
@@ -408,6 +464,7 @@ document.addEventListener("DOMContentLoaded", () => {
   window.__truecostImmediateShell?.destroy?.();
   siteShellFeature.mount();
   appRuntime.connectFeatures({ siteShellFeature });
+  void postsStore.hydrateCache().catch(() => []);
   appRuntime.start();
 
   createPageRouter({ page })

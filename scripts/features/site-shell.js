@@ -1,4 +1,5 @@
 import { clearSession } from "../core/session.js";
+import { getSiteRuntimeClient } from "../core/runtime-client.js";
 import {
   clampNotificationsPanel,
   closeProfileMenu,
@@ -232,13 +233,19 @@ export function createSiteShellFeature({
 
       if (target.closest("[data-signout]")) {
         event.preventDefault();
-        clearSession();
-        state.session = null;
-        state.viewer = null;
-        setNavigationOpen(false);
-        renderNavigation();
-        onSignedOut?.();
-        window.location.reload();
+        void getSiteRuntimeClient()
+          .then((runtimeClient) => runtimeClient.signOut())
+          .catch(() => {
+            clearSession();
+          })
+          .finally(() => {
+            state.session = null;
+            state.viewer = null;
+            setNavigationOpen(false);
+            renderNavigation();
+            onSignedOut?.();
+            window.location.reload();
+          });
         return;
       }
 

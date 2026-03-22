@@ -1,3 +1,8 @@
+import {
+  loadSiteRuntimeValue,
+  rememberSiteRuntimeValue
+} from "./runtime-local-state.js";
+
 export function createContentPostStore({
   indexPath,
   contentDir,
@@ -6,28 +11,49 @@ export function createContentPostStore({
   fetchJson,
   fetchText,
   parseContentDocument,
-  slugify
+  slugify,
+  loadCachedPosts = loadSiteRuntimeValue,
+  rememberCachedPosts = rememberSiteRuntimeValue
 } = {}) {
   let posts = clonePosts(initialPosts);
   let postsPromise = null;
+  let cachePromise = null;
 
   function current() {
     return clonePosts(posts);
   }
 
-  function hydrateCache() {
-    posts = loadCachedPosts(cacheKey);
-    return current();
+  async function hydrateCache() {
+    if (cachePromise) return cachePromise;
+    cachePromise = loadCachedPosts("contentPosts", { cacheKey }, {
+      reason: "content-post-cache",
+      preferFresh: false
+    })
+      .then((cachedPosts) => {
+        if (Array.isArray(cachedPosts) && cachedPosts.length) {
+          posts = clonePosts(cachedPosts);
+        }
+        return current();
+      })
+      .catch(() => current())
+      .finally(() => {
+        cachePromise = null;
+      });
+    return cachePromise;
   }
 
-  function remember(nextPosts) {
+  async function remember(nextPosts) {
     posts = clonePosts(nextPosts);
-    persistCachedPosts(cacheKey, posts);
+    await rememberCachedPosts("contentPosts", { cacheKey }, posts, {
+      source: "content-post-cache"
+    }).catch(() => null);
     return current();
   }
 
   async function load() {
     if (postsPromise) return postsPromise;
+    if (posts.length) return current();
+    await hydrateCache();
     if (posts.length) return current();
     return refresh();
   }
@@ -40,8 +66,7 @@ export function createContentPostStore({
         const nextPosts = entries
           .filter(Boolean)
           .sort((left, right) => String(right.date || "").localeCompare(String(left.date || "")));
-        remember(nextPosts);
-        return current();
+        return remember(nextPosts);
       })
       .catch((error) => {
         if (posts.length) return current();
@@ -104,23 +129,4 @@ function clonePosts(posts) {
         entity_refs: Array.isArray(post?.entity_refs) ? [...post.entity_refs] : post?.entity_refs
       }))
     : [];
-}
-
-function loadCachedPosts(cacheKey) {
-  try {
-    const raw = window.localStorage.getItem(cacheKey);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? clonePosts(parsed) : [];
-  } catch {
-    return [];
-  }
-}
-
-function persistCachedPosts(cacheKey, posts) {
-  try {
-    window.localStorage.setItem(cacheKey, JSON.stringify(clonePosts(posts)));
-  } catch {
-    return;
-  }
 }

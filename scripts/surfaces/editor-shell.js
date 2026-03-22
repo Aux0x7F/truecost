@@ -170,7 +170,13 @@ function renderEntityModalMarkup(modalState, deps = {}) {
 
 function renderImageModalMarkup(modalState, deps = {}) {
   const escapeAttribute = deps.escapeAttribute || ((value) => String(value || ""));
-  const { alt, caption, placement } = modalState;
+  const {
+    alt,
+    caption,
+    placement,
+    drag = { x: 0.5, y: 0.5 },
+    crop = { x: 0, y: 0, width: 1, height: 1 }
+  } = modalState;
   return `
     <div class="modal-backdrop" data-editor-modal-backdrop>
       <section class="modal-card modal-card--editor" aria-label="Insert image">
@@ -194,15 +200,46 @@ function renderImageModalMarkup(modalState, deps = {}) {
           <label>
             <span class="sr-only">Placement</span>
             <select name="placement" aria-label="Image placement">
-              <option value="full" ${placement === "full" ? "selected" : ""}>Full width</option>
-              <option value="left" ${placement === "left" ? "selected" : ""}>Left</option>
-              <option value="right" ${placement === "right" ? "selected" : ""}>Right</option>
+              <option value="full-width" ${placement === "full-width" ? "selected" : ""}>Full width</option>
+              <option value="center" ${placement === "center" ? "selected" : ""}>Center</option>
+              <option value="float-left" ${placement === "float-left" ? "selected" : ""}>Float left</option>
+              <option value="float-right" ${placement === "float-right" ? "selected" : ""}>Float right</option>
+              <option value="fill-crop" ${placement === "fill-crop" ? "selected" : ""}>Fill crop box</option>
             </select>
           </label>
           <label class="editor-field editor-field--wide">
             <span class="sr-only">Caption</span>
             <input name="caption" type="text" maxlength="180" placeholder="Caption (optional)" value="${escapeAttribute(caption)}">
           </label>
+          <div class="editor-image-grid editor-field editor-field--wide">
+            <label>
+              <span>Focus X</span>
+              <input name="focusX" type="range" min="0" max="100" step="1" value="${escapeAttribute(Math.round(Number(drag.x || 0.5) * 100))}">
+            </label>
+            <label>
+              <span>Focus Y</span>
+              <input name="focusY" type="range" min="0" max="100" step="1" value="${escapeAttribute(Math.round(Number(drag.y || 0.5) * 100))}">
+            </label>
+          </div>
+          <div class="editor-image-grid editor-field editor-field--wide">
+            <label>
+              <span>Crop X</span>
+              <input name="cropX" type="range" min="0" max="100" step="1" value="${escapeAttribute(Math.round(Number(crop.x || 0) * 100))}">
+            </label>
+            <label>
+              <span>Crop Y</span>
+              <input name="cropY" type="range" min="0" max="100" step="1" value="${escapeAttribute(Math.round(Number(crop.y || 0) * 100))}">
+            </label>
+            <label>
+              <span>Crop width</span>
+              <input name="cropWidth" type="range" min="10" max="100" step="1" value="${escapeAttribute(Math.round(Number(crop.width || 1) * 100))}">
+            </label>
+            <label>
+              <span>Crop height</span>
+              <input name="cropHeight" type="range" min="10" max="100" step="1" value="${escapeAttribute(Math.round(Number(crop.height || 1) * 100))}">
+            </label>
+          </div>
+          <p class="muted-text">Focus and crop settings are saved with the image block for review, collaboration, and bakedown.</p>
           <div class="button-row">
             <button class="button-ghost" type="button" data-editor-modal-close>Cancel</button>
             <button class="button" type="submit">Insert image</button>

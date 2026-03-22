@@ -10,9 +10,20 @@ import {
   createStaleSessionError,
   isStaleSessionError,
   readStoredAccountHistory,
+  resolveSessionIdentityState,
   rotationReusesIdentityKey,
   resolveStaleSessionAccount
 } from "./account-management.js";
+import {
+  clearCachedSiteRuntimeChannel,
+  clearCachedSiteRuntimeValue,
+  clearSiteRuntimeValue,
+  getCachedSiteRuntimeValue,
+  loadSiteRuntimeValue,
+  readCachedSiteRuntimeValue,
+  rememberCachedSiteRuntimeValue,
+  rememberSiteRuntimeValue
+} from "./runtime-local-state.js";
 
 export {
   buildPasswordReuseMessage,
@@ -26,7 +37,9 @@ export {
   resolveStaleSessionAccount
 } from "./account-management.js";
 
-const USERNAME_INTEGRITY_CACHE_KEY = "truecost.v2.username-integrity";
+const USERNAME_INTEGRITY_CHANNEL = "usernameIntegrity";
+const sessionIntegrityKeys = new Set();
+let sessionIntegrityGeneration = 0;
 
 export function normalizeClaimedUsername(value) {
   return String(value || "")
@@ -46,29 +59,30 @@ function sessionIntegrityCacheKey(session = null) {
   return claimedUsername && pubkey ? `${claimedUsername}:${pubkey}` : "";
 }
 
-function loadSessionIntegrityCache() {
-  if (typeof localStorage === "undefined") return {};
-  try {
-    const parsed = JSON.parse(localStorage.getItem(USERNAME_INTEGRITY_CACHE_KEY) || "{}");
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+function sessionIntegrityRuntimeParams(session = null) {
+  const claimedUsername = normalizeClaimedUsername(session?.username);
+  const pubkey = normalizePubkey(session?.pubkey);
+  return claimedUsername && pubkey ? { username: claimedUsername, pubkey, __projectionScope: "global" } : null;
 }
 
-function saveSessionIntegrityCache(nextValue) {
-  if (typeof localStorage === "undefined") return;
-  try {
-    localStorage.setItem(USERNAME_INTEGRITY_CACHE_KEY, JSON.stringify(nextValue && typeof nextValue === "object" ? nextValue : {}));
-  } catch {
-    return;
+export function resetCachedSessionUsernameIntegrityStore() {
+  sessionIntegrityGeneration += 1;
+  clearCachedSiteRuntimeChannel(USERNAME_INTEGRITY_CHANNEL);
+  for (const key of sessionIntegrityKeys) {
+    const [claimedUsername, pubkey] = String(key || "").split(":");
+    clearCachedSiteRuntimeValue(USERNAME_INTEGRITY_CHANNEL, {
+      username: claimedUsername,
+      pubkey,
+      __projectionScope: "global"
+    });
   }
+  sessionIntegrityKeys.clear();
 }
 
 export function readCachedSessionUsernameIntegrity(session = null) {
   const key = sessionIntegrityCacheKey(session);
   if (!key) return null;
-  const entry = loadSessionIntegrityCache()[key];
+  const entry = readCachedSiteRuntimeValue(USERNAME_INTEGRITY_CHANNEL, sessionIntegrityRuntimeParams(session)) || null;
   if (!entry || typeof entry !== "object") return null;
   return {
     conflict: Boolean(entry.conflict),
@@ -79,28 +93,60 @@ export function readCachedSessionUsernameIntegrity(session = null) {
   };
 }
 
+export async function hydrateCachedSessionUsernameIntegrity(session = null, { preferFresh = false } = {}) {
+  const key = sessionIntegrityCacheKey(session);
+  const params = sessionIntegrityRuntimeParams(session);
+  if (!key || !params) return null;
+  const cachedEntry = await getCachedSiteRuntimeValue(USERNAME_INTEGRITY_CHANNEL, params);
+  if (cachedEntry && typeof cachedEntry === "object") {
+    rememberSessionUsernameIntegrity(session, cachedEntry);
+    return readCachedSessionUsernameIntegrity(session);
+  }
+  if (!preferFresh && readCachedSessionUsernameIntegrity(session)) {
+    return readCachedSessionUsernameIntegrity(session);
+  }
+  const loadedEntry = await loadSiteRuntimeValue(USERNAME_INTEGRITY_CHANNEL, params);
+  if (!loadedEntry || typeof loadedEntry !== "object") return readCachedSessionUsernameIntegrity(session);
+  rememberSessionUsernameIntegrity(session, loadedEntry);
+  return readCachedSessionUsernameIntegrity(session);
+}
+
 export function rememberSessionUsernameIntegrity(session = null, integrity = {}) {
   const key = sessionIntegrityCacheKey(session);
   if (!key) return integrity;
-  const cache = loadSessionIntegrityCache();
-  cache[key] = {
+  const nextEntry = {
     conflict: Boolean(integrity?.conflict),
     claimedUsername: normalizeClaimedUsername(integrity?.claimedUsername || session?.username),
     ownerPubkey: normalizePubkey(integrity?.ownerPubkey),
     checkedAt: Date.now(),
     source: String(integrity?.source || "cache").trim().toLowerCase() || "cache"
   };
-  saveSessionIntegrityCache(cache);
+  sessionIntegrityKeys.add(key);
+  rememberCachedSiteRuntimeValue(USERNAME_INTEGRITY_CHANNEL, sessionIntegrityRuntimeParams(session), nextEntry);
+  const params = sessionIntegrityRuntimeParams(session);
+  if (params) {
+    persistSessionIntegrityProjection(params, nextEntry, "username-integrity");
+  }
   return integrity;
 }
 
 export function clearCachedSessionUsernameIntegrity(session = null) {
   const key = sessionIntegrityCacheKey(session);
   if (!key) return;
-  const cache = loadSessionIntegrityCache();
-  if (!(key in cache)) return;
-  delete cache[key];
-  saveSessionIntegrityCache(cache);
+  sessionIntegrityKeys.delete(key);
+  clearCachedSiteRuntimeValue(USERNAME_INTEGRITY_CHANNEL, sessionIntegrityRuntimeParams(session));
+  const params = sessionIntegrityRuntimeParams(session);
+  if (params) {
+    const generation = sessionIntegrityGeneration;
+    void Promise.resolve()
+      .then(() => {
+        if (generation !== sessionIntegrityGeneration) return null;
+        return clearSiteRuntimeValue(USERNAME_INTEGRITY_CHANNEL, params, {
+          source: "username-integrity-clear"
+        });
+      })
+      .catch(() => null);
+  }
 }
 
 function buildResolvedIntegrity({ conflict = false, claimedUsername = "", ownerPubkey = "", user = null, source = "state" } = {}) {
@@ -581,17 +627,26 @@ export async function assertNetworkSessionUsernameIntegrity(
       claimedUsername: normalizeClaimedUsername(session?.username)
     });
   }
+  const identityState = resolveSessionIdentityState(publicState, session);
   const staleSession = resolveStaleSessionAccount(publicState, session);
-  if (staleSession) {
+  const claimedUsername = normalizeClaimedUsername(session?.username);
+  const stateIntegrity = resolveSessionUsernameConflictFromState(publicState, session);
+  const hasStateOwnershipSignal = Boolean(
+    stateIntegrity.user || resolveUsernameRegistryEntry(publicState, claimedUsername)
+  );
+  if (identityState.isStaleKey) {
     throw createStaleSessionError({
-      claimedUsername: staleSession.claimedUsername,
+      claimedUsername: staleSession?.claimedUsername || claimedUsername,
       currentContext: action
     });
   }
-
-  const stateIntegrity = resolveSessionUsernameConflictFromState(publicState, session);
+  if (staleSession && !hasStateOwnershipSignal) {
+    throw createStaleSessionError({
+      claimedUsername: staleSession.claimedUsername || claimedUsername,
+      currentContext: action
+    });
+  }
   const cleanSessionPubkey = normalizePubkey(session?.pubkey);
-  const claimedUsername = normalizeClaimedUsername(session?.username || stateIntegrity.claimedUsername);
   if (!claimedUsername) {
     clearCachedSessionUsernameIntegrity(session);
     return stateIntegrity;
@@ -614,6 +669,7 @@ export async function assertNetworkSessionUsernameIntegrity(
 
   const lookupOwner = selectCanonicalLookupOwner(lookupResults, claimedUsername);
   const lookupSessionClaimant = selectLookupSessionClaimant(lookupResults, claimedUsername, cleanSessionPubkey);
+  const stateRegistryEntry = resolveUsernameRegistryEntry(publicState, claimedUsername);
   const removedLookupSession = (Array.isArray(lookupResults) ? lookupResults : []).find(
     (user) => normalizePubkey(user?.pubkey) === cleanSessionPubkey && Boolean(user?.removed)
   );
@@ -687,6 +743,16 @@ export async function assertNetworkSessionUsernameIntegrity(
       });
     }
     const stateKnowsClaimant = stateKnowsSessionUsernameClaim(publicState, session, stateIntegrity);
+    const trustedStateOwnerPubkey = normalizePubkey(
+      stateRegistryEntry?.owner_pubkey || stateIntegrity.ownerPubkey
+    );
+    if (trustedState && trustedStateOwnerPubkey && !stateKnowsClaimant) {
+      rememberSessionUsernameIntegrity(session, stateIntegrity);
+      throw createUsernameConflictError({
+        claimedUsername: stateIntegrity.claimedUsername,
+        action
+      });
+    }
     if (requireLookup && (!lookupSuccessful || !stateKnowsClaimant)) {
       throw new Error(`Could not verify whether @${claimedUsername} belongs to this account on the network. Try again in a moment.`);
     }
@@ -697,7 +763,6 @@ export async function assertNetworkSessionUsernameIntegrity(
     });
   }
 
-  const stateRegistryEntry = resolveUsernameRegistryEntry(publicState, claimedUsername);
   if (stateRegistryEntry || stateIntegrity.user) {
     clearCachedSessionUsernameIntegrity(session);
     return stateIntegrity;
@@ -722,4 +787,17 @@ export async function assertNetworkSessionUsernameIntegrity(
 
   clearCachedSessionUsernameIntegrity(session);
   return stateIntegrity;
+}
+
+function persistSessionIntegrityProjection(params = null, value = null, source = "") {
+  if (!params || !value) return;
+  const generation = sessionIntegrityGeneration;
+  void Promise.resolve()
+    .then(() => {
+      if (generation !== sessionIntegrityGeneration) return null;
+      return rememberSiteRuntimeValue(USERNAME_INTEGRITY_CHANNEL, params, value, {
+        source
+      });
+    })
+    .catch(() => null);
 }

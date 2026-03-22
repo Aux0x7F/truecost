@@ -35,6 +35,14 @@ await esbuild.build({
   chunkNames: "chunks/[name]-[hash]"
 });
 
+await esbuild.build({
+  entryPoints: [path.join(root, "scripts", "core", "site-runtime-worker.js")],
+  bundle: true,
+  format: "esm",
+  minify: true,
+  outfile: path.join(dist, "site-runtime-worker.js")
+});
+
 const css = await fs.readFile(path.join(root, "styles.css"), "utf8");
 const minifiedCss = await esbuild.transform(css, { loader: "css", minify: true });
 await fs.writeFile(path.join(dist, "styles.css"), minifiedCss.code, "utf8");
@@ -46,7 +54,6 @@ for (const page of pageDefinitions) {
     site: siteTemplate,
     mainHtml
   });
-  await fs.writeFile(path.join(root, page.fileName), html, "utf8");
   const minified = await minifyHtml(html, {
     collapseWhitespace: true,
     removeComments: true,
@@ -69,6 +76,7 @@ const serviceWorkerSource = renderServiceWorker({
     "./scripts/admin.js",
     "./scripts/submit.js",
     "./scripts/editor.js",
+    "./site-runtime-worker.js",
     "./content/investigations/index.json",
     "./content/graph/wiki-seed.json",
     "./content/pages/guide.md",
@@ -79,7 +87,6 @@ const serviceWorkerSource = renderServiceWorker({
   runtimeAssetPrefixes: ["./scripts/", "./styles/", "./vendor/", "./favicon.svg"],
   runtimeContentPrefixes: ["./content/"]
 });
-await fs.writeFile(path.join(root, "service-worker.js"), serviceWorkerSource, "utf8");
 await fs.writeFile(path.join(dist, "service-worker.js"), serviceWorkerSource, "utf8");
 
 await copyDir(path.join(root, "content"), path.join(dist, "content"));

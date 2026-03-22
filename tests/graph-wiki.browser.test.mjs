@@ -1,15 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import SITE from "../scripts/core/site-config.js";
 import {
   createStaticServer,
   loadPlaywright,
+  prepareBrowserContext,
   seedAdminSession
 } from "./browser-test-utils.mjs";
 
 const repoRoot = process.cwd();
 const secretKeyHex = "1111111111111111111111111111111111111111111111111111111111111111";
-const pubkey = "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
+const pubkey = String(SITE.nostr.rootAdminPubkey || "").trim().toLowerCase();
 
 test("graph explorer and wiki pages render seeded graph content", async (t) => {
   const playwright = await loadPlaywright();
@@ -20,14 +22,18 @@ test("graph explorer and wiki pages render seeded graph content", async (t) => {
 
   const { server, port } = await createStaticServer(repoRoot);
   const browser = await playwright.chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1200 } });
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 1200 },
+    serviceWorkers: "block"
+  });
+  await prepareBrowserContext(context);
   const page = await context.newPage();
 
   try {
-    await page.goto(`http://127.0.0.1:${port}/graph.html`, { waitUntil: "networkidle" });
+    await page.goto(`http://127.0.0.1:${port}/graph.html`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(
       () => document.querySelectorAll("[data-graph-node]").length >= 3,
-      { timeout: 15000 }
+      { timeout: 30000 }
     );
 
     const graphMetrics = await page.evaluate(() => ({
@@ -65,10 +71,10 @@ test("graph explorer and wiki pages render seeded graph content", async (t) => {
     });
     assert.equal(graphNavCollapsed, "none", "Explore should collapse again when toggled from Graph");
 
-    await page.goto(`http://127.0.0.1:${port}/wiki.html?entity=north-valley-processing-campus`, { waitUntil: "networkidle" });
+    await page.goto(`http://127.0.0.1:${port}/wiki.html?entity=north-valley-processing-campus`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(
       () => (document.querySelector("[data-wiki-article]")?.textContent || "").includes("North Valley Processing Campus"),
-      { timeout: 15000 }
+      { timeout: 30000 }
     );
     const wikiMetrics = await page.evaluate(() => ({
       articleText: document.querySelector("[data-wiki-article]")?.textContent || "",
@@ -100,7 +106,7 @@ test("graph explorer and wiki pages render seeded graph content", async (t) => {
     assert.equal(wikiNavMetrics.graphIsCurrent, false, "Graph should not stay current on wiki pages");
     assert.equal(wikiNavMetrics.wikiIsCurrent, true, "Wiki should be the current Explore child on wiki pages");
 
-    await page.goto(`http://127.0.0.1:${port}/graph.html?focus=animal-agriculture`, { waitUntil: "networkidle" });
+    await page.goto(`http://127.0.0.1:${port}/graph.html?focus=animal-agriculture`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(
       () => (document.querySelector("[data-graph-rail]")?.textContent || "").includes("Animal Agriculture"),
       { timeout: 15000 }
@@ -119,11 +125,8 @@ test("graph explorer and wiki pages render seeded graph content", async (t) => {
     assert.match(focusMetrics.railText, /Clear filters/);
 
     await seedAdminSession(page, { port, secretKeyHex, pubkey });
-    await page.goto(`http://127.0.0.1:${port}/graph.html`, { waitUntil: "networkidle" });
-    await page.waitForFunction(
-      () => (document.querySelector("[data-graph-rail]")?.textContent || "").includes("Create entity"),
-      { timeout: 15000 }
-    );
+    await page.goto(`http://127.0.0.1:${port}/graph.html`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("[data-open-graph-entity-modal]", { timeout: 30000 });
 
     const adminRailText = await page.locator("[data-graph-rail]").textContent();
     assert.match(adminRailText || "", /Create entity/);

@@ -1,5 +1,5 @@
 import { createRequestSigner } from "../core/request-signer.js";
-import { getStoredSession, getOrCreateGuestSession } from "../core/session.js";
+import { getStoredSession, getOrCreateGuestSession, resolveStoredSession } from "../core/session.js";
 
 export function createSiteRuntime({
   site,
@@ -17,6 +17,7 @@ export function createSiteRuntime({
   loadAdminKeyShare
 } = {}) {
   let features = {};
+  let started = false;
 
   const requestSigner = createRequestSigner({
     state,
@@ -30,13 +31,20 @@ export function createSiteRuntime({
   publicStateStore.subscribe((snapshot) => {
     state.publicState = snapshot.value;
     state.publicStateDigest = snapshot.digest;
+    if (started && snapshot.reason === "source" && snapshot.valueChanged) {
+      void applyPublicStateRefresh();
+    }
   });
 
   function connectFeatures(nextFeatures) {
     features = { ...features, ...nextFeatures };
+    if (started && state.session) {
+      void refreshSessionSensitiveFeatures();
+    }
   }
 
   function start() {
+    started = true;
     void bootstrap();
     initLinkPrefetch();
     startBackgroundPrefetch();
@@ -48,6 +56,9 @@ export function createSiteRuntime({
 
   async function bootstrap() {
     try {
+      state.session = await resolveStoredSession({
+        persistSession: true
+      }).catch(() => getStoredSession());
       await ensureEventToolsLoaded();
       if (!state.guestSession) {
         state.guestSession = await getOrCreateGuestSession().catch(() => null);
@@ -138,23 +149,8 @@ export function createSiteRuntime({
       }
     }
 
-    if (document.querySelector("[data-map-list]") && document.querySelector("[data-map-canvas]")) {
-      const nextMapDigest = features.mapPageFeature?.dataDigest?.(state.publicState) || "";
-      if (!features.mapPageFeature?.isInteractionActive?.() && (!state.map || nextMapDigest !== state.mapViewDigest)) {
-        await features.mapPageFeature?.mount?.();
-      }
-    }
-
     if (document.querySelector("[data-investigation-article]")) {
       await features.markdownPageFeature?.refreshVisibleCommentThread?.();
-    }
-
-    if (document.querySelector("[data-graph-page]")) {
-      await features.graphPageFeature?.refreshVisibleGraph?.();
-    }
-
-    if (document.querySelector("[data-wiki-page]")) {
-      await features.wikiPageFeature?.refreshVisibleWiki?.();
     }
 
     window.dispatchEvent(new CustomEvent("truecost:public-state-updated", {
@@ -199,6 +195,19 @@ export function createSiteRuntime({
       void hydrateNotifications(true);
     }
     void features.staticPageEditSurface?.init?.();
+    void refreshSessionSensitiveFeatures();
+  }
+
+  async function refreshSessionSensitiveFeatures() {
+    if (document.querySelector("[data-home-investigations], [data-investigation-list], [data-archive-summary]")) {
+      if (!features.archivePageFeature?.isInteractionActive?.()) {
+        await features.archivePageFeature?.mount?.();
+      }
+    }
+
+    if (document.querySelector("[data-investigation-article]")) {
+      await features.markdownPageFeature?.refreshVisibleCommentThread?.();
+    }
   }
 
   function startBackgroundPrefetch() {
@@ -226,6 +235,7 @@ export function createSiteRuntime({
       fetch("./content/pages/guide.md", { cache: "force-cache" }).catch(() => null);
       fetch("./vendor/leaflet.js", { cache: "force-cache" }).catch(() => null);
       fetch("./vendor/leaflet.css", { cache: "force-cache" }).catch(() => null);
+      void postsStore.hydrateCache?.().catch(() => []);
       void postsStore.refresh().catch(() => []);
       void publicStateStore.hydrate({ force: false, reason: "prefetch", requestRepair: false }).catch(() => null);
       if (state.session?.secretKeyHex) {
@@ -270,6 +280,7 @@ export function createSiteRuntime({
     getRequestSignerSecretKey: requestSigner.getSecretKey,
     hydrateNotifications,
     refreshAvatarFromCache: requestSigner.refreshAvatarFromCache,
+    refreshSessionSensitiveFeatures,
     start,
     syncPublicState
   };

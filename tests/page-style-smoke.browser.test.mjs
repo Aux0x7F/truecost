@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   createStaticServer,
   loadPlaywright,
+  prepareBrowserContext,
   seedAdminSession,
   seedLegacyAdminSession
 } from "./browser-test-utils.mjs";
@@ -21,11 +22,19 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
 
   const { server, port } = await createStaticServer(repoRoot);
   const browser = await playwright.chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1600 } });
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 1600 },
+    serviceWorkers: "block"
+  });
+  await prepareBrowserContext(context);
   const page = await context.newPage();
 
   try {
     await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(
+      () => document.querySelectorAll("[data-site-nav] a, [data-site-nav] button[data-submenu-toggle]").length > 0,
+      { timeout: 5000 }
+    );
     const initialNavLinks = await page.evaluate(() =>
       document.querySelectorAll("[data-site-nav] a, [data-site-nav] button[data-submenu-toggle]").length
     );
@@ -47,7 +56,7 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
     assert.equal(authModalMetrics.minLength, "8", "global auth modal should enforce password minimums");
     await page.click("[data-auth-close]");
 
-    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "networkidle" });
+    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(1200);
     const homeMetrics = await page.evaluate(() => {
       const grid = document.querySelector("[data-home-investigations]");
@@ -73,7 +82,7 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
       "desktop featured cards should not collapse into a single full-width column"
     );
 
-    await page.goto(`http://127.0.0.1:${port}/map.html`, { waitUntil: "networkidle" });
+    await page.goto(`http://127.0.0.1:${port}/map.html`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(
       () =>
         Boolean(document.querySelector(".leaflet-container")) ||
@@ -116,7 +125,7 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
     assert.equal(expandedMapNavMetrics.mapIsCurrent, true, "map nav item should stay current when Explore opens");
     assert.equal(expandedMapNavMetrics.panelDisplay, "grid", "Explore should open when toggled");
 
-    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "networkidle" });
+    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Explore" }).click();
     const homeMapLinkState = await page.evaluate(() => {
       const mapLink = Array.from(document.querySelectorAll(".nav-group__panel a")).find((link) =>
@@ -132,7 +141,7 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
     assert.equal(homeMapLinkState.isDisabled, false, "map should not render as disabled in Explore");
 
     await seedAdminSession(page, { port, secretKeyHex, pubkey });
-    await page.goto(`http://127.0.0.1:${port}/admin.html?tab=dashboard`, { waitUntil: "networkidle" });
+    await page.goto(`http://127.0.0.1:${port}/admin.html?tab=dashboard`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector("[data-workspace-pane]", { timeout: 15000 });
     await page.waitForFunction(
       () =>
@@ -190,7 +199,7 @@ test("desktop public and workspace pages keep shared card layouts after styleshe
       username: "smoke-user",
       adminPubkey: pubkey
     });
-    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "networkidle" });
+    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "domcontentloaded" });
     await page.click("[data-profile-toggle]");
     const legacyProfileMenuLabel = await page.evaluate(() =>
       document.querySelector(".profile-menu__panel a")?.textContent?.trim() || ""

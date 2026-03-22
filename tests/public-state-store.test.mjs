@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createPublicStateStore } from "../scripts/core/public-state-store.js";
+import { createRuntimePublicStateStore as createPublicStateStore } from "../scripts/core/runtime-public-state-store.js";
 
 function createBaselineState(overrides = {}) {
   return {

@@ -4,6 +4,7 @@ import {
   filterEvidenceGraph,
   findGraphNodeMatches
 } from "../../vendor/nostr-site-support.esm.js";
+import { investigationDrafts, draftToInvestigationPreview } from "./page-drafts.js";
 
 export {
   buildEvidenceGraph,
@@ -39,6 +40,9 @@ export function buildSiteEvidenceGraph({
   const draftRelationships = Array.isArray(publicState?.draftRelationships) ? publicState.draftRelationships : [];
   const localDraftEntities = Array.isArray(draftGraph?.entities) ? draftGraph.entities : [];
   const localDraftRelationships = Array.isArray(draftGraph?.relationships) ? draftGraph.relationships : [];
+  const draftInvestigations = viewerIsAdmin
+    ? investigationDrafts(publicState?.drafts || []).map((draft) => draftToInvestigationPreview(draft))
+    : [];
   const entities = mergeEntities([
     ...normalizedSeed.entities,
     ...approvedEntities,
@@ -53,6 +57,7 @@ export function buildSiteEvidenceGraph({
       ...(viewerIsAdmin ? draftRelationships : []),
       ...(viewerIsAdmin ? localDraftRelationships : [])
     ],
+    draftInvestigations,
     investigations: Array.isArray(posts) ? posts : [],
     viewerIsAdmin
   });

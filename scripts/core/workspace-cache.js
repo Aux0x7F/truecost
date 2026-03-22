@@ -1,26 +1,47 @@
-export function workspaceSiteKeyShareCacheKey(storageNamespace, viewerPubkey = "") {
+import {
+  clearSiteRuntimeValue,
+  loadSiteRuntimeValue,
+  rememberSiteRuntimeValue
+} from "./runtime-local-state.js";
+
+export function workspaceSiteKeyShareCacheKey(_storageNamespace, viewerPubkey = "") {
   const cleanViewerPubkey = String(viewerPubkey || "").trim().toLowerCase();
-  return cleanViewerPubkey ? `${storageNamespace}.admin-site-shares.${cleanViewerPubkey}` : "";
+  return cleanViewerPubkey ? `workspaceSiteKeyShares:${cleanViewerPubkey}` : "";
 }
 
-export function workspaceInboxCacheKey(storageNamespace, viewerPubkey = "", sitePubkey = "") {
+export function workspaceInboxCacheKey(_storageNamespace, viewerPubkey = "", sitePubkey = "") {
   const cleanViewerPubkey = String(viewerPubkey || "").trim().toLowerCase();
   const cleanSitePubkey = String(sitePubkey || "").trim().toLowerCase();
   return cleanViewerPubkey && cleanSitePubkey
-    ? `${storageNamespace}.workspace-inbox.${cleanViewerPubkey}.${cleanSitePubkey}`
+    ? `workspaceInboxSubmissions:${cleanViewerPubkey}:${cleanSitePubkey}`
     : "";
 }
 
-export function loadCachedWorkspaceSiteKeyShares({
+function workspaceSiteKeyShareParams(viewerPubkey = "") {
+  const cleanViewerPubkey = String(viewerPubkey || "").trim().toLowerCase();
+  return cleanViewerPubkey ? { viewerPubkey: cleanViewerPubkey } : null;
+}
+
+function workspaceInboxParams(viewerPubkey = "", sitePubkey = "") {
+  const cleanViewerPubkey = String(viewerPubkey || "").trim().toLowerCase();
+  const cleanSitePubkey = String(sitePubkey || "").trim().toLowerCase();
+  return cleanViewerPubkey && cleanSitePubkey
+    ? { viewerPubkey: cleanViewerPubkey, sitePubkey: cleanSitePubkey }
+    : null;
+}
+
+export async function loadCachedWorkspaceSiteKeyShares({
   storageNamespace = "",
   viewerPubkey = "",
   deriveIdentity
 } = {}) {
-  const cacheKey = workspaceSiteKeyShareCacheKey(storageNamespace, viewerPubkey);
-  if (!cacheKey || typeof window === "undefined") return [];
+  const cacheParams = workspaceSiteKeyShareParams(viewerPubkey);
+  if (!cacheParams) return [];
   try {
-    const raw = window.localStorage.getItem(cacheKey);
-    const parsed = raw ? JSON.parse(raw) : [];
+    const parsed = await loadSiteRuntimeValue("workspaceSiteKeyShares", cacheParams, {
+      reason: "workspace-cache-load",
+      preferFresh: false
+    });
     if (!Array.isArray(parsed)) return [];
     return parsed
       .map((entry) => buildWorkspaceSiteKeyShare(entry?.siteSecretKeyHex || entry?.site_secret_key_hex || "", entry || {}, deriveIdentity))
@@ -30,20 +51,22 @@ export function loadCachedWorkspaceSiteKeyShares({
   }
 }
 
-export function persistCachedWorkspaceSiteKeyShares({
+export async function persistCachedWorkspaceSiteKeyShares({
   storageNamespace = "",
   viewerPubkey = "",
   shares = []
 } = {}) {
-  const cacheKey = workspaceSiteKeyShareCacheKey(storageNamespace, viewerPubkey);
-  if (!cacheKey || typeof window === "undefined") return;
+  const cacheParams = workspaceSiteKeyShareParams(viewerPubkey);
+  if (!cacheParams) return;
   const serialized = mergeWorkspaceSiteKeyShares(shares, []).map((share) => ({
     siteSecretKeyHex: share.siteSecretKeyHex,
     sitePubkey: share.sitePubkey,
     senderPubkey: share.senderPubkey || "",
     sharedAt: share.sharedAt || ""
   }));
-  window.localStorage.setItem(cacheKey, JSON.stringify(serialized));
+  await rememberSiteRuntimeValue("workspaceSiteKeyShares", cacheParams, serialized, {
+    source: "workspace-site-key-cache"
+  });
 }
 
 export function mergeWorkspaceSiteKeyShares(primary, secondary) {
@@ -86,39 +109,45 @@ export function findWorkspaceSiteKeyShare(shares, sitePubkey = "") {
   return (Array.isArray(shares) ? shares : []).find((share) => share.sitePubkey === cleanSitePubkey) || null;
 }
 
-export function loadCachedWorkspaceInboxSubmissions({
+export async function loadCachedWorkspaceInboxSubmissions({
   storageNamespace = "",
   viewerPubkey = "",
   sitePubkey = ""
 } = {}) {
-  const cacheKey = workspaceInboxCacheKey(storageNamespace, viewerPubkey, sitePubkey);
-  if (!cacheKey || typeof window === "undefined") return [];
+  const cacheParams = workspaceInboxParams(viewerPubkey, sitePubkey);
+  if (!cacheParams) return [];
   try {
-    const raw = window.localStorage.getItem(cacheKey);
-    const parsed = raw ? JSON.parse(raw) : [];
+    const parsed = await loadSiteRuntimeValue("workspaceInboxSubmissions", cacheParams, {
+      reason: "workspace-cache-load",
+      preferFresh: false
+    });
     return Array.isArray(parsed) ? parsed : [];
   } catch {
     return [];
   }
 }
 
-export function persistCachedWorkspaceInboxSubmissions({
+export async function persistCachedWorkspaceInboxSubmissions({
   storageNamespace = "",
   viewerPubkey = "",
   sitePubkey = "",
   submissions = []
 } = {}) {
-  const cacheKey = workspaceInboxCacheKey(storageNamespace, viewerPubkey, sitePubkey);
-  if (!cacheKey || typeof window === "undefined") return;
-  window.localStorage.setItem(cacheKey, JSON.stringify(Array.isArray(submissions) ? submissions : []));
+  const cacheParams = workspaceInboxParams(viewerPubkey, sitePubkey);
+  if (!cacheParams) return;
+  await rememberSiteRuntimeValue("workspaceInboxSubmissions", cacheParams, Array.isArray(submissions) ? submissions : [], {
+    source: "workspace-inbox-cache"
+  });
 }
 
-export function clearCachedWorkspaceInboxSubmissions({
+export async function clearCachedWorkspaceInboxSubmissions({
   storageNamespace = "",
   viewerPubkey = "",
   sitePubkey = ""
 } = {}) {
-  const cacheKey = workspaceInboxCacheKey(storageNamespace, viewerPubkey, sitePubkey);
-  if (!cacheKey || typeof window === "undefined") return;
-  window.localStorage.removeItem(cacheKey);
+  const cacheParams = workspaceInboxParams(viewerPubkey, sitePubkey);
+  if (!cacheParams) return;
+  await clearSiteRuntimeValue("workspaceInboxSubmissions", cacheParams, {
+    source: "workspace-inbox-cache-clear"
+  });
 }

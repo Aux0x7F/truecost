@@ -4,8 +4,18 @@ import {
   resolveCanonicalIdentityPubkey,
   resolveCurrentIdentityPubkey
 } from "./public-state.js";
-
-const ACCOUNT_HISTORY_STORAGE_KEY = "truecost.v2.account-history";
+import {
+  clearCachedSiteRuntimeChannel,
+  clearCachedSiteRuntimeValue,
+  getCachedSiteRuntimeValue,
+  loadSiteRuntimeValue,
+  readCachedSiteRuntimeValue,
+  rememberCachedSiteRuntimeValue,
+  rememberSiteRuntimeValue
+} from "./runtime-local-state.js";
+const ACCOUNT_HISTORY_CHANNEL = "accountHistory";
+const accountHistoryUsernames = new Set();
+let accountHistoryGeneration = 0;
 
 function normalizeUsername(value) {
   return String(value || "").trim().toLowerCase();
@@ -15,23 +25,73 @@ function normalizePubkey(value) {
   return String(value || "").trim().toLowerCase();
 }
 
-function loadAccountHistoryStore() {
-  if (typeof localStorage === "undefined") return {};
-  try {
-    const parsed = JSON.parse(localStorage.getItem(ACCOUNT_HISTORY_STORAGE_KEY) || "{}");
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+function accountHistoryRuntimeParams(usernameOrSession = "") {
+  const username = normalizeUsername(
+    typeof usernameOrSession === "string" ? usernameOrSession : usernameOrSession?.username
+  );
+  return username ? { username, __projectionScope: "global" } : null;
 }
 
-function saveAccountHistoryStore(nextValue) {
-  if (typeof localStorage === "undefined") return;
-  try {
-    localStorage.setItem(ACCOUNT_HISTORY_STORAGE_KEY, JSON.stringify(nextValue && typeof nextValue === "object" ? nextValue : {}));
-  } catch {
-    return;
+function writeNormalizedAccountHistory(entry = null, usernameOrSession = "") {
+  const normalized = normalizeAccountHistoryEntry(entry, usernameOrSession);
+  if (!normalized.username) return null;
+  accountHistoryUsernames.add(normalized.username);
+  rememberCachedSiteRuntimeValue(ACCOUNT_HISTORY_CHANNEL, accountHistoryRuntimeParams(normalized.username), normalized);
+  return normalized;
+}
+
+export function normalizeAccountHistoryEntry(entry = null, usernameOrSession = "") {
+  const username = normalizeUsername(
+    typeof usernameOrSession === "string" ? usernameOrSession : usernameOrSession?.username
+  );
+  const source = entry && typeof entry === "object" ? entry : {};
+  const knownPubkeys = [...new Set((Array.isArray(source.knownPubkeys) ? source.knownPubkeys : []).map(normalizePubkey).filter(Boolean))];
+  const currentPubkey = normalizePubkey(source.currentPubkey);
+  return {
+    username,
+    currentPubkey,
+    knownPubkeys,
+    updatedAt: Number(source.updatedAt || 0) || 0
+  };
+}
+
+export function rememberCurrentAccountHistoryEntry(entry = null, session = null) {
+  const current = normalizeAccountHistoryEntry(entry, session);
+  const username = normalizeUsername(session?.username);
+  const pubkey = normalizePubkey(session?.pubkey);
+  if (!username || !pubkey) return current;
+  return {
+    ...current,
+    username,
+    currentPubkey: pubkey,
+    knownPubkeys: [...new Set([...(current.knownPubkeys || []), pubkey])],
+    updatedAt: Date.now()
+  };
+}
+
+export function rememberAccountRotationHistoryEntry(entry = null, previousSession = null, nextSession = null) {
+  const current = normalizeAccountHistoryEntry(entry, nextSession || previousSession);
+  const username = normalizeUsername(nextSession?.username || previousSession?.username);
+  const previousPubkey = normalizePubkey(previousSession?.pubkey);
+  const nextPubkey = normalizePubkey(nextSession?.pubkey);
+  if (!username || !previousPubkey || !nextPubkey) return current;
+  return {
+    ...current,
+    username,
+    currentPubkey: nextPubkey,
+    knownPubkeys: [...new Set([...(current.knownPubkeys || []), previousPubkey, nextPubkey])],
+    updatedAt: Date.now()
+  };
+}
+
+export function resetStoredAccountHistory() {
+  accountHistoryGeneration += 1;
+  clearCachedSiteRuntimeChannel(ACCOUNT_HISTORY_CHANNEL);
+  for (const username of accountHistoryUsernames) {
+    clearCachedSiteRuntimeValue(ACCOUNT_HISTORY_CHANNEL, accountHistoryRuntimeParams(username));
   }
+  accountHistoryUsernames.clear();
+  return null;
 }
 
 export function readStoredAccountHistory(usernameOrSession = "") {
@@ -39,16 +99,24 @@ export function readStoredAccountHistory(usernameOrSession = "") {
     typeof usernameOrSession === "string" ? usernameOrSession : usernameOrSession?.username
   );
   if (!username) return null;
-  const entry = loadAccountHistoryStore()[username];
-  if (!entry || typeof entry !== "object") return null;
-  const knownPubkeys = [...new Set((Array.isArray(entry.knownPubkeys) ? entry.knownPubkeys : []).map(normalizePubkey).filter(Boolean))];
-  const currentPubkey = normalizePubkey(entry.currentPubkey);
-  return {
-    username,
-    currentPubkey,
-    knownPubkeys,
-    updatedAt: Number(entry.updatedAt || 0) || 0
-  };
+  const params = accountHistoryRuntimeParams(username);
+  if (!params) return null;
+  return normalizeAccountHistoryEntry(readCachedSiteRuntimeValue(ACCOUNT_HISTORY_CHANNEL, params) || null, username);
+}
+
+export async function hydrateStoredAccountHistory(usernameOrSession = "", { preferFresh = false } = {}) {
+  const params = accountHistoryRuntimeParams(usernameOrSession);
+  if (!params) return null;
+  const cachedEntry = await getCachedSiteRuntimeValue(ACCOUNT_HISTORY_CHANNEL, params);
+  if (cachedEntry) {
+    return writeNormalizedAccountHistory(cachedEntry, usernameOrSession);
+  }
+  if (!preferFresh && readStoredAccountHistory(usernameOrSession)) {
+    return readStoredAccountHistory(usernameOrSession);
+  }
+  const loadedEntry = await loadSiteRuntimeValue(ACCOUNT_HISTORY_CHANNEL, params);
+  if (!loadedEntry) return readStoredAccountHistory(usernameOrSession);
+  return writeNormalizedAccountHistory(loadedEntry, usernameOrSession);
 }
 
 export function sessionMatchesStoredCurrentKey(session = null) {
@@ -68,7 +136,6 @@ function writeStoredAccountHistory(usernameOrSession, updater) {
     typeof usernameOrSession === "string" ? usernameOrSession : usernameOrSession?.username
   );
   if (!username || typeof updater !== "function") return null;
-  const store = loadAccountHistoryStore();
   const current = readStoredAccountHistory(username) || {
     username,
     currentPubkey: "",
@@ -77,25 +144,26 @@ function writeStoredAccountHistory(usernameOrSession, updater) {
   };
   const next = updater(current);
   if (!next) return current;
-  store[username] = {
+  const normalized = {
     username,
     currentPubkey: normalizePubkey(next.currentPubkey),
     knownPubkeys: [...new Set((Array.isArray(next.knownPubkeys) ? next.knownPubkeys : []).map(normalizePubkey).filter(Boolean))],
     updatedAt: Date.now()
   };
-  saveAccountHistoryStore(store);
-  return readStoredAccountHistory(username);
+  accountHistoryUsernames.add(username);
+  rememberCachedSiteRuntimeValue(ACCOUNT_HISTORY_CHANNEL, accountHistoryRuntimeParams(username), normalized);
+  return normalizeAccountHistoryEntry(normalized, username);
 }
 
 export function rememberCurrentAccountSession(session = null) {
   const username = normalizeUsername(session?.username);
   const pubkey = normalizePubkey(session?.pubkey);
   if (!username || !pubkey) return null;
-  return writeStoredAccountHistory(username, (current) => ({
-    ...current,
-    currentPubkey: pubkey,
-    knownPubkeys: [...new Set([...(current.knownPubkeys || []), pubkey])]
-  }));
+  const next = writeStoredAccountHistory(username, (current) => rememberCurrentAccountHistoryEntry(current, session));
+  if (next) {
+    persistAccountHistoryProjection(username, next, "account-history-current");
+  }
+  return next;
 }
 
 export function rememberAccountRotation(previousSession = null, nextSession = null) {
@@ -103,18 +171,23 @@ export function rememberAccountRotation(previousSession = null, nextSession = nu
   const previousPubkey = normalizePubkey(previousSession?.pubkey);
   const nextPubkey = normalizePubkey(nextSession?.pubkey);
   if (!username || !previousPubkey || !nextPubkey) return null;
-  return writeStoredAccountHistory(username, (current) => ({
-    ...current,
-    currentPubkey: nextPubkey,
-    knownPubkeys: [...new Set([...(current.knownPubkeys || []), previousPubkey, nextPubkey])]
-  }));
+  const next = writeStoredAccountHistory(
+    username,
+    (current) => rememberAccountRotationHistoryEntry(current, previousSession, nextSession)
+  );
+  if (next) {
+    persistAccountHistoryProjection(username, next, "account-history-rotation");
+  }
+  return next;
 }
 
-export function resolveStaleSessionFromHistory(session = null) {
+export function resolveStaleSessionFromHistory(session = null, accountHistory = null) {
   const username = normalizeUsername(session?.username);
   const pubkey = normalizePubkey(session?.pubkey);
   if (!username || !pubkey) return null;
-  const history = readStoredAccountHistory(username);
+  const history = accountHistory
+    ? normalizeAccountHistoryEntry(accountHistory, username)
+    : readStoredAccountHistory(username);
   if (!history?.currentPubkey || history.currentPubkey === pubkey) return null;
   if (!history.knownPubkeys.includes(pubkey)) return null;
   return {
@@ -179,12 +252,14 @@ export function buildStaleSessionMessage({ claimedUsername = "", currentContext 
   return `${usernameLabel} is using an older password for this account. This session cannot ${currentContext}. Sign out and log in with the current password.`;
 }
 
-export function rotationReusesIdentityKey(publicState, session = null, nextPubkey = "") {
+export function rotationReusesIdentityKey(publicState, session = null, nextPubkey = "", accountHistory = null) {
   const identityState = resolveSessionIdentityState(publicState, session);
   const cleanNextPubkey = normalizePubkey(nextPubkey);
   if (!cleanNextPubkey) return false;
   if (identityState.identityMemberPubkeys.includes(cleanNextPubkey)) return true;
-  const history = readStoredAccountHistory(session);
+  const history = accountHistory
+    ? normalizeAccountHistoryEntry(accountHistory, session)
+    : readStoredAccountHistory(session);
   return Boolean(history?.knownPubkeys?.includes(cleanNextPubkey));
 }
 
@@ -214,4 +289,18 @@ export function createStaleSessionError({ claimedUsername = "", message = "", cu
 
 export function isStaleSessionError(error) {
   return String(error?.code || "").trim().toUpperCase() === "STALE_ACCOUNT_KEY";
+}
+
+function persistAccountHistoryProjection(username = "", entry = null, source = "") {
+  const params = accountHistoryRuntimeParams(username);
+  if (!params || !entry) return;
+  const generation = accountHistoryGeneration;
+  void Promise.resolve()
+    .then(() => {
+      if (generation !== accountHistoryGeneration) return null;
+      return rememberSiteRuntimeValue(ACCOUNT_HISTORY_CHANNEL, params, entry, {
+        source
+      });
+    })
+    .catch(() => null);
 }

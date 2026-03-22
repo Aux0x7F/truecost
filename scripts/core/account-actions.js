@@ -64,8 +64,8 @@ export async function openAccountSession({
     throw translateLoginError(error, claimedUsername);
   }
 
-  saveSession(session);
-  rememberCurrentAccountSession(session);
+  await Promise.resolve(saveSession(session));
+  await Promise.resolve(rememberCurrentAccountSession(session));
 
   let warning = "";
   try {
@@ -85,6 +85,8 @@ export async function rotateAccountPassword({
   session,
   nextPassword = "",
   currentPublicState,
+  accountHistory = null,
+  loadAccountHistory = async () => accountHistory,
   loadPublicState,
   deriveSecretKeyHex,
   deriveIdentity,
@@ -113,7 +115,8 @@ export async function rotateAccountPassword({
   if (nextIdentity.pubkey === String(normalizedSession.pubkey || "").trim().toLowerCase()) {
     throw buildReuseError();
   }
-  if (rotationReusesIdentityKey(currentPublicState, normalizedSession, nextIdentity.pubkey)) {
+  const knownAccountHistory = await loadAccountHistory(normalizedSession);
+  if (rotationReusesIdentityKey(currentPublicState, normalizedSession, nextIdentity.pubkey, knownAccountHistory)) {
     throw buildReuseError();
   }
 
@@ -127,7 +130,7 @@ export async function rotateAccountPassword({
     action: "rotate this account"
   });
 
-  if (rotationReusesIdentityKey(publicState, normalizedSession, nextIdentity.pubkey)) {
+  if (rotationReusesIdentityKey(publicState, normalizedSession, nextIdentity.pubkey, knownAccountHistory)) {
     throw buildReuseError();
   }
 
@@ -142,8 +145,8 @@ export async function rotateAccountPassword({
     }
   });
 
-  saveSession(rotation.session);
-  rememberAccountRotation(normalizedSession, rotation.session);
+  await Promise.resolve(saveSession(rotation.session));
+  await Promise.resolve(rememberAccountRotation(normalizedSession, rotation.session));
 
   let warnings = [];
   if (typeof afterCommit === "function") {

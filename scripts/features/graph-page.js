@@ -1,7 +1,6 @@
-import SITE from "../core/site-config.js";
 import { createObservedRegionRouter } from "../core/observed-regions.js";
 import { normalizeQuerySlug } from "../core/query-state.js";
-import { appendDraftEntity, appendDraftRelationship, saveGraphDraftState } from "../core/graph-drafts.js";
+import { appendGraphEntityRecord, appendGraphRelationshipRecord } from "../core/graph-records.js";
 import { loadGraphDataset } from "../core/graph-data.js";
 import { buildEntityWikiView, buildSiteEvidenceGraph, filterEvidenceGraph } from "../core/graph-wiki.js";
 import {
@@ -15,6 +14,10 @@ export function createGraphPageFeature({
   fetchJson,
   postsStore,
   getPublicState,
+      getProjection,
+      refreshProjection,
+      subscribeProjection,
+  rememberProjection,
   viewerController,
   queryState
 } = {}) {
@@ -29,13 +32,15 @@ export function createGraphPageFeature({
     relationshipTypeFilters: [],
     selectedNodeId: "",
     requestedFocus: "",
-    modal: null
+    modal: null,
+    projectionUnsubscribe: null
   };
 
   async function mount() {
     if (!pageReady()) return;
     bindInteractions();
     bindQueryState();
+    bindProjection();
     if (!viewState.loaded) {
       regions.apply([
         { name: "graph-canvas", selector: "[data-graph-canvas-shell]", value: `<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span>Building graph explorer...</span></div>` },
@@ -65,6 +70,7 @@ export function createGraphPageFeature({
       fetchJson,
       postsStore,
       getPublicState,
+      getProjection,
       viewerController
     });
     viewState.dataset = dataset;
@@ -170,7 +176,7 @@ export function createGraphPageFeature({
     }
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     if (!pageReady()) return;
     const target = event.target;
     if (!(target instanceof HTMLFormElement)) return;
@@ -179,12 +185,12 @@ export function createGraphPageFeature({
       event.preventDefault();
       if (!viewState.dataset?.viewerIsAdmin) return;
       const formData = new FormData(target);
-      viewState.dataset.draftGraph = appendDraftEntity(
+      viewState.dataset.draftGraph = appendGraphEntityRecord(
         viewState.dataset.draftGraph,
         Object.fromEntries(formData.entries()),
         viewState.dataset.graphState.entities.map((entity) => entity.slug)
       );
-      persistDraftGraph();
+      await persistDraftGraph();
       rebuildDataset();
       const created = viewState.dataset.draftGraph.entities.at(-1);
       viewState.modal = null;
@@ -197,11 +203,11 @@ export function createGraphPageFeature({
       event.preventDefault();
       if (!viewState.dataset?.viewerIsAdmin) return;
       const formData = new FormData(target);
-      viewState.dataset.draftGraph = appendDraftRelationship(
+      viewState.dataset.draftGraph = appendGraphRelationshipRecord(
         viewState.dataset.draftGraph,
         Object.fromEntries(formData.entries())
       );
-      persistDraftGraph();
+      await persistDraftGraph();
       rebuildDataset();
       viewState.modal = null;
       render();
@@ -287,8 +293,57 @@ export function createGraphPageFeature({
     render();
   }
 
-  function persistDraftGraph() {
-    viewState.dataset.draftGraph = saveGraphDraftState(SITE.nostr.storageNamespace, viewState.dataset.draftGraph);
+  async function persistDraftGraph() {
+    if (typeof rememberProjection !== "function") return;
+    viewState.dataset.draftGraph = await rememberProjection(
+      "graphDraft",
+      {},
+      viewState.dataset.draftGraph,
+      { source: "graph-draft" }
+    )
+      .then((projection) => projection?.value ?? viewState.dataset.draftGraph)
+      .catch(() => viewState.dataset.draftGraph);
+    if (typeof refreshProjection === "function") {
+      const refreshedGraph = await refreshProjection("graph", {}, { reason: "graph-draft-update" })
+        .then((projection) => projection?.value ?? null)
+        .catch(() => null);
+      if (refreshedGraph?.graphState) {
+        viewState.dataset = refreshedGraph;
+      }
+    }
+  }
+
+  function bindProjection() {
+    if (viewState.projectionUnsubscribe || typeof subscribeProjection !== "function") return;
+    Promise.resolve(
+      subscribeProjection(
+        "graph",
+        {},
+        (envelope) => {
+          const projection = envelope?.value ?? envelope;
+          if (!projection?.graphState) return;
+          viewState.dataset = projection;
+          if (!viewState.loaded) {
+            viewState.nodeTypeFilters = [...(projection.graphState.graph.defaultNodeTypes || [])];
+            viewState.relationshipTypeFilters = [...(projection.graphState.graph.availableRelationshipTypes || [])];
+            viewState.selectedNodeId = resolveRequestedNodeId(projection.graphState, viewState.requestedFocus);
+            viewState.loaded = true;
+          }
+          render();
+        },
+        {
+          emitCurrent: true,
+          refresh: true,
+          reason: "graph-page-projection"
+        }
+      )
+    )
+      .then((unsubscribe) => {
+        if (typeof unsubscribe === "function") {
+          viewState.projectionUnsubscribe = unsubscribe;
+        }
+      })
+      .catch(() => null);
   }
 
   function rebuildDataset() {

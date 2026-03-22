@@ -5,6 +5,8 @@ export function createMapPageFeature({
   state,
   postsStore,
   getPublicState,
+  getProjection,
+  subscribeProjection,
   queryState,
   cleanSlug,
   collectEntityRefsFromText,
@@ -16,12 +18,15 @@ export function createMapPageFeature({
   renderLoadingState
 } = {}) {
   let queryBound = false;
+  let projectionBound = false;
+  let projectionUnsubscribe = null;
 
   async function mount() {
     const list = document.querySelector("[data-map-list]");
     const canvas = document.querySelector("[data-map-canvas]");
     if (!(list instanceof HTMLElement) || !(canvas instanceof HTMLElement)) return;
     bindQueryState();
+    bindProjection();
     const mapReady = Boolean(state.map && state.mapCanvas === canvas);
     const cachedEntities = visibleMapEntities(state.publicState);
     const renderedCachedMap = Boolean(cachedEntities.length);
@@ -36,26 +41,57 @@ export function createMapPageFeature({
     }
 
     try {
-      const publicState = await getPublicState();
-      const entities = visibleMapEntities(publicState);
-      if (!entities.length) {
-        list.innerHTML = `<div class="empty-state">Published entities will appear here once approved entries are available.</div>`;
-        mapSurfaceDeps().renderLeafletMapSurface(canvas, []);
-        focusRequestedEntity();
-        state.mapViewDigest = dataDigest({ approvedEntities: [] });
-        return;
-      }
-      state.lastGoodMapEntities = entities.map((entity) => ({ ...entity }));
-      const posts = await postsStore.load().catch(() => []);
-      const entityUsage = buildEntityUsage(posts, entities, collectEntityRefsFromText);
-      renderMapPageSurface(list, canvas, entities, entityUsage, mapSurfaceDeps());
-      state.mapViewDigest = dataDigest({ approvedEntities: entities });
+      const [publicState, projectedEntities] = await Promise.all([
+        getPublicState(),
+        typeof getProjection === "function"
+          ? getProjection("mapEntities", {}, { preferFresh: false })
+              .then((projection) => projection?.value ?? projection)
+              .catch(() => null)
+          : Promise.resolve(null)
+      ]);
+      const entities = Array.isArray(projectedEntities) && projectedEntities.length
+        ? projectedEntities
+        : visibleMapEntities(publicState);
+      await renderEntities(list, canvas, entities);
     } catch {
       if (!renderedCachedMap) {
         renderError(list, "Map entries unavailable.");
         canvas.innerHTML = `<div class="map-empty">Map data unavailable.</div>`;
       }
     }
+  }
+
+  function bindProjection() {
+    if (projectionBound || typeof subscribeProjection !== "function") return;
+    projectionBound = true;
+    Promise.resolve(
+      subscribeProjection(
+        "mapEntities",
+        {},
+        (envelope) => {
+          const list = document.querySelector("[data-map-list]");
+          const canvas = document.querySelector("[data-map-canvas]");
+          if (!(list instanceof HTMLElement) || !(canvas instanceof HTMLElement)) return;
+          const projectedEntities = envelope?.value ?? envelope;
+          void renderEntities(
+            list,
+            canvas,
+            Array.isArray(projectedEntities) ? projectedEntities : visibleMapEntities(state.publicState)
+          );
+        },
+        {
+          emitCurrent: true,
+          refresh: true,
+          reason: "map-page-projection"
+        }
+      )
+    )
+      .then((unsubscribe) => {
+        if (typeof unsubscribe === "function") {
+          projectionUnsubscribe = unsubscribe;
+        }
+      })
+      .catch(() => null);
   }
 
   function bindQueryState() {
@@ -96,6 +132,22 @@ export function createMapPageFeature({
       focusRequestedEntity,
       queryEntityCard: (slug) => document.querySelector(`[data-entity-card="${slug}"]`)
     };
+  }
+
+  async function renderEntities(list, canvas, entities) {
+    const normalizedEntities = Array.isArray(entities) ? entities : [];
+    if (!normalizedEntities.length) {
+      list.innerHTML = `<div class="empty-state">Published entities will appear here once approved entries are available.</div>`;
+      mapSurfaceDeps().renderLeafletMapSurface(canvas, []);
+      focusRequestedEntity();
+      state.mapViewDigest = dataDigest({ approvedEntities: [] });
+      return;
+    }
+    state.lastGoodMapEntities = normalizedEntities.map((entity) => ({ ...entity }));
+    const posts = await postsStore.load().catch(() => []);
+    const entityUsage = buildEntityUsage(posts, normalizedEntities, collectEntityRefsFromText);
+    renderMapPageSurface(list, canvas, normalizedEntities, entityUsage, mapSurfaceDeps());
+    state.mapViewDigest = dataDigest({ approvedEntities: normalizedEntities });
   }
 
   function renderEntityCard(entity, posts) {
@@ -170,6 +222,7 @@ export function createMapPageFeature({
     dataDigest,
     isInteractionActive,
     mount,
+    projectionUnsubscribe: () => projectionUnsubscribe,
     visibleMapEntities,
     mapSurfaceDeps,
     scheduleMapEntityFocus,

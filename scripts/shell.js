@@ -1,6 +1,7 @@
 import SITE from "./core/site-config.js";
 import NAV_KEYS from "./core/nav-keys.js";
 import { createImmediateSiteShell } from "./core/immediate-site-shell.js";
+import { getSiteRuntimeClient } from "./core/runtime-client.js";
 import { registerSiteServiceWorker } from "./core/service-worker.js";
 import { createSiteAuthModalFeature } from "./features/site-auth-modal.js";
 import { renderNavigationMarkup } from "./surfaces/navigation.js";
@@ -24,6 +25,7 @@ function mountImmediateShell() {
   window[GLOBAL_AUTH_KEY] = authModal;
   shell.mount();
   authModal.mount();
+  void getSiteRuntimeClient().catch(() => null);
   registerSiteServiceWorker();
 }
 

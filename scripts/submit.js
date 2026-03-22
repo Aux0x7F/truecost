@@ -4,25 +4,24 @@ import {
   assertSessionUsernameIntegrity,
   buildStaleSessionMessage,
   currentSessionUsernameConflictMessage,
+  hydrateCachedSessionUsernameIntegrity,
   resolveStaleSessionAccount,
   sessionHasUsernameConflict
 } from "./core/account-integrity.js";
+import { hydrateStoredAccountHistory } from "./core/account-management.js";
 import {
   cleanSlug,
   deriveIdentity,
   uploadEncryptedBlob,
   ensureEventToolsLoaded,
-  loadPublicState,
   loadSubmissionThread,
   loadUserSubmissions,
-  publicStateNeedsRepair,
   publishTaggedJson,
   publishSubmission,
   publishSubmissionChat,
-  requestPublicStateRepair,
-  startPublicStateRepairPeer,
   resolveSitePubkey
 } from "./core/nostr.js";
+import { createRuntimePublicStateStore } from "./core/runtime-public-state-store.js";
 import {
   dedupeStrings as dedupe,
   escapeAttribute,
@@ -31,7 +30,7 @@ import {
 } from "./core/text-utils.js";
 import { applyObservedMarkup, applyObservedText } from "./core/observed-regions.js";
 import { closeSearchResults, cycleHighlightIndex } from "./core/search-controls.js";
-import { getStoredSession } from "./core/session.js";
+import { getStoredSession, resolveStoredSession } from "./core/session.js";
 import {
   renderSubmitPageView,
   renderSubmitSuggestionMarkup
@@ -41,9 +40,6 @@ const submitState = {
   session: getStoredSession(),
   viewer: null,
   publicState: null,
-  publicStateRepairPeerStarted: false,
-  publicStateRepairInFlight: false,
-  publicStateRepairRequestedAt: 0,
   submissions: [],
   loading: false,
   loadingMessage: "",
@@ -56,6 +52,30 @@ const submitState = {
   }
 };
 
+const submitPublicStateStore = createRuntimePublicStateStore({
+  getSessionSecretKey: async () => submitState.session?.secretKeyHex || "",
+  page: "submit",
+  refreshDelayMs: () => 0,
+  shouldRefresh: () => false
+});
+
+submitState.publicState = submitPublicStateStore.value;
+submitPublicStateStore.subscribe((snapshot) => {
+  const previousPublicState = submitState.publicState;
+  submitState.publicState = snapshot.value;
+  if (
+    submitState.session &&
+    submitSessionAccessBlocked(previousPublicState, submitState.session) !==
+      submitSessionAccessBlocked(submitState.publicState, submitState.session) &&
+    submitSessionAccessBlocked(submitState.publicState, submitState.session)
+  ) {
+    submitState.submissions = [];
+  }
+  if (!submitState.loading && !submitState.formModal && !submitState.chatModal) {
+    renderSubmitPage();
+  }
+});
+
 document.addEventListener("DOMContentLoaded", () => {
   if (!document.querySelector("[data-submit-page]")) return;
   bindSubmitPage();
@@ -64,6 +84,8 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function handleSubmitSessionChanged() {
+  const nextSession = getStoredSession();
+  if (sameSubmitSession(submitState.session, nextSession)) return;
   submitState.formModal = null;
   submitState.chatModal = null;
   submitState.searchUi = {
@@ -71,6 +93,7 @@ function handleSubmitSessionChanged() {
     location: { highlight: -1, closedValue: "" },
     suggestedEntity: { highlight: -1, closedValue: "" }
   };
+  submitState.session = nextSession;
   void refreshSubmitPage(true);
 }
 
@@ -186,69 +209,72 @@ function bindSubmitPage() {
 }
 
 async function refreshSubmitPage(force = false) {
-  submitState.session = getStoredSession();
+  renderSubmitLoading("Opening your account...");
+  submitState.session = await resolveStoredSession({
+    persistSession: true
+  }).catch(() => getStoredSession());
   if (!submitState.session) {
+    submitState.loading = false;
+    submitState.loadingMessage = "";
+    submitState.publicState = submitPublicStateStore.value;
+    submitState.submissions = [];
+    renderSubmitPage();
+    return;
+  }
+  await Promise.all([
+    hydrateStoredAccountHistory(submitState.session),
+    hydrateCachedSessionUsernameIntegrity(submitState.session)
+  ]);
+  const cachedPublicState = !force ? submitPublicStateStore.value : null;
+  const cachedBlocked = cachedPublicState && submitSessionAccessBlocked(cachedPublicState, submitState.session);
+  if (cachedPublicState) {
+    submitState.publicState = cachedPublicState;
+    if (cachedBlocked) {
+      submitState.submissions = [];
+      submitState.loading = false;
+      submitState.loadingMessage = "";
+      renderSubmitPage();
+    } else {
+      renderSubmitPage();
+    }
+  }
+  if (cachedBlocked) {
+    void hydrateSubmitRemoteState(force, { allowLoadingState: false });
+    return;
+  }
+  await hydrateSubmitRemoteState(force, { allowLoadingState: true });
+}
+
+async function hydrateSubmitRemoteState(force = false, { allowLoadingState = true } = {}) {
+  if (allowLoadingState) {
+    renderSubmitLoading("Looking up your submissions...");
+  }
+  submitState.publicState = (await submitPublicStateStore.hydrate({ force, reason: "submit-load" })).value;
+  if (submitSessionAccessBlocked(submitState.publicState, submitState.session)) {
+    submitState.submissions = [];
     submitState.loading = false;
     submitState.loadingMessage = "";
     renderSubmitPage();
     return;
   }
-  renderSubmitLoading("Looking up your submissions...");
   await ensureEventToolsLoaded();
-  await ensureSubmitRepairPeer();
   submitState.viewer = deriveIdentity(submitState.session.secretKeyHex);
-  submitState.publicState = await loadPublicState(force);
-  void maybeRequestSubmitStateRepair(submitState.publicState, "submit-page");
-  if (
-    resolveStaleSessionAccount(submitState.publicState, submitState.session) ||
-    sessionHasUsernameConflict(submitState.publicState, submitState.session)
-  ) {
-    submitState.submissions = [];
-  } else {
-    submitState.submissions = await loadUserSubmissions(submitState.session.secretKeyHex).catch(() => []);
-  }
+  submitState.submissions = await loadUserSubmissions(submitState.session.secretKeyHex).catch(() => []);
   await maybeOpenChatFromUrl();
   submitState.loading = false;
   submitState.loadingMessage = "";
   renderSubmitPage();
 }
 
-async function ensureSubmitRepairPeer() {
-  if (submitState.publicStateRepairPeerStarted) return;
-  try {
-    await startPublicStateRepairPeer();
-    submitState.publicStateRepairPeerStarted = true;
-  } catch {
-    return;
-  }
-}
-
-async function maybeRequestSubmitStateRepair(publicState, reason = "") {
-  if (!submitState.session || !publicStateNeedsRepair(publicState) || submitState.publicStateRepairInFlight) return;
-  const now = Date.now();
-  if (now - submitState.publicStateRepairRequestedAt < 45000) return;
-  submitState.publicStateRepairInFlight = true;
-  submitState.publicStateRepairRequestedAt = now;
-  try {
-    await requestPublicStateRepair(submitState.session.secretKeyHex, {
-      reason,
-      page: "submit",
-      knownEventCount: Array.isArray(publicState?.rawEvents) ? publicState.rawEvents.length : 0
-    });
-    window.setTimeout(() => {
-      void refreshSubmitPage(true);
-    }, 2800);
-  } catch {
-    return;
-  } finally {
-    submitState.publicStateRepairInFlight = false;
-  }
-}
-
 function renderSubmitLoading(message) {
   submitState.loading = true;
   submitState.loadingMessage = message;
   renderSubmitPage();
+}
+
+function submitSessionAccessBlocked(publicState, session) {
+  if (!session) return false;
+  return Boolean(resolveStaleSessionAccount(publicState, session) || sessionHasUsernameConflict(publicState, session));
 }
 
 function renderSubmitPage() {
@@ -825,4 +851,16 @@ function renderLoadingState(message) {
       </div>
     </div>
   `;
+}
+
+function sameSubmitSession(left, right) {
+  const normalize = (value) =>
+    value
+      ? {
+          username: String(value.username || "").trim().toLowerCase(),
+          secretKeyHex: String(value.secretKeyHex || "").trim().toLowerCase(),
+          pubkey: String(value.pubkey || "").trim().toLowerCase()
+        }
+      : null;
+  return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
 }

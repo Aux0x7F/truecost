@@ -11,6 +11,21 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, "..");
 const pageSourceRoot = path.join(root, "site-src", "main");
+const legacyRootPages = [
+  "index.html",
+  "about.html",
+  "investigations.html",
+  "investigation.html",
+  "map.html",
+  "graph.html",
+  "wiki.html",
+  "guide.html",
+  "submit.html",
+  "admin.html",
+  "editor.html",
+  "get-involved.html",
+  "merch.html"
+];
 
 test("page definitions point at existing template sources", async () => {
   for (const page of pageDefinitions) {
@@ -35,4 +50,11 @@ test("renderPageHtml uses page definitions as the source of truth", async () => 
   assert.match(rendered, /vendor\/leaflet\.js/);
   assert.match(rendered, /data-map-canvas/);
   assert.match(rendered, /scripts\/app\.js/);
+});
+
+test("legacy root html pages are removed and generated output lives under dist", async () => {
+  for (const fileName of legacyRootPages) {
+    await assert.rejects(fs.access(path.join(root, fileName)));
+    await fs.access(path.join(root, "dist", fileName));
+  }
 });

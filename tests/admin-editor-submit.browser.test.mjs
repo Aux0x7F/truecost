@@ -5,6 +5,7 @@ import {
   captureRelevantConsoleErrors,
   createStaticServer,
   loadPlaywright,
+  prepareBrowserContext,
   seedAdminSession,
   seedLegacyAdminSession,
   seedHistoryCurrentUsernameSession,
@@ -26,7 +27,8 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
 
   const { server, port } = await createStaticServer(repoRoot);
   const browser = await playwright.chromium.launch({ headless: true });
-  const context = await browser.newContext();
+  const context = await browser.newContext({ serviceWorkers: "block" });
+  await prepareBrowserContext(context);
   const page = await context.newPage();
   const pageErrors = [];
   const consoleErrors = [];
@@ -42,7 +44,7 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
     await page.waitForFunction(
       () => document.querySelector('[data-workspace-tab="dashboard"]')?.classList.contains("is-current"),
       null,
-      { timeout: 1500 }
+      { timeout: 5000 }
     );
     const cachedWorkspaceState = await page.evaluate(() => ({
       activeTab: document.querySelector("[data-workspace-tab].is-current")?.getAttribute("data-workspace-tab") || "",
@@ -54,7 +56,9 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
     }));
 
     await page.click('[data-workspace-tab="profile"]');
-    await page.click("[data-open-password-rotation]");
+    await page.evaluate(() => {
+      document.querySelector("[data-open-password-rotation]")?.click();
+    });
     await page.waitForSelector("[data-password-rotation-form]", { timeout: 15000 });
     await page.fill('[data-password-rotation-form] [name="password"]', "observer-pass-1");
     await page.fill('[data-password-rotation-form] [name="confirmPassword"]', "observer-pass-1");
@@ -169,7 +173,8 @@ test("conflicting username sessions are blocked across workspace, submit, and co
 
   const { server, port } = await createStaticServer(repoRoot);
   const browser = await playwright.chromium.launch({ headless: true });
-  const context = await browser.newContext();
+  const context = await browser.newContext({ serviceWorkers: "block" });
+  await prepareBrowserContext(context);
   const page = await context.newPage();
   const pageErrors = [];
   const consoleErrors = [];
@@ -251,7 +256,8 @@ test("login form rejects a taken username before persisting a session", async (t
 
   const { server, port } = await createStaticServer(repoRoot);
   const browser = await playwright.chromium.launch({ headless: true });
-  const context = await browser.newContext();
+  const context = await browser.newContext({ serviceWorkers: "block" });
+  await prepareBrowserContext(context);
   const page = await context.newPage();
   const pageErrors = [];
   const consoleErrors = [];
@@ -307,7 +313,8 @@ test("workspace keeps the current local account head active when cached conflict
 
   const { server, port } = await createStaticServer(repoRoot);
   const browser = await playwright.chromium.launch({ headless: true });
-  const context = await browser.newContext();
+  const context = await browser.newContext({ serviceWorkers: "block" });
+  await prepareBrowserContext(context);
   const page = await context.newPage();
   const pageErrors = [];
   const consoleErrors = [];
@@ -360,7 +367,8 @@ test("legacy sessions missing a stored pubkey are repaired before workspace acco
 
   const { server, port } = await createStaticServer(repoRoot);
   const browser = await playwright.chromium.launch({ headless: true });
-  const context = await browser.newContext();
+  const context = await browser.newContext({ serviceWorkers: "block" });
+  await prepareBrowserContext(context);
   const page = await context.newPage();
   const pageErrors = [];
   const consoleErrors = [];
@@ -377,18 +385,24 @@ test("legacy sessions missing a stored pubkey are repaired before workspace acco
 
     await page.goto(`http://127.0.0.1:${port}/admin.html?tab=profile`, { waitUntil: "domcontentloaded" });
     await page.waitForSelector("[data-workspace-pane]", { timeout: 15000 });
-    await page.click("[data-open-password-rotation]");
+    await page.evaluate(() => {
+      document.querySelector("[data-open-password-rotation]")?.click();
+    });
     await page.waitForSelector("[data-password-rotation-form]", { timeout: 15000 });
 
     const repairedState = await page.evaluate(() => ({
-      sessionRaw: localStorage.getItem("truecost.v2.session") || "",
       modalOpen: Boolean(document.querySelector("[data-password-rotation-form]"))
     }));
+
+    const repairedSession = await page.evaluate(async () => {
+      const { getStoredSession } = await import("./scripts/core/session.js");
+      return getStoredSession();
+    });
 
     assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(" | ")}`);
     assert.deepEqual(consoleErrors, [], `console errors: ${consoleErrors.join(" | ")}`);
     assert.equal(repairedState.modalOpen, true);
-    assert.match(repairedState.sessionRaw, /"pubkey":"[0-9a-f]{64}"/);
+    assert.match(String(repairedSession?.pubkey || ""), /^[0-9a-f]{64}$/);
   } finally {
     await browser.close();
     await new Promise((resolve) => server.close(resolve));

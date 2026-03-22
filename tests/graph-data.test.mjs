@@ -8,7 +8,7 @@ import {
   graphEntityInvestigationsHref,
   graphInvestigationHref
 } from "../scripts/core/graph-wiki.js";
-import { requestedGraphFocus, requestedWikiEntity } from "../scripts/core/graph-data.js";
+import { loadGraphDataset, requestedGraphFocus, requestedWikiEntity } from "../scripts/core/graph-data.js";
 
 test("graph route helpers normalize target URLs", () => {
   assert.equal(graphEntityHref("north-valley-foods"), "./wiki.html?entity=north-valley-foods");
@@ -85,4 +85,84 @@ test("site graph builder merges public relationships and admin draft graph", () 
   assert.equal(graphState.entitiesBySlug.has("phoenix-cold-storage"), true);
   assert.equal(graphState.relationships.some((relationship) => relationship.id === "rel:public"), true);
   assert.equal(graphState.graph.edges.some((edge) => edge.id === "rel:draft"), true);
+});
+
+test("site graph builder derives public and admin draft relationships from investigation candidates", () => {
+  const graphState = buildSiteEvidenceGraph({
+    publicState: {
+      approvedEntities: [
+        { slug: "farm-a", name: "Farm A", type: "company" },
+        { slug: "processor-b", name: "Processor B", type: "facility" }
+      ],
+      drafts: [
+        {
+          slug: "draft-supply-chain",
+          title: "Draft chain",
+          summary: "Draft summary",
+          status: "candidate",
+          entity_refs: ["farm-a", "processor-b"],
+          relationship_candidates: [
+            { source: "farm-a", target: "processor-b", type: "supplies" }
+          ]
+        }
+      ]
+    },
+    posts: [
+      {
+        slug: "published-supply-chain",
+        title: "Published chain",
+        summary: "Published summary",
+        entity_refs: ["farm-a", "processor-b"],
+        relationship_candidates: [
+          { source: "farm-a", target: "processor-b", type: "transports_to" }
+        ]
+      }
+    ],
+    seed: { entities: [], relationships: [], draft_relationships: [] },
+    draftGraph: { entities: [], relationships: [] },
+    viewerIsAdmin: true
+  });
+
+  assert.equal(graphState.graph.edges.some((edge) => edge.type === "transports_to"), true);
+  const draftEdge = graphState.graph.edges.find((edge) => edge.id.includes("draft-supply-chain"));
+  assert.equal(draftEdge?.visibility, "draft");
+});
+
+test("loadGraphDataset returns a runtime graph projection when one is available", async () => {
+  let fallbackCalled = false;
+  const projection = {
+    viewerIsAdmin: true,
+    publicState: { connected: true },
+    posts: [],
+    seed: {},
+    draftGraph: { entities: [], relationships: [] },
+    graphState: {
+      entities: [],
+      relationships: [],
+      graph: {
+        nodes: [],
+        edges: []
+      }
+    }
+  };
+
+  const loaded = await loadGraphDataset({
+    getProjection: async () => projection,
+    getPublicState: async () => {
+      fallbackCalled = true;
+      return {};
+    },
+    postsStore: {
+      load: async () => {
+        fallbackCalled = true;
+        return [];
+      }
+    },
+    viewerController: {
+      canEdit: () => true
+    }
+  });
+
+  assert.equal(fallbackCalled, false);
+  assert.equal(loaded, projection);
 });

@@ -8,16 +8,29 @@ import {
   publishTaggedJson,
   uploadPublicBlob
 } from "./core/nostr.js";
-import { createPublicStateStore } from "./core/public-state-store.js";
+import { createRuntimePublicStateStore } from "./core/runtime-public-state-store.js";
 import { replaceEditorShellMarkup } from "./core/editor-mount.js";
 import { normalizeAdminPubkeys, publicStateHasAdminPubkey } from "./core/public-state.js";
+import { createSiteDocumentController } from "./core/runtime-document.js";
+import {
+  loadSiteRuntimeValue,
+  moveSiteRuntimeValue,
+  rememberSiteRuntimeValue
+} from "./core/runtime-local-state.js";
+import {
+  deriveInvestigationStructuredArtifacts,
+  editorDocumentFromInvestigationRecord,
+  normalizeInvestigationImagePlacement,
+  stringifyInvestigationImageTitleSpec
+} from "./core/investigation-document.js";
 import {
   dedupeStrings as dedupe,
   escapeAttribute,
   escapeHtml,
   lastCommaValue
 } from "./core/text-utils.js";
-import { getStoredSession } from "./core/session.js";
+import { getStoredSession, resolveStoredSession } from "./core/session.js";
+import { createEditorPageController } from "./features/editor-page.js";
 import {
   renderEditorLoadingMarkup,
   renderEditorModalView,
@@ -25,6 +38,7 @@ import {
 } from "./surfaces/editor-shell.js";
 
 let editorPublicStateStore = null;
+let editorPage = null;
 
 const editorState = {
   session: getStoredSession(),
@@ -50,10 +64,14 @@ const editorState = {
   liveStatus: "idle",
   livePublishTimer: 0,
   suppressSyncDepth: 0,
-  pagehideBound: false
+  documentController: null,
+  documentControllerId: "",
+  documentProjection: null,
+  documentProjectionFingerprint: "",
+  documentSyncTimer: 0
 };
 
-editorPublicStateStore = createPublicStateStore({
+editorPublicStateStore = createRuntimePublicStateStore({
   getSessionSecretKey: async () => editorState.session?.secretKeyHex || "",
   page: "editor",
   refreshDelayMs: () => 0,
@@ -64,23 +82,43 @@ editorPublicStateStore.subscribe((snapshot) => {
   editorState.publicState = snapshot.value;
 });
 
-document.addEventListener("DOMContentLoaded", () => {
-  if (!document.querySelector("[data-editor-page]")) return;
-  window.addEventListener("truecost:session-changed", handleEditorSessionChanged);
-  void initEditorPage();
+editorPage = createEditorPageController({
+  deps: {
+    document,
+    window,
+    sessionChangedEvent: "truecost:session-changed"
+  },
+  callbacks: {
+    beforeSessionRefresh: async () => {
+      const nextSession = getStoredSession();
+      if (sameEditorSession(editorState.session, nextSession)) return;
+      destroyLiveInvestigationOverlay();
+      destroyStructuredDocumentController();
+      editorState.entityModal = null;
+      editorState.imageModal = null;
+    },
+    beforePageHide: async () => {
+      destroyLiveInvestigationOverlay();
+      destroyStructuredDocumentController();
+    },
+    initPage: async (force = false) => {
+      await initEditorPage(force);
+    }
+  }
 });
 
-async function handleEditorSessionChanged() {
-  destroyLiveInvestigationOverlay();
-  editorState.entityModal = null;
-  editorState.imageModal = null;
-  await initEditorPage(true);
-}
+document.addEventListener("DOMContentLoaded", () => {
+  void editorPage?.start();
+});
 
 async function initEditorPage(force = false) {
-  editorState.session = getStoredSession();
+  renderEditorLoading("Opening authoring...");
+  editorState.session = await resolveStoredSession({
+    persistSession: true
+  }).catch(() => getStoredSession());
   editorState.viewer = null;
   if (!editorState.session) {
+    destroyStructuredDocumentController();
     editorState.publicState = editorState.publicState || { admins: [] };
     editorState.staticSlugs = [];
     renderEditorShell();
@@ -94,12 +132,14 @@ async function initEditorPage(force = false) {
   );
   if (renderedFromCachedAdminState) {
     editorState.publicState = cachedPublicState;
+    await hydrateDraftState();
     renderEditorShell();
   } else {
     renderEditorLoading("Looking up editor...");
   }
   editorState.publicState = (await editorPublicStateStore.hydrate({ force, reason: "editor-load" })).value;
   editorState.staticSlugs = await loadStaticSlugs().catch(() => []);
+  await hydrateDraftState();
   const nextIsAdmin = editorUserIsAdmin(editorState.publicState, editorState.viewer?.pubkey);
   const hasLiveEditor = document.querySelector("[data-editor-form]") instanceof HTMLFormElement;
   if (!renderedFromCachedAdminState || !nextIsAdmin || !hasLiveEditor) {
@@ -109,10 +149,6 @@ async function initEditorPage(force = false) {
     updateHistoryPanels();
     hydrateEntityResults();
     void ensureLiveInvestigationOverlay();
-  }
-  if (!editorState.pagehideBound) {
-    window.addEventListener("pagehide", destroyLiveInvestigationOverlay);
-    editorState.pagehideBound = true;
   }
 }
 
@@ -151,7 +187,6 @@ function renderEditorShell() {
   const title = document.querySelector("[data-editor-title]");
   const lede = document.querySelector("[data-editor-lede]");
   if (!shell || !title || !lede) return;
-  hydrateDraftState();
   const view = renderEditorShellView({
     editorState,
     deps: {
@@ -171,6 +206,7 @@ function renderEditorShell() {
   updateMetaPanel();
   updateHistoryPanels();
   hydrateEntityResults();
+  void ensureStructuredDocumentController();
   void ensureLiveInvestigationOverlay();
 }
 
@@ -210,6 +246,7 @@ function bindEditorShell() {
     syncSlugPreview();
     scheduleLocalSnapshot();
     scheduleRelaySave();
+    scheduleStructuredDocumentSync();
     scheduleLivePublish();
     hydrateEntityResults();
   };
@@ -274,7 +311,7 @@ function bindEditorShell() {
   }
 }
 
-function hydrateDraftState() {
+async function hydrateDraftState() {
   const requestedSlug = cleanSlug(new URLSearchParams(window.location.search).get("slug") || "");
   const relayDrafts = (editorState.publicState?.drafts || []).filter(
     (draft) => String(draft?.content_type || "").trim().toLowerCase() !== "page"
@@ -291,10 +328,13 @@ function hydrateDraftState() {
       : [];
   editorState.draftStatus = relayDraft?.status || "draft";
 
-  const localDocument = loadLocalDocument(editorState.currentSlug);
+  const [localDocument, localHistory] = await Promise.all([
+    loadLocalDocument(editorState.currentSlug),
+    loadLocalHistory(editorState.currentSlug)
+  ]);
   const source = localDocument || relayDraft || createBlankDocument();
   editorState.document = draftToDocument(source);
-  editorState.localSnapshots = loadLocalHistory(editorState.currentSlug);
+  editorState.localSnapshots = Array.isArray(localHistory) ? localHistory : [];
   editorState.lastLocalFingerprint = fingerprintDocument(editorState.document);
   editorState.lastRelayFingerprint = relayDraft ? fingerprintDocument(draftToDocument(relayDraft), relayDraft.status) : "";
 }
@@ -312,15 +352,11 @@ function createBlankDocument() {
 }
 
 function draftToDocument(draft) {
-  const entityRefs = Array.isArray(draft?.entity_refs) ? draft.entity_refs : [];
+  const normalized = editorDocumentFromInvestigationRecord(draft);
   return {
-    title: String(draft?.title || "").trim(),
-    date: String(draft?.date || new Date().toISOString().slice(0, 10)).trim(),
-    summary: String(draft?.summary || "").trim(),
-    tags: Array.isArray(draft?.tags) ? draft.tags : splitTags(draft?.tags),
-    markdown: String(draft?.markdown || "").trim(),
-    primaryEntity: resolveEntityDisplayValue(entityRefs[0] || draft?.primaryEntity || ""),
-    entityRefs: entityRefs.slice(1)
+    ...normalized,
+    primaryEntity: resolveEntityDisplayValue(normalized.primaryEntity || draft?.primaryEntity || ""),
+    entityRefs: (Array.isArray(normalized.entityRefs) ? normalized.entityRefs : []).map((value) => resolveEntityDisplayValue(value))
   };
 }
 
@@ -347,6 +383,20 @@ function buildDraftPayload(status = "draft") {
     ...document.entityRefs.map((value) => resolveEntityByNameOrSlug(value)?.slug || cleanSlug(value))
   ];
   const slug = editorState.currentSlug || createUniqueSlug(document.title || "untitled", takenSlugs());
+  const structuredArtifacts = deriveInvestigationStructuredArtifacts({
+    slug,
+    title: document.title,
+    summary: document.summary,
+    markdown: document.markdown,
+    entityRefs: dedupe(resolvedRefs),
+    tags: document.tags,
+    relationshipCandidates: Array.isArray(editorState.documentProjection?.document?.metadata?.relationshipCandidates)
+      ? editorState.documentProjection.document.metadata.relationshipCandidates
+      : [],
+    citations: Array.isArray(editorState.documentProjection?.document?.metadata?.citations)
+      ? editorState.documentProjection.document.metadata.citations
+      : []
+  });
   return {
     slug,
     title: document.title || "Untitled investigation",
@@ -356,9 +406,14 @@ function buildDraftPayload(status = "draft") {
     author_pubkey: draftOwnerPubkey(),
     summary: document.summary,
     tags: document.tags,
-    entity_refs: dedupe(resolvedRefs),
+    entity_refs: structuredArtifacts.entityRefs.length ? structuredArtifacts.entityRefs : dedupe(resolvedRefs),
     featured: false,
     markdown: document.markdown,
+    structured_document: structuredArtifacts.structuredDocument,
+    body_html: "",
+    search_text: structuredArtifacts.searchText,
+    relationship_candidates: structuredArtifacts.relationshipCandidates,
+    citations: structuredArtifacts.citations,
     records: []
   };
 }
@@ -383,7 +438,7 @@ function syncSlugPreview() {
 function scheduleLocalSnapshot() {
   if (editorState.localTimer) window.clearTimeout(editorState.localTimer);
   editorState.localTimer = window.setTimeout(() => {
-    persistLocalSnapshot("Auto-saved");
+    void persistLocalSnapshot("Auto-saved");
   }, 1400);
 }
 
@@ -394,11 +449,11 @@ function scheduleRelaySave() {
   }, 14000);
 }
 
-function persistLocalSnapshot(label) {
+async function persistLocalSnapshot(label) {
   const document = collectDocumentFromForm();
   if (!document.title && !document.markdown) return;
   const fingerprint = fingerprintDocument(document);
-  saveLocalDocument(editorState.currentSlug, document);
+  void saveLocalDocument(editorState.currentSlug, document);
   if (fingerprint !== editorState.lastLocalFingerprint) {
     editorState.localSnapshots.unshift({
       id: `${Date.now()}`,
@@ -407,7 +462,7 @@ function persistLocalSnapshot(label) {
       document
     });
     editorState.localSnapshots = editorState.localSnapshots.slice(0, 10);
-    saveLocalHistory(editorState.currentSlug, editorState.localSnapshots);
+    void saveLocalHistory(editorState.currentSlug, editorState.localSnapshots);
     editorState.lastLocalFingerprint = fingerprint;
   }
   updateMetaPanel(`Saved locally ${formatTime(new Date().toISOString())}`);
@@ -434,10 +489,11 @@ async function saveDraftNow(status = "draft", silent = false) {
 
   if (!editorState.currentSlug) {
     editorState.currentSlug = payload.slug;
-    moveLocalStorageToSlug(payload.slug);
+    await moveLocalDraftStateToSlug(payload.slug);
     const url = new URL(window.location.href);
     url.searchParams.set("slug", payload.slug);
     history.replaceState({}, "", url);
+    await ensureStructuredDocumentController(true);
   }
 
   await ensureLiveInvestigationOverlay();
@@ -455,7 +511,7 @@ async function saveDraftNow(status = "draft", silent = false) {
     _event: result.event
   });
   editorState.relayVersions = dedupeVersions(editorState.relayVersions);
-  persistLocalSnapshot(status === "candidate" ? "Sent to review" : "Saved");
+  await persistLocalSnapshot(status === "candidate" ? "Sent to review" : "Saved");
   syncSlugPreview();
   updateMetaPanel();
   updateHistoryPanels();
@@ -496,6 +552,7 @@ function restoreLocalSnapshot(index) {
   const snapshot = editorState.localSnapshots[index];
   if (!snapshot) return;
   applyDocument(snapshot.document);
+  scheduleStructuredDocumentSync(true);
   updateMetaPanel(`Restored a local save from ${formatTime(snapshot.saved_at)}`);
 }
 
@@ -504,6 +561,7 @@ function restoreRelayVersion(id) {
   if (!version) return;
   applyDocument(draftToDocument(version));
   editorState.draftStatus = version.status || "draft";
+  scheduleStructuredDocumentSync(true);
   updateMetaPanel(`Restored a saved version from ${formatTime(version.created_at)}`);
 }
 
@@ -525,6 +583,11 @@ function draftOwnerPubkey() {
 function applyDocument(nextDocument) {
   const form = document.querySelector("[data-editor-form]");
   if (!(form instanceof HTMLFormElement)) return;
+  editorState.document = {
+    ...nextDocument,
+    tags: Array.isArray(nextDocument?.tags) ? nextDocument.tags.slice() : [],
+    entityRefs: Array.isArray(nextDocument?.entityRefs) ? nextDocument.entityRefs.slice() : []
+  };
   editorState.suppressSyncDepth += 1;
   try {
     form.elements.namedItem("title").value = nextDocument.title || "";
@@ -640,7 +703,9 @@ function openImageModal() {
   editorState.imageModal = {
     alt: "",
     caption: "",
-    placement: "full"
+    placement: "full-width",
+    drag: { x: 0.5, y: 0.5 },
+    crop: { x: 0, y: 0, width: 1, height: 1 }
   };
   renderEditorModal();
 }
@@ -745,22 +810,36 @@ async function handleEntitySave(form) {
 }
 
 async function handleImageInsert(form) {
-  if (!editorState.session || !currentUserIsAdmin()) return;
+  if (!editorState.session || !currentUserIsAdmin()) {
+    destroyStructuredDocumentController();
+    return;
+  }
   const formData = new FormData(form);
   const file = formData.get("image");
   if (!(file instanceof File) || !file.size) return;
-  const placement = normalizeImagePlacement(formData.get("placement"));
+  const placement = normalizeInvestigationImagePlacement(formData.get("placement"), "full-width");
   const alt = String(formData.get("alt") || "").trim() || cleanFileStem(file.name);
   const caption = String(formData.get("caption") || "").trim();
+  const drag = {
+    x: clampFraction(Number(formData.get("focusX")) / 100, 0.5),
+    y: clampFraction(Number(formData.get("focusY")) / 100, 0.5)
+  };
+  const crop = {
+    x: clampFraction(Number(formData.get("cropX")) / 100, 0),
+    y: clampFraction(Number(formData.get("cropY")) / 100, 0),
+    width: clampFraction(Number(formData.get("cropWidth")) / 100, 1),
+    height: clampFraction(Number(formData.get("cropHeight")) / 100, 1)
+  };
   setEditorStatus("Uploading image...", "pending");
   try {
     const upload = await uploadPublicBlob(editorState.session.secretKeyHex, file, {
       purpose: "investigation-image"
     });
-    insertEditorImageBlock(upload, { alt, caption, placement });
+    insertEditorImageBlock(upload, { alt, caption, placement, drag, crop });
     closeImageModal();
     scheduleLocalSnapshot();
     scheduleRelaySave();
+    scheduleStructuredDocumentSync();
     scheduleLivePublish();
     setEditorStatus("Image inserted.", "success");
   } catch (error) {
@@ -801,9 +880,14 @@ function insertEditorImageBlock(upload, options = {}) {
     // Keep going even if the editor cannot reclaim focus first.
   }
   const alt = String(options.alt || "").trim() || "Image";
-  const placement = normalizeImagePlacement(options.placement);
+  const placement = normalizeInvestigationImagePlacement(options.placement, "full-width");
   const caption = String(options.caption || "").trim();
-  const title = caption ? `align:${placement}|${caption}` : `align:${placement}`;
+  const title = stringifyInvestigationImageTitleSpec({
+    placement,
+    caption,
+    drag: options.drag,
+    crop: options.crop
+  });
   const snippet = `![${escapeMarkdownText(alt)}](${upload.url} "${escapeMarkdownTitle(title)}")`;
   const insertable = `\n\n${snippet}\n\n`;
   const before = editorState.editor?.getMarkdown?.() || "";
@@ -813,11 +897,6 @@ function insertEditorImageBlock(upload, options = {}) {
     if (afterInsert !== before && afterInsert.includes(upload.url)) return;
   }
   editorState.editor?.setMarkdown?.(`${String(before || "").trimEnd()}${insertable}`, false);
-}
-
-function normalizeImagePlacement(value) {
-  const clean = String(value || "").trim().toLowerCase();
-  return ["left", "right", "full"].includes(clean) ? clean : "full";
 }
 
 function cleanFileStem(value) {
@@ -970,10 +1049,11 @@ function ensureEditorUnitSlug() {
   const nextSlug = createUniqueSlug(title || "untitled", takenSlugs());
   if (!nextSlug) return "";
   editorState.currentSlug = nextSlug;
-  moveLocalStorageToSlug(nextSlug);
+  void moveLocalDraftStateToSlug(nextSlug);
   const url = new URL(window.location.href);
   url.searchParams.set("slug", nextSlug);
   history.replaceState({}, "", url);
+  void ensureStructuredDocumentController(true);
   void ensureLiveInvestigationOverlay();
   return nextSlug;
 }
@@ -1055,50 +1135,172 @@ function investigationDocumentId(slug) {
   return clean ? `investigation:${clean}` : "";
 }
 
-function loadLocalDocument(slug) {
-  try {
-    const raw = localStorage.getItem(storageKey("draft", slug));
-    return raw ? JSON.parse(raw) : null;
-  } catch {
+function sameEditorSession(left, right) {
+  const normalize = (value) =>
+    value
+      ? {
+          username: String(value.username || "").trim().toLowerCase(),
+          secretKeyHex: String(value.secretKeyHex || "").trim().toLowerCase(),
+          pubkey: String(value.pubkey || "").trim().toLowerCase()
+        }
+      : null;
+  return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+}
+
+async function ensureStructuredDocumentController(force = false) {
+  if (!editorState.session || !currentUserIsAdmin()) {
+    destroyStructuredDocumentController();
     return null;
   }
+  const docId = investigationDocumentId(editorState.currentSlug || "unsaved") || "investigation:unsaved";
+  if (!force && editorState.documentController && editorState.documentControllerId === docId) {
+    return editorState.documentController;
+  }
+
+  destroyStructuredDocumentController();
+  const controller = await createSiteDocumentController({
+    docId,
+    kind: "investigation",
+    initialDocument: buildCurrentStructuredDocument()
+  });
+
+  editorState.documentController = controller;
+  editorState.documentControllerId = docId;
+  controller.subscribe((projection, meta = {}) => {
+    handleStructuredDocumentProjection(projection, meta);
+  });
+  const opened = await controller.open();
+  handleStructuredDocumentProjection(opened, { source: "open" });
+  return controller;
 }
 
-function saveLocalDocument(slug, document) {
-  localStorage.setItem(storageKey("draft", slug), JSON.stringify(document));
-}
-
-function loadLocalHistory(slug) {
+function destroyStructuredDocumentController() {
+  if (editorState.documentSyncTimer) {
+    window.clearTimeout(editorState.documentSyncTimer);
+    editorState.documentSyncTimer = 0;
+  }
   try {
-    const raw = localStorage.getItem(storageKey("history", slug));
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    editorState.documentController?.destroy?.();
   } catch {
-    return [];
+    return;
+  } finally {
+    editorState.documentController = null;
+    editorState.documentControllerId = "";
+    editorState.documentProjection = null;
+    editorState.documentProjectionFingerprint = "";
   }
 }
 
-function saveLocalHistory(slug, history) {
-  localStorage.setItem(storageKey("history", slug), JSON.stringify(history));
+function scheduleStructuredDocumentSync(force = false) {
+  if (editorState.documentSyncTimer) window.clearTimeout(editorState.documentSyncTimer);
+  editorState.documentSyncTimer = window.setTimeout(() => {
+    editorState.documentSyncTimer = 0;
+    void syncStructuredDocumentNow(force);
+  }, force ? 20 : 240);
 }
 
-function moveLocalStorageToSlug(slug) {
+async function syncStructuredDocumentNow(force = false) {
+  if (!editorState.session || !currentUserIsAdmin()) return;
+  const controller = await ensureStructuredDocumentController();
+  if (!controller) return;
+  const nextDocument = buildCurrentStructuredDocument();
+  const nextFingerprint = JSON.stringify(nextDocument);
+  if (!force && nextFingerprint === editorState.documentProjectionFingerprint) return;
+  const projection = await controller.replaceDocument(nextDocument);
+  editorState.documentProjection = projection || null;
+  editorState.documentProjectionFingerprint = JSON.stringify(projection?.document || nextDocument);
+}
+
+function handleStructuredDocumentProjection(projection, meta = {}) {
+  if (!projection?.document) return;
+  editorState.documentProjection = projection;
+  const nextFingerprint = JSON.stringify(projection.document);
+  if (nextFingerprint === editorState.documentProjectionFingerprint) return;
+  editorState.documentProjectionFingerprint = nextFingerprint;
+  if (editorState.suppressSyncDepth > 0) return;
+
+  const nextDocument = draftToDocument({
+    title: projection.document.title,
+    summary: projection.document.summary,
+    date: collectDocumentFromForm().date,
+    tags: projection.document.metadata?.tags || [],
+    entity_refs: projection.entityRefs || [],
+    structured_document: projection.document
+  });
+  const currentDocument = document.querySelector("[data-editor-form]")
+    ? collectDocumentFromForm()
+    : editorState.document || createBlankDocument();
+  if (fingerprintDocument(currentDocument, editorState.draftStatus || "draft") === fingerprintDocument(nextDocument, editorState.draftStatus || "draft")) {
+    return;
+  }
+  applyDocument(nextDocument);
+  if (meta?.source === "open" || meta?.cached) {
+    updateMetaPanel("Restored structured draft state from local runtime.");
+  }
+}
+
+function buildCurrentStructuredDocument() {
+  const documentValue = document.querySelector("[data-editor-form]")
+    ? collectDocumentFromForm()
+    : editorState.document || createBlankDocument();
+  const primaryEntity = resolveEntityByNameOrSlug(documentValue.primaryEntity);
+  const resolvedRefs = [
+    primaryEntity?.slug || "",
+    ...(Array.isArray(documentValue.entityRefs) ? documentValue.entityRefs : []).map((value) => resolveEntityByNameOrSlug(value)?.slug || cleanSlug(value))
+  ];
+  return deriveInvestigationStructuredArtifacts({
+    slug: cleanSlug(editorState.currentSlug || documentValue.title || "unsaved") || "unsaved",
+    title: documentValue.title,
+    summary: documentValue.summary,
+    markdown: documentValue.markdown,
+    entityRefs: dedupe(resolvedRefs),
+    tags: documentValue.tags,
+    relationshipCandidates: Array.isArray(editorState.documentProjection?.document?.metadata?.relationshipCandidates)
+      ? editorState.documentProjection.document.metadata.relationshipCandidates
+      : [],
+    citations: Array.isArray(editorState.documentProjection?.document?.metadata?.citations)
+      ? editorState.documentProjection.document.metadata.citations
+      : []
+  }).structuredDocument;
+}
+
+async function loadLocalDocument(slug) {
+  return loadSiteRuntimeValue("editorLocalDraft", storageParams(slug)).catch(() => null);
+}
+
+async function saveLocalDocument(slug, document) {
+  return rememberSiteRuntimeValue("editorLocalDraft", storageParams(slug), document, {
+    source: "editor-local-draft"
+  });
+}
+
+async function loadLocalHistory(slug) {
+  const history = await loadSiteRuntimeValue("editorLocalHistory", storageParams(slug)).catch(() => null);
+  return Array.isArray(history) ? history : [];
+}
+
+async function saveLocalHistory(slug, history) {
+  return rememberSiteRuntimeValue("editorLocalHistory", storageParams(slug), Array.isArray(history) ? history : [], {
+    source: "editor-local-history"
+  });
+}
+
+async function moveLocalDraftStateToSlug(slug) {
   if (!slug) return;
-  const draftRaw = localStorage.getItem(storageKey("draft", ""));
-  const historyRaw = localStorage.getItem(storageKey("history", ""));
-  if (draftRaw) {
-    localStorage.setItem(storageKey("draft", slug), draftRaw);
-    localStorage.removeItem(storageKey("draft", ""));
-  }
-  if (historyRaw) {
-    localStorage.setItem(storageKey("history", slug), historyRaw);
-    localStorage.removeItem(storageKey("history", ""));
-  }
+  await Promise.all([
+    moveSiteRuntimeValue("editorLocalDraft", storageParams(""), storageParams(slug), {
+      source: "editor-local-draft-move"
+    }),
+    moveSiteRuntimeValue("editorLocalHistory", storageParams(""), storageParams(slug), {
+      source: "editor-local-history-move"
+    })
+  ]);
 }
 
-function storageKey(type, slug) {
-  const suffix = cleanSlug(slug || "") || "unsaved";
-  return `${SITE.nostr.storageNamespace}.editor.${type}.${suffix}`;
+function storageParams(slug) {
+  return {
+    slug: cleanSlug(slug || "") || "unsaved"
+  };
 }
 
 function fingerprintDocument(document, status = "draft") {
@@ -1117,6 +1319,12 @@ function fingerprintDocument(document, status = "draft") {
 function parseMaybeNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function clampFraction(value, fallback = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0, Math.min(1, number));
 }
 
 function formatTime(value) {

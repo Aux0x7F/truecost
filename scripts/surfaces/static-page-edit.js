@@ -2,10 +2,17 @@ import { cleanSlug } from "../core/nostr.js";
 import {
   STATIC_EDITABLE_PAGES,
   buildStaticPageDraftPayload,
+  clonePageContent,
   findPageDraftPreview,
   isPageDraft,
   latestApprovedPageDraft
 } from "../core/page-drafts.js";
+import { createSiteDocumentController } from "../core/runtime-document.js";
+import {
+  buildStaticPageDocument,
+  extractStaticPageSnapshot,
+  staticPageDocumentId
+} from "../core/static-page-document.js";
 import { escapeHtml } from "../core/text-utils.js";
 import { bindReviewPreviewPanel, renderReviewPreviewPanel } from "./review-preview.js";
 
@@ -89,7 +96,7 @@ export function createStaticPageEditSurface({ site, state, deps = {} } = {}) {
 
     if (!editorEntryAllowed(publicState)) return;
 
-    const storedSnapshot = loadStaticEditSnapshot(site, pageId);
+    const storedSnapshot = await loadStaticEditSnapshot(site, pageId);
     const savedContent = cloneStaticEditContent(storedSnapshot?.content || state.pageOverlay.currentContent);
     state.staticEdit = {
       pageId,
@@ -301,7 +308,7 @@ export function createStaticPageEditSurface({ site, state, deps = {} } = {}) {
         return;
       }
       if (action.hasAttribute("data-static-edit-revert")) {
-        revertToPublished();
+        void revertToPublished();
       }
       return;
     }
@@ -365,10 +372,10 @@ export function createStaticPageEditSurface({ site, state, deps = {} } = {}) {
     renderBar();
   }
 
-  function revertToPublished() {
+  async function revertToPublished() {
     const editState = state.staticEdit;
     if (!editState) return;
-    clearStaticEditSnapshot(site, editState.pageId);
+    void clearStaticEditSnapshot(site, editState.pageId);
     applyStaticEditContent(editState.elements, editState.originalContent, editState.originalContent, sanitizeTrustedHtml);
     editState.savedContent = cloneStaticEditContent(editState.originalContent);
     editState.history = [cloneStaticEditContent(editState.originalContent)];
@@ -428,7 +435,7 @@ export function createStaticPageEditSurface({ site, state, deps = {} } = {}) {
       // Snapshot review should still work even if the live overlay publish path is unavailable.
     }
     const savedAt = Date.now();
-    persistStaticEditSnapshot(site, editState.pageId, savedAt, content);
+    await persistStaticEditSnapshot(site, editState.pageId, savedAt, content);
     editState.savedContent = cloneStaticEditContent(content);
     editState.savedAt = savedAt;
     editState.saveState = "saved";
@@ -529,30 +536,57 @@ export function hasMeaningfulStaticEditValue(value) {
   return stripHtml(String(value || "").replace(/&nbsp;/gi, " ").replace(/<br\s*\/?>/gi, " ")).length > 0;
 }
 
-export function loadStaticEditSnapshot(site, pageId) {
+export async function loadStaticEditSnapshot(site, pageId) {
+  const controller = await createSiteDocumentController({
+    docId: staticPageDocumentId(pageId),
+    kind: "static-page",
+    initialDocument: buildStaticPageDocument({ pageId })
+  }).catch(() => null);
+  if (!controller) return null;
   try {
-    const raw = window.localStorage.getItem(staticEditStorageKey(site, pageId));
-    const parsed = raw ? JSON.parse(raw) : null;
-    return parsed && parsed.content ? parsed : null;
-  } catch {
-    return null;
+    const projection = await controller.open();
+    return extractStaticPageSnapshot(projection?.value?.document || projection?.document || projection, pageId);
+  } finally {
+    await controller.destroy().catch(() => null);
   }
 }
 
-export function clearStaticEditSnapshot(site, pageId) {
-  window.localStorage.removeItem(staticEditStorageKey(site, pageId));
+export async function clearStaticEditSnapshot(site, pageId) {
+  const controller = await createSiteDocumentController({
+    docId: staticPageDocumentId(pageId),
+    kind: "static-page",
+    initialDocument: buildStaticPageDocument({ pageId })
+  }).catch(() => null);
+  if (!controller) return null;
+  try {
+    await controller.open();
+    return controller.replaceDocument(buildStaticPageDocument({
+      pageId,
+      content: {},
+      savedAt: 0
+    }));
+  } finally {
+    await controller.destroy().catch(() => null);
+  }
 }
 
-export function persistStaticEditSnapshot(site, pageId, savedAt, content) {
-  window.localStorage.setItem(staticEditStorageKey(site, pageId), JSON.stringify({
-    pageId,
-    savedAt,
-    content
-  }));
-}
-
-export function staticEditStorageKey(site, pageId) {
-  return `${site.nostr.storageNamespace}.static-edit.${pageId}`;
+export async function persistStaticEditSnapshot(site, pageId, savedAt, content) {
+  const controller = await createSiteDocumentController({
+    docId: staticPageDocumentId(pageId),
+    kind: "static-page",
+    initialDocument: buildStaticPageDocument({ pageId })
+  }).catch(() => null);
+  if (!controller) return null;
+  try {
+    await controller.open();
+    return controller.replaceDocument(buildStaticPageDocument({
+      pageId,
+      savedAt,
+      content: clonePageContent(content)
+    }));
+  } finally {
+    await controller.destroy().catch(() => null);
+  }
 }
 
 export function staticEditContentMatches(left, right) {

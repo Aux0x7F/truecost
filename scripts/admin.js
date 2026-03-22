@@ -12,7 +12,12 @@ import {
   resolveSessionUsernameConflict,
   userHasUsernameConflict
 } from "./core/account-integrity.js";
-import { rememberAccountRotation, rememberCurrentAccountSession } from "./core/account-management.js";
+import {
+  hydrateStoredAccountHistory,
+  rememberAccountRotation,
+  rememberCurrentAccountSession
+} from "./core/account-management.js";
+import { hydrateCachedSessionUsernameIntegrity } from "./core/account-integrity.js";
 import {
   cleanSlug,
   decryptUploadedBlob,
@@ -35,9 +40,10 @@ import {
   shortKey,
   uploadPublicBlob
 } from "./core/nostr.js";
-import { createPublicStateStore } from "./core/public-state-store.js";
 import { applyOptimisticIdentityRotation, publicStateHasAdminPubkey } from "./core/public-state.js";
+import { createRuntimePublicStateStore } from "./core/runtime-public-state-store.js";
 import { createViewerController } from "./core/viewer-controller.js";
+import { getSiteRuntimeClient } from "./core/runtime-client.js";
 import {
   applySubmissionFilterSuggestion as applyWorkspaceSubmissionFilterSuggestion,
   buildEntityLocationFilterValues as buildWorkspaceEntityLocationFilterValues,
@@ -142,10 +148,11 @@ import { createWorkspaceInboxController } from "./features/workspace-inbox.js";
 import { createWorkspaceMutationController } from "./features/workspace-mutations.js";
 import { createWorkspaceAccountController } from "./features/workspace-account.js";
 import { createWorkspaceShellController } from "./features/workspace-shell.js";
+import { createWorkspacePageController } from "./features/workspace-page.js";
 import { createWorkspaceTabsController } from "./features/workspace-tabs.js";
 import { createWorkspaceUserLookupController } from "./features/workspace-user-lookup.js";
 import { buildPasswordLengthMessage, openAccountSession, PASSWORD_MIN_LENGTH, rotateAccountPassword } from "./core/account-actions.js";
-import { getStoredSession, rebroadcastAccount, rotateAccountCredentials, saveSession, signInWithCredentials, deriveSecretKeyHex } from "./core/session.js";
+import { getStoredSession, rebroadcastAccount, resolveStoredSession, rotateAccountCredentials, saveSession, signInWithCredentials, deriveSecretKeyHex } from "./core/session.js";
 
 let workspacePublicStateStore = null;
 let workspaceRuntime = null;
@@ -158,6 +165,7 @@ let workspaceMutations = null;
 let workspaceAccount = null;
 let workspaceShell = null;
 let workspaceTabs = null;
+let workspacePage = null;
 
 const workspaceState = {
   session: getStoredSession(),
@@ -216,7 +224,7 @@ const workspaceState = {
   keyRequestCache: null
 };
 
-workspacePublicStateStore = createPublicStateStore({
+workspacePublicStateStore = createRuntimePublicStateStore({
   getSessionSecretKey: async () => workspaceState.session?.secretKeyHex || "",
   page: "workspace",
   refreshDelayMs: () => 0,
@@ -225,6 +233,9 @@ workspacePublicStateStore = createPublicStateStore({
 workspaceState.publicState = workspacePublicStateStore.value;
 workspacePublicStateStore.subscribe((snapshot) => {
   workspaceState.publicState = snapshot.value;
+  if (snapshot.reason === "source") {
+    void workspaceRuntime?.sync(true);
+  }
 });
 
 const viewerController = createViewerController({
@@ -300,6 +311,7 @@ workspaceRuntime = createWorkspaceRuntime({
   publicStateStore: workspacePublicStateStore,
   deps: {
     ensureEventToolsLoaded,
+    resolveStoredSession,
     getStoredSession,
     loadAdminKeyShare,
     loadAdminKeyShares,
@@ -427,6 +439,10 @@ workspaceAccount = createWorkspaceAccountController({
     mergeSiteKeyShares: mergeWorkspaceSiteKeyShares,
     normalizeUsername,
     openAccountSession,
+    signIn: ({ username, password }) =>
+      getSiteRuntimeClient().then((runtimeClient) =>
+        runtimeClient.signIn({ username, password })
+      ),
     PASSWORD_MIN_LENGTH,
     persistCachedSiteKeyShares: persistCachedWorkspaceSiteKeyShares,
     publishAdminKeyShare,
@@ -435,6 +451,10 @@ workspaceAccount = createWorkspaceAccountController({
     rememberCurrentAccountSession,
     resolveNextAvailableUsername,
     rotateAccountCredentials,
+    rotatePasswordRequest: (payload) =>
+      getSiteRuntimeClient().then((runtimeClient) =>
+        runtimeClient.rotatePassword(payload)
+      ),
     rotateAccountPassword,
     saveSession,
     signInWithCredentials,
@@ -451,525 +471,70 @@ workspaceAccount = createWorkspaceAccountController({
   }
 });
 
-document.addEventListener("DOMContentLoaded", () => {
-  if (!document.querySelector("[data-workspace-page]")) return;
-  bindWorkspace();
-  window.addEventListener("truecost:session-changed", handleWorkspaceSessionChanged);
-  document.addEventListener("visibilitychange", handleWorkspaceVisibilityChange);
-  window.addEventListener("focus", handleWorkspaceWindowFocus);
-  void refreshWorkspace();
+workspacePage = createWorkspacePageController({
+  state: workspaceState,
+  site: SITE,
+  deps: {
+    getStoredSession,
+    cycleHighlightIndex
+  },
+  callbacks: {
+    applyEntityLocationSuggestion: (value) => workspaceSelectors.applyEntityLocationSuggestion(value),
+    applyEntityPick,
+    applySubmissionFilterSuggestion,
+    clearWorkspaceLinkedUser: () => workspaceDeepLinks.clearWorkspaceLinkedUser(),
+    clearWorkspaceUserLookup,
+    createEntityModalState,
+    entityLocationSuggestions: () => workspaceSelectors.entityLocationSuggestions(),
+    focusWorkspaceSearchField,
+    handleAttachmentDownload,
+    handleChatSend: (form) => workspaceInbox.handleChatSend(form),
+    handleCommentAction,
+    handleCommentActionForm,
+    handleDirectUserAction,
+    handleDirectUserLookup,
+    handleEntityAction,
+    handleEntitySave,
+    handleLogin: (form) => workspaceAccount.handleLogin(form),
+    handlePasswordRotation: (form) => workspaceAccount.handlePasswordRotation(form),
+    handleProfileSave: (form) => workspaceAccount.handleProfileSave(form),
+    handleReviewAction,
+    handleSnapshotRequest,
+    handleSubmissionAction,
+    handleUserAction,
+    handleAppendNextAvailableUsername: (target) => workspaceAccount.handleAppendNextAvailableUsername(target),
+    hydrateChatModal: () => workspaceInbox.hydrateChatModal(),
+    hydrateWorkspaceEnhancements,
+    markSubmissionViewed: (submissionId, kinds) => workspaceInbox.markSubmissionViewed(submissionId, kinds),
+    refreshWorkspace,
+    renderLoginStatusPreview: (form) => workspaceAccount.renderLoginStatusPreview(form),
+    renderWorkspace,
+    scheduleUserLookup,
+    setActiveTab,
+    submissionFilterSuggestions,
+    syncWorkspace: (force = true) => workspaceRuntime.sync(force)
+  }
 });
 
-async function handleWorkspaceSessionChanged() {
-  workspaceState.session = getStoredSession();
-  workspaceState.viewer = null;
-  workspaceState.passwordRotationModal = null;
-  await refreshWorkspace(true);
-}
-
-function bindWorkspace() {
-  const shell = document.querySelector("[data-workspace-shell]");
-  if (!shell) return;
-
-  shell.addEventListener("click", async (event) => {
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-
-    const tab = target.closest("[data-workspace-tab]");
-    if (tab) {
-      setActiveTab(tab.getAttribute("data-workspace-tab") || "profile");
-      renderWorkspace();
-      return;
-    }
-
-    const openEntityModal = target.closest("[data-open-entity-modal]");
-    if (openEntityModal) {
-      workspaceState.entityModal = createEntityModalState(openEntityModal);
-      renderWorkspace();
-      return;
-    }
-
-    const editEntityModal = target.closest("[data-edit-entity]");
-    if (editEntityModal) {
-      workspaceState.entityModal = createEntityModalState(editEntityModal);
-      renderWorkspace();
-      return;
-    }
-
-    const userModalTrigger = target.closest("[data-open-user-modal]");
-    if (userModalTrigger) {
-      workspaceState.userModalPubkey = userModalTrigger.getAttribute("data-open-user-modal") || "";
-      renderWorkspace();
-      return;
-    }
-
-    const userActionTrigger = target.closest("[data-open-user-action]");
-    if (userActionTrigger) {
-      workspaceState.userActionModal = {
-        pubkey: userActionTrigger.getAttribute("data-open-user-action") || ""
-      };
-      renderWorkspace();
-      return;
-    }
-
-    const commentMenuTrigger = target.closest("[data-comment-menu-toggle]");
-    if (commentMenuTrigger) {
-      const commentId = commentMenuTrigger.getAttribute("data-comment-menu-toggle") || "";
-      workspaceState.commentMenuId = workspaceState.commentMenuId === commentId ? "" : commentId;
-      renderWorkspace({ soft: true });
-      return;
-    }
-
-    const ownCommentMenuTrigger = target.closest("[data-own-comment-menu-toggle]");
-    if (ownCommentMenuTrigger) {
-      const commentId = ownCommentMenuTrigger.getAttribute("data-own-comment-menu-toggle") || "";
-      workspaceState.ownCommentMenuId = workspaceState.ownCommentMenuId === commentId ? "" : commentId;
-      renderWorkspace({ soft: true });
-      return;
-    }
-
-    const commentActionTrigger = target.closest("[data-open-comment-action]");
-    if (commentActionTrigger) {
-      workspaceState.commentActionModal = {
-        commentId: commentActionTrigger.getAttribute("data-open-comment-action") || "",
-        mode: commentActionTrigger.getAttribute("data-comment-mode") || "moderate"
-      };
-      renderWorkspace();
-      return;
-    }
-
-    const openSubmission = target.closest("[data-open-submission]");
-    if (openSubmission) {
-      const submissionId = openSubmission.getAttribute("data-open-submission") || "";
-      workspaceState.submissionModal = { submissionId };
-      if (workspaceState.chatModal?.submissionId && workspaceState.chatModal.submissionId !== submissionId) {
-        workspaceState.chatModal = null;
-      }
-      renderWorkspace();
-      void workspaceInbox.markSubmissionViewed(submissionId, SITE.nostr.kinds);
-      return;
-    }
-
-    const submissionSuggestion = target.closest("[data-submission-filter-suggestion]");
-    if (submissionSuggestion) {
-      workspaceState.submissionFilters.query = applySubmissionFilterSuggestion(
-        submissionSuggestion.getAttribute("data-submission-filter-suggestion") || ""
-      );
-      workspaceState.submissionFilterOpen = false;
-      workspaceState.submissionFilterHighlight = -1;
-      renderWorkspace({ soft: true });
-      focusWorkspaceSearchField("[data-submission-filter-input]");
-      return;
-    }
-
-    const moderationButton = target.closest("[data-user-action]");
-    if (moderationButton) {
-      await handleUserAction(moderationButton);
-      return;
-    }
-
-    const directUserAction = target.closest("[data-quick-user-action]");
-    if (directUserAction) {
-      await handleDirectUserAction(directUserAction);
-      return;
-    }
-
-    const clearUserLookup = target.closest("[data-clear-user-lookup]");
-    if (clearUserLookup) {
-      clearWorkspaceUserLookup();
-      renderWorkspace({ soft: true });
-      focusWorkspaceSearchField("[data-quick-user-input]");
-      return;
-    }
-
-    const clearCommentFilter = target.closest("[data-clear-comment-filter]");
-    if (clearCommentFilter) {
-      workspaceState.commentFilters.query = "";
-      workspaceDeepLinks.clearWorkspaceLinkedUser();
-      renderWorkspace({ soft: true });
-      focusWorkspaceSearchField("[data-comment-filter-query]");
-      return;
-    }
-
-    const clearSubmissionFilter = target.closest("[data-clear-submission-filter]");
-    if (clearSubmissionFilter) {
-      workspaceState.submissionFilters.query = "";
-      workspaceState.submissionFilterHighlight = -1;
-      workspaceState.submissionFilterOpen = false;
-      renderWorkspace({ soft: true });
-      focusWorkspaceSearchField("[data-submission-filter-input]");
-      return;
-    }
-
-    const clearEntityFilter = target.closest("[data-clear-entity-filter]");
-    if (clearEntityFilter) {
-      const field = clearEntityFilter.getAttribute("data-clear-entity-filter") || "";
-      if (field && Object.prototype.hasOwnProperty.call(workspaceState.entityFilters, field)) {
-        workspaceState.entityFilters[field] = "";
-        if (field === "location") {
-          workspaceState.entityLocationFilterHighlight = -1;
-          workspaceState.entityLocationFilterOpen = false;
-        }
-        renderWorkspace({ soft: true });
-        focusWorkspaceSearchField(`[data-entity-filter-${field}]`);
-      }
-      return;
-    }
-
-    const entityLocationSuggestion = target.closest("[data-entity-location-suggestion]");
-    if (entityLocationSuggestion) {
-      workspaceSelectors.applyEntityLocationSuggestion(
-        entityLocationSuggestion.getAttribute("data-entity-location-suggestion") || ""
-      );
-      renderWorkspace({ soft: true });
-      focusWorkspaceSearchField("[data-entity-filter-location]");
-      return;
-    }
-
-    const userStatsFilter = target.closest("[data-user-stats-filter]");
-    if (userStatsFilter) {
-      workspaceState.userFilters.karma = String(userStatsFilter.getAttribute("data-user-stats-filter") || "").trim().toLowerCase();
-      renderWorkspace({ soft: true });
-      return;
-    }
-
-    const findUserAction = target.closest("[data-find-user]");
-    if (findUserAction) {
-      await handleDirectUserLookup();
-      return;
-    }
-
-    const passwordRotationTrigger = target.closest("[data-open-password-rotation]");
-    if (passwordRotationTrigger) {
-      workspaceState.passwordRotationModal = {
-        status: "",
-        state: "",
-        pending: false
-      };
-      renderWorkspace();
-      return;
-    }
-
-    const appendUsernameAction = target.closest("[data-append-next-available-username]");
-    if (appendUsernameAction) {
-      await workspaceAccount.handleAppendNextAvailableUsername(appendUsernameAction);
-      return;
-    }
-
-    const entityAction = target.closest("[data-entity-action]");
-    if (entityAction) {
-      await handleEntityAction(entityAction);
-      return;
-    }
-
-    const commentAction = target.closest("[data-comment-action]");
-    if (commentAction) {
-      await handleCommentAction(commentAction);
-      return;
-    }
-
-    const reviewAction = target.closest("[data-review-action]");
-    if (reviewAction) {
-      await handleReviewAction(reviewAction);
-      return;
-    }
-
-    const entityPick = target.closest("[data-entity-pick]");
-    if (entityPick) {
-      applyEntityPick(entityPick);
-      return;
-    }
-
-    const submissionAction = target.closest("[data-submission-action]");
-    if (submissionAction) {
-      await handleSubmissionAction(submissionAction);
-      return;
-    }
-
-    const attachmentAction = target.closest("[data-download-attachment]");
-    if (attachmentAction) {
-      await handleAttachmentDownload(attachmentAction);
-      return;
-    }
-
-    const snapshotRequest = target.closest("[data-request-snapshot]");
-    if (snapshotRequest) {
-      await handleSnapshotRequest(snapshotRequest);
-      return;
-    }
-
-    const openChat = target.closest("[data-open-chat]");
-    if (openChat) {
-      const submissionId = openChat.getAttribute("data-open-chat") || "";
-      const targetPubkey = openChat.getAttribute("data-chat-target") || "";
-      if (workspaceState.chatModal?.submissionId === submissionId) {
-        workspaceState.chatModal = null;
-        renderWorkspace({ soft: true });
-        return;
-      }
-      workspaceState.submissionModal = { submissionId };
-      workspaceState.chatModal = {
-        submissionId,
-        targetPubkey,
-        loading: true,
-        messages: []
-      };
-      renderWorkspace({ soft: true });
-      await workspaceInbox.hydrateChatModal();
-      return;
-    }
-
-    if (target.closest("[data-modal-close]")) {
-      workspaceState.entityModal = null;
-      workspaceState.chatModal = null;
-      workspaceState.userModalPubkey = "";
-      workspaceState.userActionModal = null;
-      workspaceState.commentActionModal = null;
-      workspaceState.submissionModal = null;
-      workspaceState.passwordRotationModal = null;
-      renderWorkspace();
-    }
-  });
-
-  shell.addEventListener("focusin", (event) => {
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    if (target.matches("[data-submission-filter-input]")) {
-      const nextOpen = Boolean(String(target.value || "").trim() && submissionFilterSuggestions().length);
-      if (workspaceState.submissionFilterOpen !== nextOpen) {
-        workspaceState.submissionFilterOpen = nextOpen;
-        renderWorkspace({ soft: true });
-      }
-      return;
-    }
-    if (target.matches("[data-entity-filter-location]")) {
-      const nextOpen = Boolean(
-        String(target.value || "").trim() && workspaceSelectors.entityLocationSuggestions().length
-      );
-      if (workspaceState.entityLocationFilterOpen !== nextOpen) {
-        workspaceState.entityLocationFilterOpen = nextOpen;
-        workspaceState.entityLocationFilterHighlight = nextOpen ? 0 : -1;
-        renderWorkspace({ soft: true });
-      }
-    }
-  });
-
-  document.addEventListener("click", (event) => {
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    let didRefresh = false;
-    const activeSearch = document.querySelector("[data-submission-filter-input]")?.closest(".workspace-search");
-    if (!(activeSearch instanceof HTMLElement && activeSearch.contains(target)) && workspaceState.submissionFilterOpen) {
-      workspaceState.submissionFilterOpen = false;
-      workspaceState.submissionFilterHighlight = -1;
-      didRefresh = true;
-    }
-    const entityLocationSearch = document.querySelector("[data-entity-filter-location]")?.closest(".workspace-search");
-    if (!(entityLocationSearch instanceof HTMLElement && entityLocationSearch.contains(target)) && workspaceState.entityLocationFilterOpen) {
-      workspaceState.entityLocationFilterOpen = false;
-      workspaceState.entityLocationFilterHighlight = -1;
-      didRefresh = true;
-    }
-    if (didRefresh) {
-      renderWorkspace({ soft: true });
-    }
-  });
-
-  shell.addEventListener("submit", async (event) => {
-    const form = event.target;
-    if (!(form instanceof HTMLFormElement)) return;
-    event.preventDefault();
-
-    if (form.matches("[data-login-form]")) {
-      await workspaceAccount.handleLogin(form);
-      return;
-    }
-    if (form.matches("[data-profile-form]")) {
-      await workspaceAccount.handleProfileSave(form);
-      return;
-    }
-    if (form.matches("[data-password-rotation-form]")) {
-      await workspaceAccount.handlePasswordRotation(form);
-      return;
-    }
-    if (form.matches("[data-entity-form]")) {
-      await handleEntitySave(form);
-      return;
-    }
-    if (form.matches("[data-chat-form]")) {
-      await workspaceInbox.handleChatSend(form);
-      return;
-    }
-    if (form.matches("[data-comment-action-form]")) {
-      await handleCommentActionForm(form);
-    }
-  });
-
-  shell.addEventListener("input", (event) => {
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    if (target.matches("[data-entity-picker-input], [data-location-input]")) {
-      hydrateWorkspaceEnhancements();
-      return;
-    }
-    if (target.matches('[data-login-form] [name="username"], [data-login-form] [name="password"]')) {
-      workspaceAccount.renderLoginStatusPreview(target.closest("form"));
-      return;
-    }
-    if (target.matches("[data-comment-filter-query]")) {
-      workspaceState.commentFilters.query = String(target.value || "");
-      workspaceDeepLinks.clearWorkspaceLinkedUser();
-      renderWorkspace({ soft: true });
-      return;
-    }
-    if (target.matches("[data-comment-filter-role]")) {
-      workspaceState.commentFilters.role = String(target.value || "").trim().toLowerCase();
-      renderWorkspace({ soft: true });
-      return;
-    }
-    if (target.matches("[data-comment-filter-karma]")) {
-      workspaceState.commentFilters.karma = String(target.value || "").trim().toLowerCase();
-      renderWorkspace({ soft: true });
-      return;
-    }
-    if (target.matches("[data-submission-filter-input]")) {
-      workspaceState.submissionFilters.query = String(target.value || "");
-      const suggestions = submissionFilterSuggestions();
-      workspaceState.submissionFilterOpen = Boolean(String(target.value || "").trim() && suggestions.length);
-      workspaceState.submissionFilterHighlight = suggestions.length ? 0 : -1;
-      renderWorkspace({ soft: true });
-      return;
-    }
-    if (target.matches("[data-user-filter-karma]")) {
-      workspaceState.userFilters.karma = String(target.value || "").trim().toLowerCase();
-      renderWorkspace({ soft: true });
-      return;
-    }
-    if (target.matches("[data-user-filter-role]")) {
-      workspaceState.userFilters.role = String(target.value || "").trim().toLowerCase();
-      renderWorkspace({ soft: true });
-      return;
-    }
-    if (target.matches("[data-entity-filter-query]")) {
-      workspaceState.entityFilters.query = String(target.value || "");
-      renderWorkspace({ soft: true });
-      return;
-    }
-    if (target.matches("[data-entity-filter-status]")) {
-      workspaceState.entityFilters.status = String(target.value || "").trim().toLowerCase();
-      renderWorkspace({ soft: true });
-      return;
-    }
-    if (target.matches("[data-entity-filter-location]")) {
-      workspaceState.entityFilters.location = String(target.value || "");
-      const suggestions = workspaceSelectors.entityLocationSuggestions();
-      workspaceState.entityLocationFilterOpen = Boolean(String(target.value || "").trim() && suggestions.length);
-      workspaceState.entityLocationFilterHighlight = suggestions.length ? 0 : -1;
-      renderWorkspace({ soft: true });
-      return;
-    }
-    if (target.matches("[data-entity-filter-author]")) {
-      workspaceState.entityFilters.author = String(target.value || "");
-      renderWorkspace({ soft: true });
-      return;
-    }
-    if (target.matches("[data-quick-user-input]")) {
-      workspaceState.userLookupRequestId += 1;
-      workspaceState.userLookupQuery = String(target.value || "");
-      workspaceState.userLookupResult = null;
-      workspaceState.userDirectStatus = "";
-      workspaceState.userLookupLoading = Boolean(workspaceState.userLookupQuery.trim());
-      workspaceDeepLinks.clearWorkspaceLinkedUser();
-      scheduleUserLookup();
-      renderWorkspace({ soft: true });
-    }
-  });
-
-  shell.addEventListener("keydown", async (event) => {
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    if (target.matches("[data-quick-user-input]") && event.key === "Enter") {
-      event.preventDefault();
-      await handleDirectUserLookup();
-      return;
-    }
-    if (target.matches("[data-entity-filter-location]")) {
-      const suggestions = workspaceSelectors.entityLocationSuggestions();
-      if (event.key === "ArrowDown" && suggestions.length) {
-        event.preventDefault();
-        workspaceState.entityLocationFilterOpen = true;
-        workspaceState.entityLocationFilterHighlight = cycleHighlightIndex(workspaceState.entityLocationFilterHighlight, suggestions.length, 1);
-        renderWorkspace({ soft: true });
-        return;
-      }
-      if (event.key === "ArrowUp" && suggestions.length) {
-        event.preventDefault();
-        workspaceState.entityLocationFilterOpen = true;
-        workspaceState.entityLocationFilterHighlight = cycleHighlightIndex(workspaceState.entityLocationFilterHighlight, suggestions.length, -1);
-        renderWorkspace({ soft: true });
-        return;
-      }
-      if (event.key === "Escape") {
-        workspaceState.entityLocationFilterOpen = false;
-        workspaceState.entityLocationFilterHighlight = -1;
-        renderWorkspace({ soft: true });
-        return;
-      }
-      if (event.key === "Enter" && suggestions.length) {
-        event.preventDefault();
-        const selected = suggestions[Math.max(0, workspaceState.entityLocationFilterHighlight)];
-        workspaceSelectors.applyEntityLocationSuggestion(selected);
-        renderWorkspace({ soft: true });
-        return;
-      }
-    }
-    if (!target.matches("[data-submission-filter-input]")) return;
-    const suggestions = submissionFilterSuggestions();
-    if (event.key === "ArrowDown" && suggestions.length) {
-      event.preventDefault();
-      workspaceState.submissionFilterHighlight = cycleHighlightIndex(workspaceState.submissionFilterHighlight, suggestions.length, 1);
-      renderWorkspace({ soft: true });
-      return;
-    }
-    if (event.key === "ArrowUp" && suggestions.length) {
-      event.preventDefault();
-      workspaceState.submissionFilterHighlight = cycleHighlightIndex(workspaceState.submissionFilterHighlight, suggestions.length, -1);
-      renderWorkspace({ soft: true });
-      return;
-    }
-    if (event.key === "Escape") {
-      workspaceState.submissionFilterOpen = false;
-      workspaceState.submissionFilterHighlight = -1;
-      renderWorkspace({ soft: true });
-      return;
-    }
-    if (event.key === "Enter" && suggestions.length) {
-      event.preventDefault();
-      const selected = suggestions[Math.max(0, workspaceState.submissionFilterHighlight)];
-      workspaceState.submissionFilters.query = applySubmissionFilterSuggestion(selected);
-      workspaceState.submissionFilterOpen = false;
-      workspaceState.submissionFilterHighlight = -1;
-      renderWorkspace({ soft: true });
-    }
-  });
-}
+document.addEventListener("DOMContentLoaded", () => {
+  workspacePage?.start();
+});
 
 async function refreshWorkspace(force = false) {
+  workspaceState.session = await resolveStoredSession({
+    persistSession: true
+  }).catch(() => getStoredSession());
+  if (workspaceState.session) {
+    await Promise.all([
+      hydrateStoredAccountHistory(workspaceState.session),
+      hydrateCachedSessionUsernameIntegrity(workspaceState.session)
+    ]);
+  }
   await workspaceRuntime.refresh(force);
 }
 
 function renderWorkspaceLoading(message) {
   return workspaceShell.renderLoading(message);
-}
-
-function handleWorkspaceVisibilityChange() {
-  if (document.visibilityState === "visible") {
-    void workspaceRuntime.sync(true);
-  }
-}
-
-function handleWorkspaceWindowFocus() {
-  void workspaceRuntime.sync(true);
 }
 
 function captureWorkspaceDataState() {

@@ -5,22 +5,28 @@ import {
   loadGraphSeed
 } from "./graph-wiki.js";
 import {
-  loadGraphDraftState
-} from "./graph-drafts.js";
+  createEmptyGraphRecordState
+} from "./graph-records.js";
 
 export async function loadGraphDataset({
   fetchJson,
   postsStore,
   getPublicState,
-  viewerController
+  viewerController,
+  getProjection
 } = {}) {
+  if (typeof getProjection === "function") {
+    const projection = await getProjection("graph", {}, { preferFresh: false }).catch(() => null);
+    const graphDataset = projection?.value ?? projection;
+    if (graphDataset?.graphState) return graphDataset;
+  }
   const publicState = await getPublicState();
   const viewerIsAdmin = Boolean(viewerController?.canEdit?.(publicState));
   const [posts, seed] = await Promise.all([
     postsStore?.load?.().catch(() => []) || [],
     loadGraphSeed(fetchJson, SITE.content.graphSeedPath)
   ]);
-  const draftGraph = viewerIsAdmin ? loadGraphDraftState(SITE.nostr.storageNamespace) : { entities: [], relationships: [] };
+  const draftGraph = viewerIsAdmin ? createEmptyGraphRecordState() : createEmptyGraphRecordState();
   return {
     viewerIsAdmin,
     publicState,

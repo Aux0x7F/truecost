@@ -15,6 +15,8 @@ const sessionApi = createDeterministicSessionApi(SITE, {
 });
 
 export const {
+  hydrateStoredSessions,
+  resolveStoredSession,
   getStoredSession,
   saveSession,
   clearSession,

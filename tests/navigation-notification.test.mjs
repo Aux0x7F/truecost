@@ -28,8 +28,8 @@ test("navigation ui state keeps notification panel constrained to available item
   assert.deepEqual(state, { profileMenuOpen: false, notificationsExpanded: false });
 });
 
-test("notification state hydrates, dismisses, and clears items against local storage keys", async () => {
-  const storage = new Map();
+test("notification state hydrates, dismisses, and clears items against runtime-backed dismissed ids", async () => {
+  const persisted = new Map();
   let viewerPubkey = "viewer";
   const notificationState = createNotificationState({
     storageNamespace: "truecost.test",
@@ -41,8 +41,10 @@ test("notification state hydrates, dismisses, and clears items against local sto
       { id: "b", createdAt: 2 },
       { id: "a", createdAt: 1 }
     ],
-    readStorage: (key) => storage.get(key) || null,
-    writeStorage: (key, value) => storage.set(key, value)
+    loadDismissedIds: async (pubkey) => persisted.get(pubkey) || [],
+    saveDismissedIds: async (pubkey, ids) => {
+      persisted.set(pubkey, [...ids]);
+    }
   });
 
   const hydrated = await notificationState.hydrate();
@@ -51,7 +53,7 @@ test("notification state hydrates, dismisses, and clears items against local sto
 
   notificationState.dismiss("a");
   assert.deepEqual(notificationState.items.map((item) => item.id), ["b"]);
-  assert.match(storage.get("truecost.test.notifications.dismissed.viewer"), /"a"/);
+  assert.deepEqual(persisted.get("viewer"), ["a"]);
 
   await notificationState.hydrate();
   assert.deepEqual(notificationState.items.map((item) => item.id), ["b"]);
@@ -62,4 +64,31 @@ test("notification state hydrates, dismisses, and clears items against local sto
   viewerPubkey = "";
   notificationState.reset();
   assert.deepEqual(notificationState.items, []);
+});
+
+test("notification state supports runtime-backed dismissed ids without rereading storage on every action", async () => {
+  const persisted = new Map();
+  const saves = [];
+  const notificationState = createNotificationState({
+    storageNamespace: "truecost.test",
+    getSession: () => ({ username: "aux" }),
+    getViewerPubkey: () => "viewer",
+    getPublicState: async () => ({ ok: true }),
+    buildNotifications: async () => [
+      { id: "a", createdAt: 2 },
+      { id: "b", createdAt: 1 }
+    ],
+    loadDismissedIds: async (pubkey) => persisted.get(pubkey) || [],
+    saveDismissedIds: async (pubkey, ids) => {
+      persisted.set(pubkey, [...ids]);
+      saves.push({ pubkey, ids: [...ids] });
+    }
+  });
+
+  await notificationState.hydrate();
+  notificationState.dismiss("a");
+  notificationState.clear();
+
+  assert.deepEqual(persisted.get("viewer"), ["a", "b"]);
+  assert.equal(saves.length, 2);
 });

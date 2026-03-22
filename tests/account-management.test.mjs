@@ -7,6 +7,7 @@ import {
   createPasswordReuseError,
   isPasswordReuseError,
   readStoredAccountHistory,
+  resetStoredAccountHistory,
   rememberAccountRotation,
   rememberCurrentAccountSession,
   resolveSessionIdentityState,
@@ -17,12 +18,7 @@ import {
 } from "../scripts/core/account-management.js";
 
 test.beforeEach(() => {
-  const storage = new Map();
-  globalThis.localStorage = {
-    getItem: (key) => storage.get(key) || null,
-    setItem: (key, value) => storage.set(key, value),
-    removeItem: (key) => storage.delete(key)
-  };
+  resetStoredAccountHistory();
 });
 
 test("account management resolves the latest identity head for rotated sessions", () => {

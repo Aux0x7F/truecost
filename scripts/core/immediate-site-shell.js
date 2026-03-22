@@ -1,4 +1,7 @@
+import { getCachedPublicState } from "./nostr.js";
+import { publicStateHasAdminPubkey } from "./public-state.js";
 import { clearSession, getStoredSession } from "./session.js";
+import { getCachedSiteRuntimeProjection, getSiteRuntimeClient } from "./runtime-client.js";
 import {
   closeProfileMenu,
   createNavigationUiState,
@@ -37,17 +40,29 @@ export function createImmediateSiteShell({
     return getStoredSession();
   }
 
+  function currentPublicState() {
+    return getCachedSiteRuntimeProjection("publicState", {})?.value || getCachedPublicState() || null;
+  }
+
   function renderNavigation() {
     const nav = document.querySelector("[data-site-nav]");
     if (!(nav instanceof HTMLElement)) return;
     const session = currentSession();
     const sessionPubkey = String(session?.pubkey || "").trim().toLowerCase();
+    const publicState = currentPublicState();
+    const currentUser = sessionPubkey
+      ? (publicState?.users || []).find((user) => String(user?.pubkey || "").trim().toLowerCase() === sessionPubkey) || null
+      : null;
     nav.innerHTML = renderNavigationMarkup({
       page: document.body.dataset.page || "",
       navKeys,
       isLoggedIn: Boolean(session),
-      isAdmin: Boolean(sessionPubkey && rootAdminPubkey && sessionPubkey === rootAdminPubkey),
-      currentUser: null,
+      isAdmin: Boolean(
+        sessionPubkey &&
+          (publicStateHasAdminPubkey(publicState, sessionPubkey) ||
+            (rootAdminPubkey && sessionPubkey === rootAdminPubkey))
+      ),
+      currentUser,
       sessionUsername: session?.username || "",
       notifications: [],
       notificationsLoading: false,
@@ -134,11 +149,17 @@ export function createImmediateSiteShell({
 
         if (target.closest("[data-signout]")) {
           event.preventDefault();
-          clearSession();
-          closeProfileMenu(navigationUi);
-          renderNavigation();
-          window.dispatchEvent(new CustomEvent(sessionChangedEventName));
-          window.location.reload();
+          void getSiteRuntimeClient()
+            .then((runtimeClient) => runtimeClient.signOut())
+            .catch(() => {
+              clearSession();
+            })
+            .finally(() => {
+              closeProfileMenu(navigationUi);
+              renderNavigation();
+              window.dispatchEvent(new CustomEvent(sessionChangedEventName));
+              window.location.reload();
+            });
           return;
         }
 

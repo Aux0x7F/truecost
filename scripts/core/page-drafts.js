@@ -134,6 +134,11 @@ export function draftToInvestigationPreview(draft) {
   return {
     ...draft,
     body: draft.markdown || "",
+    body_html: draft.body_html || "",
+    structured_document: draft.structured_document || null,
+    search_text: draft.search_text || "",
+    relationship_candidates: Array.isArray(draft.relationship_candidates) ? draft.relationship_candidates : [],
+    citations: Array.isArray(draft.citations) ? draft.citations : [],
     statusLabel: draftStatusLabel(draft.status, reviewAction),
     status: draft.status || "candidate",
     date: draft.date || "",

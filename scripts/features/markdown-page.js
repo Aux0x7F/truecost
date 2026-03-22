@@ -13,10 +13,13 @@ import {
   buildRemovedAccountMessage,
   buildStaleSessionMessage,
   buildUsernameConflictMessage,
+  hydrateCachedSessionUsernameIntegrity,
   resolveRemovedSessionAccount,
   resolveStaleSessionAccount,
   resolveSessionUsernameConflict
 } from "../core/account-integrity.js";
+import { hydrateStoredAccountHistory } from "../core/account-management.js";
+import { cleanSlug } from "../core/nostr.js";
 import { applyDerivedCommentState } from "../core/public-state.js";
 import { formatDateTime } from "../core/formatting.js";
 import { renderAvatarBadge } from "../core/profile-markup.js";
@@ -44,6 +47,7 @@ export function createMarkdownPageFeature({
   renderLoadingState,
   renderMiniMarkdown,
   renderMarkedHtml,
+  renderInvestigationArticleHtml,
   fetchText,
   slugify,
   enrichEntityReferences,
@@ -74,6 +78,13 @@ export function createMarkdownPageFeature({
   async function renderComments(postSlug, publicState) {
     const panel = document.querySelector("[data-comment-panel]");
     if (!(panel instanceof HTMLElement)) return;
+
+    if (state.session) {
+      await Promise.all([
+        hydrateStoredAccountHistory(state.session),
+        hydrateCachedSessionUsernameIntegrity(state.session)
+      ]);
+    }
 
     const isLoggedIn = Boolean(state.session);
     const removedAccount = resolveRemovedSessionAccount(publicState, state.session);
@@ -171,6 +182,19 @@ export function createMarkdownPageFeature({
 
   function renderMarkdown(node, markdown) {
     node.innerHTML = renderMarkedHtml(markdown, { breaks: false, articleImages: true }, sanitizeTrustedHtml);
+    finalizeArticleMarkup(node);
+  }
+
+  function renderArticleBody(node, postRecord) {
+    if (!(node instanceof HTMLElement)) return;
+    node.innerHTML = renderInvestigationArticleHtml(postRecord, {
+      renderMarkedHtml,
+      sanitizeTrustedHtml
+    });
+    finalizeArticleMarkup(node);
+  }
+
+  function finalizeArticleMarkup(node) {
     for (const heading of node.querySelectorAll("h2, h3")) {
       heading.id = heading.id || slugify(heading.textContent || "section");
     }
@@ -517,6 +541,7 @@ export function createMarkdownPageFeature({
     mount,
     enrichArticleEntities,
     renderComments,
+    renderArticleBody,
     renderMarkdown,
     commentAuthorLabel,
     resolveUserKarma,

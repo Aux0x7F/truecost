@@ -2,19 +2,16 @@ import {
   assertNetworkSessionUsernameIntegrity,
   resolveNextAvailableUsername
 } from "../core/account-integrity.js";
-import { rememberCurrentAccountSession } from "../core/account-management.js";
 import {
   buildPasswordLengthMessage,
-  openAccountSession,
   PASSWORD_MIN_LENGTH
 } from "../core/account-actions.js";
+import { getSiteRuntimeClient } from "../core/runtime-client.js";
 import { lookupUsers } from "../core/nostr.js";
-import { rebroadcastAccount, saveSession, signInWithCredentials } from "../core/session.js";
 import { renderAuthModalMarkup, renderAuthStatusMarkup } from "../surfaces/auth-modal.js";
 
 export function createSiteAuthModalFeature({
   sessionChangedEventName = "truecost:session-changed",
-  loadPublicState = async () => null,
   onSignedIn = null
 } = {}) {
   const authState = {
@@ -135,7 +132,12 @@ export function createSiteAuthModalFeature({
       message: "Checking the next available username...",
       state: "pending"
     }));
-    const nextCandidate = await resolveNextAvailableUsername(await loadPublicState(), requestedUsername, {
+    const runtimeClient = await getSiteRuntimeClient();
+    const publicState = await runtimeClient.getProjection("publicState", {}, {
+      preferFresh: false,
+      reason: "auth-modal-next-username"
+    }).then((projection) => projection?.value ?? projection);
+    const nextCandidate = await resolveNextAvailableUsername(publicState, requestedUsername, {
       lookupUsers
     });
     if (!nextCandidate?.username) {
@@ -173,17 +175,8 @@ export function createSiteAuthModalFeature({
       })
     );
     try {
-      const login = await openAccountSession({
-        username,
-        password,
-        loadPublicState,
-        signInWithCredentials,
-        saveSession,
-        rebroadcastAccount,
-        rememberCurrentAccountSession,
-        assertNetworkSessionUsernameIntegrity,
-        lookupUsers
-      });
+      const runtimeClient = await getSiteRuntimeClient();
+      const login = await runtimeClient.signIn({ username, password });
       const warningMessage = String(login?.warning || "").trim();
       if (warningMessage) {
         setStatus(
@@ -194,7 +187,6 @@ export function createSiteAuthModalFeature({
         );
       }
       onSignedIn?.(login);
-      window.dispatchEvent(new CustomEvent(sessionChangedEventName));
       close();
     } catch (error) {
       if (String(error?.code || "").trim().toUpperCase() === "LOGIN_MISMATCH") {

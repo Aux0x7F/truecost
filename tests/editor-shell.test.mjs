@@ -36,7 +36,9 @@ test("renderEditorModalView returns image modal markup when image modal is activ
       imageModal: {
         alt: "Alt text",
         caption: "Caption",
-        placement: "left"
+        placement: "float-left",
+        drag: { x: 0.5, y: 0.5 },
+        crop: { x: 0, y: 0, width: 1, height: 1 }
       }
     },
     deps: {
@@ -47,5 +49,7 @@ test("renderEditorModalView returns image modal markup when image modal is activ
 
   assert.match(markup, /Insert image/);
   assert.match(markup, /Alt text/);
-  assert.match(markup, /option value="left" selected/);
+  assert.match(markup, /option value="float-left" selected/);
+  assert.match(markup, /name="focusX"/);
+  assert.match(markup, /name="cropWidth"/);
 });
