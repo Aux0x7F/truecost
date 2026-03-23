@@ -12,13 +12,8 @@ import {
 import {
   buildRemovedAccountMessage,
   buildStaleSessionMessage,
-  buildUsernameConflictMessage,
-  hydrateCachedSessionUsernameIntegrity,
-  resolveRemovedSessionAccount,
-  resolveStaleSessionAccount,
-  resolveSessionUsernameConflict
-} from "../core/account-integrity.js";
-import { hydrateStoredAccountHistory } from "../core/account-management.js";
+  buildUsernameConflictMessage
+} from "../core/session-identity.js";
 import { cleanSlug } from "../core/nostr.js";
 import { applyDerivedCommentState } from "../core/public-state.js";
 import { formatDateTime } from "../core/formatting.js";
@@ -38,7 +33,7 @@ export function createMarkdownPageFeature({
   state,
   viewerController,
   getPublicState,
-  getRequestSignerSecretKey,
+  getSessionIdentity = async () => null,
   commitLocalPublicState,
   publishTaggedJson,
   sanitizeTrustedHtml,
@@ -80,16 +75,20 @@ export function createMarkdownPageFeature({
     if (!(panel instanceof HTMLElement)) return;
 
     if (state.session) {
-      await Promise.all([
-        hydrateStoredAccountHistory(state.session),
-        hydrateCachedSessionUsernameIntegrity(state.session)
-      ]);
+      await getSessionIdentity(false).catch(() => null);
     }
 
     const isLoggedIn = Boolean(state.session);
-    const removedAccount = resolveRemovedSessionAccount(publicState, state.session);
-    const staleSession = resolveStaleSessionAccount(publicState, state.session);
-    const usernameIntegrity = resolveSessionUsernameConflict(publicState, state.session);
+    const sessionIdentity = isLoggedIn
+      ? await getSessionIdentity(false).catch(() => null)
+      : null;
+    const removedAccount = sessionIdentity?.removedAccount || null;
+    const staleSession = sessionIdentity?.staleSession || null;
+    const usernameIntegrity = sessionIdentity?.usernameIntegrity || {
+      conflict: false,
+      claimedUsername: "",
+      ownerPubkey: ""
+    };
     const isAdmin = Boolean(state.viewer && viewerController.trustedPubkeys(publicState).includes(state.viewer.pubkey));
     const viewerPubkey = viewerController.sessionPubkey();
     const threadedComments = rankVisibleCommentThreads(publicState.commentThreadsByPost?.get(postSlug) || [], publicState, viewerPubkey);

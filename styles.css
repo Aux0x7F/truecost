@@ -968,6 +968,21 @@ h3 {
   padding: 1.6rem 0 0;
 }
 
+.section--page-intro {
+  padding-top: 2.35rem;
+}
+
+.page-intro {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.page-intro__lede {
+  max-width: 52rem;
+  font-size: 1.08rem;
+  color: var(--ink-soft);
+}
+
 .section__head {
   display: flex;
   align-items: end;
@@ -1750,6 +1765,7 @@ h3 {
   max-height: var(--rail-max-height);
   overflow: auto;
   overscroll-behavior: contain;
+  overflow-anchor: none;
   padding-right: 0.1rem;
 }
 
@@ -2524,6 +2540,8 @@ h3 {
   top: var(--rail-stick-top);
   max-height: var(--rail-max-height);
   overflow: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
 }
 
 .graph-rail__stack {
@@ -2627,7 +2645,9 @@ h3 {
 
 .wiki-directory__card.is-draft,
 .wiki-rail__list-item.is-draft {
-  background: rgba(156, 29, 24, 0.04);
+  background:
+    linear-gradient(0deg, rgba(156, 29, 24, 0.04), rgba(156, 29, 24, 0.04)),
+    var(--panel);
 }
 
 .wiki-directory__head {
@@ -2768,6 +2788,8 @@ h3 {
   gap: 1rem;
   max-height: 36rem;
   overflow: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
   padding-right: 0.35rem;
 }
 

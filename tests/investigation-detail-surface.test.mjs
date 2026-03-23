@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { investigationDocumentId } from "../scripts/core/investigation-document.js";
 import {
   cloneInvestigationPost,
-  investigationDocumentId,
   mergeInvestigationPostOverlay,
   normalizeLiveArray
 } from "../scripts/surfaces/investigation-detail.js";

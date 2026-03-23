@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import SITE from "../scripts/core/site-config.js";
-import { loadGraphProjection, loadWorkspaceProjection } from "../scripts/core/runtime-projections.js";
+import {
+  loadGraphProjection,
+  loadMapEntitiesProjection,
+  loadWorkspaceProjection
+} from "../scripts/core/runtime-projections.js";
 
 test("runtime projections treat the configured root admin as admin before public-state hydration catches up", async () => {
   const originalFetch = globalThis.fetch;
@@ -54,4 +58,46 @@ test("runtime projections treat the configured root admin as admin before public
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("map entities projection keeps only entities with coordinates", async () => {
+  const host = {
+    async getProjection(channel) {
+      if (channel === "publicState") {
+        return {
+          approvedEntities: [
+            {
+              slug: "north-valley-processing-campus",
+              name: "North Valley Processing Campus",
+              lat: 33.5538,
+              lng: -112.0738
+            },
+            {
+              slug: "phoenix-cold-storage",
+              name: "Phoenix Cold Storage"
+            }
+          ]
+        };
+      }
+      if (channel === "graph") {
+        return {
+          graphState: {
+            entities: []
+          }
+        };
+      }
+      return null;
+    }
+  };
+
+  const projection = await loadMapEntitiesProjection({ host });
+
+  assert.deepEqual(projection, [
+    {
+      slug: "north-valley-processing-campus",
+      name: "North Valley Processing Campus",
+      lat: 33.5538,
+      lng: -112.0738
+    }
+  ]);
 });

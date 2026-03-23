@@ -61,6 +61,7 @@ export function renderEditorShellView({ editorState, deps = {} } = {}) {
             <div class="editor-actions__controls">
               <div class="editor-save-state" data-editor-status aria-live="polite">Autosave is on. Snapshot saves the current draft immediately.</div>
               <div class="button-row">
+                <button class="button-ghost" type="button" data-editor-image>Insert image</button>
                 <button class="button-ghost" type="button" data-editor-save>Snapshot</button>
                 <button class="button" type="button" data-editor-submit>Send to review</button>
               </div>

@@ -27,7 +27,6 @@ export function createStaticPageEditSurface({ site, state, deps = {} } = {}) {
   const editorEntryAllowed = deps.editorEntryAllowed || (() => false);
   const loadDraftBySlug = deps.loadDraftBySlug || (async () => null);
   const connectStaticPageOverlay = deps.connectStaticPageOverlay || (async () => null);
-  const getRequestSignerSecretKey = deps.getRequestSignerSecretKey || (async () => "");
   const trustedAdminPubkeys = deps.trustedAdminPubkeys || (() => []);
   const sanitizeTrustedHtml = deps.sanitizeTrustedHtml || ((value) => String(value || ""));
   const formatLocalTimestamp = deps.formatLocalTimestamp || ((value) => String(value || ""));
@@ -124,11 +123,8 @@ export function createStaticPageEditSurface({ site, state, deps = {} } = {}) {
     if (!overlayState?.pageId || overlayState.controller) return;
 
     try {
-      const secretKeyHex = await getRequestSignerSecretKey();
-      if (!secretKeyHex) return;
       overlayState.controller = await connectStaticPageOverlay({
         pageId: overlayState.pageId,
-        secretKeyHex,
         kind: site.nostr.kinds.collabDocument,
         getTrustedPubkeys: () => trustedAdminPubkeys(state.publicState),
         canPublish: () => editorEntryAllowed(state.publicState),

@@ -51,6 +51,8 @@ export const pageDefinitions = [
     title: "Investigations | The True Cost Project",
     description: "Browse published investigations and draft previews from The True Cost Project.",
     mainSource: "investigations.html",
+    extraStyles: ["./vendor/leaflet.css"],
+    extraScripts: [{ src: "./vendor/leaflet.js" }],
     entryScripts: ["./scripts/shell.js", "./scripts/app.js"],
     bakedown: {
       templateKind: "collection",
@@ -65,6 +67,8 @@ export const pageDefinitions = [
     title: "Investigation | The True Cost Project",
     description: "Read a public-records investigation and review the linked evidence, entities, and comments.",
     mainSource: "investigation.html",
+    extraStyles: ["./vendor/leaflet.css"],
+    extraScripts: [{ src: "./vendor/leaflet.js" }],
     entryScripts: ["./scripts/shell.js", "./scripts/app.js"],
     bakedown: {
       templateKind: "detail",

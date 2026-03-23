@@ -4,7 +4,13 @@ import { appendGraphEntityRecord, appendGraphRelationshipRecord } from "../core/
 import { loadGraphDataset } from "../core/graph-data.js";
 import { buildEntityWikiView, buildSiteEvidenceGraph } from "../core/graph-wiki.js";
 import { renderGraphModal } from "../surfaces/graph-explorer.js";
-import { renderWikiIndexView, renderWikiPageView } from "../surfaces/wiki-page.js";
+import {
+  renderWikiIndexRailDirectoryPanel,
+  renderWikiIndexRailShell,
+  renderWikiIndexRailTypesPanel,
+  renderWikiIndexView,
+  renderWikiPageView
+} from "../surfaces/wiki-page.js";
 
 export function createWikiPageFeature({
   state,
@@ -36,21 +42,25 @@ export function createWikiPageFeature({
     if (!pageReady()) return;
     bindInteractions();
     bindQueryState();
-    bindProjection();
+    const projectionBound = bindProjection();
     if (!viewState.loaded) {
       regions.apply([
-        { name: "wiki-hero-title", selector: "[data-wiki-hero-title]", kind: "text", value: "Loading wiki..." },
-        { name: "wiki-hero-lede", selector: "[data-wiki-hero-lede]", kind: "text", value: "Looking up entity records and graph context." },
         { name: "wiki-article", selector: "[data-wiki-article]", value: `<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span>Looking up wiki records...</span></div>` },
         { name: "wiki-rail", selector: "[data-wiki-rail]", value: `<div class="loading-state" role="status"><span class="loading-spinner" aria-hidden="true"></span><span>Looking up wiki records...</span></div>` },
         { name: "wiki-modal", selector: "[data-wiki-modal-root]", value: "" }
       ], { force: true });
     }
-    await loadAndRender();
+    if (!projectionBound) {
+      await loadAndRender();
+    }
   }
 
   async function refreshVisibleWiki() {
     if (isInteractionActive()) return;
+    if (typeof refreshProjection === "function") {
+      await refreshProjection("graph", {}, { reason: "wiki-page-visible-refresh" }).catch(() => loadAndRender());
+      return;
+    }
     await loadAndRender();
   }
 
@@ -210,20 +220,35 @@ export function createWikiPageFeature({
           typeFilters: viewState.typeFilters,
           viewerIsAdmin: viewState.dataset.viewerIsAdmin
         });
+    const availableTypes = (viewState.dataset?.graphState?.graph?.availableNodeTypes || []).filter((type) => type !== "investigation");
+    const activeTypeFilters = Array.isArray(viewState.typeFilters) && viewState.typeFilters.length
+      ? viewState.typeFilters
+      : availableTypes;
+    const filteredEntities = Array.isArray(viewState.dataset?.graphState?.entities)
+      ? viewState.dataset.graphState.entities.filter((entity) => {
+          if (activeTypeFilters.length && !activeTypeFilters.includes(entity.type)) return false;
+          if (!String(viewState.query || "").trim()) return true;
+          const haystack = [
+            entity.name,
+            entity.summary,
+            entity.location,
+            ...(Array.isArray(entity.taxonomy) ? entity.taxonomy : []),
+            ...(Array.isArray(entity.aliases) ? entity.aliases : [])
+          ]
+            .map((value) => String(value || "").toLowerCase())
+            .join("\n");
+          return haystack.includes(String(viewState.query || "").trim().toLowerCase());
+        })
+      : [];
+
+    if (wikiView?.entity) {
+      clearWikiIndexRailShell();
+    } else {
+      ensureWikiIndexRailShell();
+      syncWikiSearchValue(viewState.query);
+    }
 
     regions.apply([
-      {
-        name: "wiki-hero-title",
-        selector: "[data-wiki-hero-title]",
-        kind: "text",
-        value: wikiView?.entity?.name || "Entity wiki"
-      },
-      {
-        name: "wiki-hero-lede",
-        selector: "[data-wiki-hero-lede]",
-        kind: "text",
-        value: wikiView?.entity?.summary || "Browse entity records, relationships, and investigation citations."
-      },
       {
         name: "wiki-article",
         selector: "[data-wiki-article]",
@@ -232,7 +257,28 @@ export function createWikiPageFeature({
       {
         name: "wiki-rail",
         selector: "[data-wiki-rail]",
-        value: view.rail
+        value: wikiView?.entity ? view.rail : document.querySelector("[data-wiki-rail]")?.innerHTML || view.rail
+      },
+      {
+        name: "wiki-rail-types",
+        selector: "[data-wiki-rail-types-panel]",
+        value: wikiView?.entity
+          ? ""
+          : renderWikiIndexRailTypesPanel({
+              availableTypes,
+              activeTypeFilters
+            })
+      },
+      {
+        name: "wiki-rail-directory",
+        selector: "[data-wiki-rail-directory-panel]",
+        value: wikiView?.entity
+          ? ""
+          : renderWikiIndexRailDirectoryPanel({
+              totalEntities: Array.isArray(viewState.dataset?.graphState?.entities) ? viewState.dataset.graphState.entities.length : 0,
+              filteredEntities: filteredEntities.length,
+              viewerIsAdmin: viewState.dataset.viewerIsAdmin
+            })
       },
       {
         name: "wiki-modal",
@@ -240,6 +286,29 @@ export function createWikiPageFeature({
         value: renderGraphModal(viewState.modal, viewState.dataset.graphState)
       }
     ]);
+  }
+
+  function ensureWikiIndexRailShell() {
+    const host = document.querySelector("[data-wiki-rail]");
+    if (!(host instanceof HTMLElement)) return;
+    if (host.querySelector("[data-wiki-rail-search-panel]")) return;
+    host.innerHTML = renderWikiIndexRailShell({ query: viewState.query });
+  }
+
+  function clearWikiIndexRailShell() {
+    const host = document.querySelector("[data-wiki-rail]");
+    if (!(host instanceof HTMLElement)) return;
+    if (!host.querySelector("[data-wiki-rail-search-panel]")) return;
+    host.innerHTML = "";
+    regions.reset();
+  }
+
+  function syncWikiSearchValue(query = "") {
+    const input = document.querySelector("[data-wiki-search]");
+    if (!(input instanceof HTMLInputElement)) return;
+    const nextValue = String(query || "");
+    if (document.activeElement === input) return;
+    if (input.value !== nextValue) input.value = nextValue;
   }
 
   function toggleTypeFilter(value) {
@@ -273,7 +342,7 @@ export function createWikiPageFeature({
   }
 
   function bindProjection() {
-    if (viewState.projectionUnsubscribe || typeof subscribeProjection !== "function") return;
+    if (viewState.projectionUnsubscribe || typeof subscribeProjection !== "function") return false;
     Promise.resolve(
       subscribeProjection(
         "graph",
@@ -303,6 +372,7 @@ export function createWikiPageFeature({
         }
       })
       .catch(() => null);
+    return true;
   }
 
   function rebuildDataset() {

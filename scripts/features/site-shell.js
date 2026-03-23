@@ -46,8 +46,11 @@ export function createSiteShellFeature({
   }
 
   function renderNavigation() {
+    if (state?.isSigningOut) return;
     const nav = document.querySelector("[data-site-nav]");
     if (!(nav instanceof HTMLElement)) return;
+    hydrateNavigationUiFromDom(nav, state.navigationUi);
+    const preservedFocus = captureNavigationFocus(nav);
 
     const page = document.body.dataset.page || "";
     const isLoggedIn = Boolean(state.session);
@@ -62,7 +65,7 @@ export function createSiteShellFeature({
       count: unreadCount,
       loading: notificationState.loading
     });
-    nav.innerHTML = renderNavigationMarkup({
+    const markup = renderNavigationMarkup({
       page,
       navKeys,
       isLoggedIn,
@@ -73,6 +76,7 @@ export function createSiteShellFeature({
       notificationsLoading: notificationState.loading,
       profileMenuOpen: state.navigationUi.profileMenuOpen,
       notificationsExpanded,
+      openGroupKey: state.navigationUi.openGroupKey,
       deps: {
         countUnreadNotifications: countNotificationItems,
         escapeAttribute,
@@ -80,6 +84,10 @@ export function createSiteShellFeature({
         safeAvatarUrl
       }
     });
+    if (nav.innerHTML !== markup) {
+      nav.innerHTML = markup;
+      restoreNavigationFocus(nav, preservedFocus);
+    }
     renderGlobalOverlays();
   }
 
@@ -187,11 +195,13 @@ export function createSiteShellFeature({
       if (submenuToggle) {
         const group = submenuToggle.closest("[data-nav-group]");
         if (group) {
+          const groupKey = String(group.getAttribute("data-nav-group-key") || "").trim();
           const next = !group.classList.contains("is-open");
           for (const openGroup of document.querySelectorAll("[data-nav-group].is-open")) {
             if (openGroup !== group) openGroup.classList.remove("is-open");
           }
           group.classList.toggle("is-open", next);
+          state.navigationUi.openGroupKey = next ? groupKey : "";
         }
         return;
       }
@@ -233,6 +243,8 @@ export function createSiteShellFeature({
 
       if (target.closest("[data-signout]")) {
         event.preventDefault();
+        if (state.isSigningOut) return;
+        state.isSigningOut = true;
         void getSiteRuntimeClient()
           .then((runtimeClient) => runtimeClient.signOut())
           .catch(() => {
@@ -242,7 +254,6 @@ export function createSiteShellFeature({
             state.session = null;
             state.viewer = null;
             setNavigationOpen(false);
-            renderNavigation();
             onSignedOut?.();
             window.location.reload();
           });
@@ -256,7 +267,12 @@ export function createSiteShellFeature({
         }
       }
       for (const group of document.querySelectorAll("[data-nav-group].is-open")) {
-        if (!group.contains(target)) group.classList.remove("is-open");
+        if (!group.contains(target)) {
+          group.classList.remove("is-open");
+          if (state.navigationUi.openGroupKey === String(group.getAttribute("data-nav-group-key") || "").trim()) {
+            state.navigationUi.openGroupKey = "";
+          }
+        }
       }
     });
   }
@@ -278,4 +294,43 @@ export function createSiteShellFeature({
     renderNavigation,
     renderGlobalOverlays
   };
+}
+
+function captureNavigationFocus(nav) {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement) || !nav.contains(active)) return null;
+  if (active.matches("[data-submenu-toggle]")) {
+    const group = active.closest("[data-nav-group]");
+    return {
+      type: "submenu-toggle",
+      groupKey: String(group?.getAttribute("data-nav-group-key") || "").trim()
+    };
+  }
+  if (active.matches("[data-profile-toggle]")) return { type: "profile-toggle" };
+  if (active.matches("[data-notification-toggle]")) return { type: "notification-toggle" };
+  return null;
+}
+
+function restoreNavigationFocus(nav, preservedFocus) {
+  if (!preservedFocus?.type) return;
+  let nextFocus = null;
+  if (preservedFocus.type === "submenu-toggle" && preservedFocus.groupKey) {
+    nextFocus = nav.querySelector(
+      `[data-nav-group-key="${CSS.escape(preservedFocus.groupKey)}"] [data-submenu-toggle]`
+    );
+  } else if (preservedFocus.type === "profile-toggle") {
+    nextFocus = nav.querySelector("[data-profile-toggle]");
+  } else if (preservedFocus.type === "notification-toggle") {
+    nextFocus = nav.querySelector("[data-notification-toggle]");
+  }
+  if (nextFocus instanceof HTMLElement) {
+    nextFocus.focus({ preventScroll: true });
+  }
+}
+
+function hydrateNavigationUiFromDom(nav, navigationUi) {
+  if (!(nav instanceof HTMLElement) || !navigationUi || navigationUi.openGroupKey) return;
+  const openGroup = nav.querySelector("[data-nav-group].is-open");
+  if (!(openGroup instanceof HTMLElement)) return;
+  navigationUi.openGroupKey = String(openGroup.getAttribute("data-nav-group-key") || "").trim();
 }

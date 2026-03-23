@@ -1,48 +1,44 @@
-# Browser Support Contract
+# Browser Support
 
-`truecost` is static-first and should degrade cleanly across current Chromium, Firefox, and Safari-family browsers.
+`truecost` should behave well across current Chromium, Firefox, and Safari-family browsers. The site is static-first, so the baseline cannot depend on one engine getting every enhancement right.
 
-## Baseline rule
+## Baseline
 
-The baseline experience must work without:
+The site must still work without:
 
 - JavaScript-enhanced labels
 - backdrop blur
 - custom scrollbar reservation
 - Web Animations API
-- any one specific relay succeeding
+- every relay succeeding
 
-Unsupported enhancements may be ignored by a browser, but that must not break layout, access, or core navigation.
+If an enhancement is unsupported, the page should stay readable, navigable, and usable.
 
-## Progressive enhancement rules
+## Enhancement rules
 
-- Put non-baseline CSS features behind `@supports`.
-- Use vendor-prefixed variants where that is still the real compatibility path.
-- Keep the fallback visual treatment acceptable before enhancement applies.
-- Put non-baseline JS features behind capability checks.
-- For motion, provide a real fallback path and respect `prefers-reduced-motion`.
+- guard non-baseline CSS with `@supports`
+- include vendor-prefixed variants when they are still the real path
+- gate non-baseline JS behind capability checks
+- respect `prefers-reduced-motion`
 
 ## Accessibility rules
 
-- Interactive controls must have a discernible accessible name in the static HTML, not only after JavaScript runs.
-- If JS changes the meaning of a control, update `aria-label` and related state along with the visual state.
+- controls need a discernible accessible name in static HTML
+- if JS changes a control’s meaning, keep `aria-*` and visual state aligned
 
-## Current feature rules
+## Current feature notes
 
 - `backdrop-filter`
   - fallback: translucent background without blur
-  - enhancement: gated with `@supports`, include `-webkit-backdrop-filter`
 - `scrollbar-gutter`
-  - fallback: ordinary scroll container
-  - enhancement: gated with `@supports`
+  - fallback: normal scroll behavior
 - reorder motion
-  - fallback: no motion or JS fallback transform path
-  - enhancement: WAAPI when available
+  - fallback: no animation or a simple transform path
 
-## Validation expectation
+## Validation
 
-Changes that introduce new browser-sensitive features should include:
+When a change introduces browser-sensitive behavior:
 
-- at least one fallback path in code
-- a note about the compatibility decision in the PR
-- a quick manual pass on the browser most likely to disagree with Chromium
+- keep a fallback path in code
+- note the decision in the PR
+- do at least one manual check in the browser most likely to disagree with Chromium

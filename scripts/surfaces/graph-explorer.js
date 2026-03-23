@@ -4,6 +4,7 @@ import {
   graphEntityInvestigationsHref,
   graphInvestigationHref
 } from "../core/graph-wiki.js";
+import { renderSearchField, renderSearchSuggestions } from "../core/search-controls.js";
 import { escapeAttribute, escapeHtml } from "../core/text-utils.js";
 
 const GRAPH_WIDTH = 1100;
@@ -75,50 +76,142 @@ export function renderGraphRail({
   viewerIsAdmin = false,
   selectedSummary = null
 } = {}) {
+  return `
+    <div class="graph-rail__stack">
+      <article class="surface-panel graph-rail__panel" data-graph-rail-search-panel>
+        ${renderGraphRailSearchPanel({ query })}
+      </article>
+
+      <article class="surface-panel graph-rail__panel" data-graph-rail-filters-panel>
+        ${renderGraphRailFiltersPanel({
+          graphState,
+          nodeTypeFilters,
+          relationshipTypeFilters
+        })}
+      </article>
+
+      <article class="surface-panel graph-rail__panel" data-graph-rail-current-node-panel>
+        ${renderGraphRailCurrentNodePanel({
+          selectedSummary,
+          viewerIsAdmin
+        })}
+      </article>
+
+      <article class="surface-panel graph-rail__panel" data-graph-rail-current-graph-panel>
+        ${renderGraphRailCurrentGraphPanel({
+          filteredGraph,
+          viewerIsAdmin
+        })}
+      </article>
+    </div>
+  `;
+}
+
+export function renderGraphRailShell({ query = "" } = {}) {
+  return `
+    <div class="graph-rail__stack">
+      <article class="surface-panel graph-rail__panel" data-graph-rail-search-panel>
+        ${renderGraphRailSearchPanel({ query })}
+      </article>
+
+      <article class="surface-panel graph-rail__panel" data-graph-rail-filters-panel></article>
+
+      <article class="surface-panel graph-rail__panel" data-graph-rail-current-node-panel></article>
+
+      <article class="surface-panel graph-rail__panel" data-graph-rail-current-graph-panel></article>
+    </div>
+  `;
+}
+
+export function renderGraphRailSearchPanel({ query = "" } = {}) {
+  return `
+    <div class="eyebrow">Search</div>
+    ${renderSearchField({
+      srLabel: "Search graph",
+      inputAttributes: {
+        id: "graphSearchInput",
+        type: "search",
+        value: query,
+        placeholder: "Highlight entities or investigations",
+        autocomplete: "off",
+        "data-graph-search": true
+      },
+      resultsHtml: '<div data-graph-search-results></div>'
+    })}
+    <p class="muted-text">Search highlights matches in the current graph. Filters below reduce what is shown.</p>
+  `;
+}
+
+export function renderGraphSearchSuggestions({
+  isOpen = false,
+  query = "",
+  suggestions = [],
+  highlightedIndex = -1
+} = {}) {
+  return renderSearchSuggestions({
+    isOpen,
+    query,
+    items: suggestions,
+    highlightedIndex,
+    emptyMessage: "No matching nodes in the current graph.",
+    listClassName: "picker-results picker-results--dropdown workspace-search__results graph-search__results",
+    itemAttributes: (item) => ({
+      "data-graph-search-suggestion": item.id || "",
+      "data-graph-search-value": item.label || ""
+    }),
+    renderPrimary: (item) => `<strong>${escapeHtml(item.label || "")}</strong>`,
+    renderSecondary: (item) => `<span>${escapeHtml(item.kind === "investigation" ? "Investigation" : item.type || "Entity")}</span>`
+  });
+}
+
+export function renderGraphRailFiltersPanel({
+  graphState,
+  nodeTypeFilters = [],
+  relationshipTypeFilters = []
+} = {}) {
   const availableNodeTypes = graphState?.graph?.availableNodeTypes || [];
   const availableRelationshipTypes = graphState?.graph?.availableRelationshipTypes || [];
   return `
-    <div class="graph-rail__stack">
-      <article class="surface-panel graph-rail__panel">
-        <div class="eyebrow">Search</div>
-        <label class="sr-only" for="graphSearchInput">Search graph</label>
-        <input id="graphSearchInput" class="workspace-search__input" type="search" value="${escapeAttribute(query)}" placeholder="Highlight entities or investigations" data-graph-search>
-        <p class="muted-text">Search highlights matches in the current graph. Filters below reduce what is shown.</p>
-      </article>
-
-      <article class="surface-panel graph-rail__panel">
-        <div class="eyebrow">Filters</div>
-        <strong>Node types</strong>
-        <div class="tag-row graph-filter-row">
-          ${availableNodeTypes.map((type) => renderFilterChip(type, nodeTypeFilters.includes(type), "node-type")).join("")}
-        </div>
-        <strong>Relationships</strong>
-        <div class="tag-row graph-filter-row">
-          ${availableRelationshipTypes.map((type) => renderFilterChip(type, relationshipTypeFilters.includes(type), "relationship-type")).join("")}
-          <button class="tag tag--button graph-filter-clear" type="button" data-graph-clear-filters>Clear filters</button>
-        </div>
-      </article>
-
-      <article class="surface-panel graph-rail__panel">
-        <div class="eyebrow">Current node</div>
-        ${
-          selectedSummary
-            ? renderSelectedNodeSummary(selectedSummary, viewerIsAdmin)
-            : `<div class="empty-state">Select a node to inspect its summary, citations, and links.</div>`
-        }
-      </article>
-
-      <article class="surface-panel graph-rail__panel">
-        <div class="eyebrow">Current graph</div>
-        <div class="metric-inline"><strong>${(filteredGraph?.nodes || []).length}</strong><span>Visible nodes</span></div>
-        <div class="metric-inline"><strong>${(filteredGraph?.edges || []).length}</strong><span>Visible edges</span></div>
-        ${
-          viewerIsAdmin
-            ? `<button class="button button-ghost" type="button" data-open-graph-entity-modal>Create entity</button>`
-            : ""
-        }
-      </article>
+    <div class="eyebrow">Filters</div>
+    <strong>Node types</strong>
+    <div class="tag-row graph-filter-row">
+      ${availableNodeTypes.map((type) => renderFilterChip(type, nodeTypeFilters.includes(type), "node-type")).join("")}
     </div>
+    <strong>Relationships</strong>
+    <div class="tag-row graph-filter-row">
+      ${availableRelationshipTypes.map((type) => renderFilterChip(type, relationshipTypeFilters.includes(type), "relationship-type")).join("")}
+      <button class="tag tag--button graph-filter-clear" type="button" data-graph-clear-filters>Clear filters</button>
+    </div>
+  `;
+}
+
+export function renderGraphRailCurrentNodePanel({
+  selectedSummary = null,
+  viewerIsAdmin = false
+} = {}) {
+  return `
+    <div class="eyebrow">Current node</div>
+    ${
+      selectedSummary
+        ? renderSelectedNodeSummary(selectedSummary, viewerIsAdmin)
+        : `<div class="empty-state">Select a node to inspect its summary, citations, and links.</div>`
+    }
+  `;
+}
+
+export function renderGraphRailCurrentGraphPanel({
+  filteredGraph,
+  viewerIsAdmin = false
+} = {}) {
+  return `
+    <div class="eyebrow">Current graph</div>
+    <div class="metric-inline"><strong>${(filteredGraph?.nodes || []).length}</strong><span>Visible nodes</span></div>
+    <div class="metric-inline"><strong>${(filteredGraph?.edges || []).length}</strong><span>Visible edges</span></div>
+    ${
+      viewerIsAdmin
+        ? `<button class="button button-ghost" type="button" data-open-graph-entity-modal>Create entity</button>`
+        : ""
+    }
   `;
 }
 
@@ -211,7 +304,7 @@ function renderFilterChip(value, active, kind) {
 function renderSelectedNodeSummary(summary, viewerIsAdmin) {
   if (summary.kind === "investigation") {
     return `
-      <div class="graph-summary-card">
+      <div class="graph-summary-card" data-graph-summary-card>
         <strong>${escapeHtml(summary.label)}</strong>
         <p>${escapeHtml(summary.summary || "This investigation anchors one or more graph citations.")}</p>
         <div class="tag-row"><span class="tag">${escapeHtml(summary.type)}</span></div>
@@ -223,7 +316,7 @@ function renderSelectedNodeSummary(summary, viewerIsAdmin) {
   }
 
   return `
-    <div class="graph-summary-card">
+    <div class="graph-summary-card" data-graph-summary-card>
       ${summary.image?.src ? `<img class="graph-summary-card__image" src="${escapeAttribute(summary.image.src)}" alt="${escapeAttribute(summary.image.alt || summary.label)}">` : ""}
       <strong>${escapeHtml(summary.label)}</strong>
       <p>${escapeHtml(summary.summary || "No summary yet for this wiki entry.")}</p>

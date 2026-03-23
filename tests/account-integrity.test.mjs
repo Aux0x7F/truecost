@@ -7,29 +7,17 @@ import {
   buildRemovedAccountMessage,
   buildUsernameLoginMismatchMessage,
   buildUsernameConflictMessage,
-  clearCachedSessionUsernameIntegrity,
   currentSessionUsernameConflictMessage,
   inspectUsernameClaim,
   isRemovedAccountError,
   isUsernameConflictError,
-  rememberSessionUsernameIntegrity,
-  readCachedSessionUsernameIntegrity,
-  resetCachedSessionUsernameIntegrityStore,
+  rememberAccountRotationHistoryEntry,
+  rememberCurrentAccountHistoryEntry,
   resolveRemovedSessionAccount,
   resolveNextAvailableUsername,
   resolveSessionUsernameConflict,
   sessionHasUsernameConflict
-} from "../scripts/core/account-integrity.js";
-import {
-  rememberAccountRotation,
-  rememberCurrentAccountSession,
-  resetStoredAccountHistory
-} from "../scripts/core/account-management.js";
-
-test.beforeEach(() => {
-  resetStoredAccountHistory();
-  resetCachedSessionUsernameIntegrityStore();
-});
+} from "../scripts/core/session-identity.js";
 
 test("session username integrity accepts the canonical owner and rejects newer claimants", () => {
   const publicState = {
@@ -180,8 +168,8 @@ test("session username integrity rejects an older rotated key as stale", async (
 });
 
 test("network-backed username integrity rejects an older password from local account history before lookup", async () => {
-  rememberCurrentAccountSession({ username: "aux", pubkey: "a".repeat(64) });
-  rememberAccountRotation(
+  const accountHistory = rememberAccountRotationHistoryEntry(
+    rememberCurrentAccountHistoryEntry(null, { username: "aux", pubkey: "a".repeat(64) }),
     { username: "aux", pubkey: "a".repeat(64) },
     { username: "aux", pubkey: "c".repeat(64) }
   );
@@ -197,6 +185,7 @@ test("network-backed username integrity rejects an older password from local acc
       { username: "aux", pubkey: "a".repeat(64) },
       {
         action: "open this account",
+        accountHistory,
         lookupUsers: async () => {
           throw new Error("lookup should not run for a known stale key");
         },
@@ -212,9 +201,9 @@ test("local current account history suppresses provisional conflicts from older 
     username: "aux",
     pubkey: value.repeat(64)
   }));
-  rememberCurrentAccountSession(accountChain[0]);
+  let accountHistory = rememberCurrentAccountHistoryEntry(null, accountChain[0]);
   for (let index = 1; index < accountChain.length; index += 1) {
-    rememberAccountRotation(accountChain[index - 1], accountChain[index]);
+    accountHistory = rememberAccountRotationHistoryEntry(accountHistory, accountChain[index - 1], accountChain[index]);
   }
 
   const integrity = resolveSessionUsernameConflict(
@@ -239,7 +228,8 @@ test("local current account history suppresses provisional conflicts from older 
         }
       ]
     },
-    { username: "aux", pubkey: "e".repeat(64) }
+    { username: "aux", pubkey: "e".repeat(64) },
+    { accountHistory }
   );
 
   assert.equal(integrity.conflict, false);
@@ -256,6 +246,7 @@ test("local current account history suppresses provisional conflicts from older 
       { username: "aux", pubkey: "e".repeat(64) },
       {
         action: "rotate this account",
+        accountHistory,
         lookupUsers: async () => [
           {
             pubkey: "b".repeat(64),
@@ -275,19 +266,10 @@ test("cached lookup conflicts from older keys do not poison the current local ac
     username: "aux",
     pubkey: value.repeat(64)
   }));
-  rememberCurrentAccountSession(accountChain[0]);
+  let accountHistory = rememberCurrentAccountHistoryEntry(null, accountChain[0]);
   for (let index = 1; index < accountChain.length; index += 1) {
-    rememberAccountRotation(accountChain[index - 1], accountChain[index]);
+    accountHistory = rememberAccountRotationHistoryEntry(accountHistory, accountChain[index - 1], accountChain[index]);
   }
-  rememberSessionUsernameIntegrity(
-    { username: "aux", pubkey: "e".repeat(64) },
-    {
-      conflict: true,
-      claimedUsername: "aux",
-      ownerPubkey: "b".repeat(64),
-      source: "lookup"
-    }
-  );
 
   const integrity = resolveSessionUsernameConflict(
     {
@@ -296,12 +278,20 @@ test("cached lookup conflicts from older keys do not poison the current local ac
       usernameRegistry: [],
       users: []
     },
-    { username: "aux", pubkey: "e".repeat(64) }
+    { username: "aux", pubkey: "e".repeat(64) },
+    {
+      accountHistory,
+      storedIntegrity: {
+        conflict: true,
+        claimedUsername: "aux",
+        ownerPubkey: "b".repeat(64),
+        source: "lookup"
+      }
+    }
   );
 
   assert.equal(integrity.conflict, false);
   assert.equal(integrity.source, "history-current");
-  assert.equal(readCachedSessionUsernameIntegrity({ username: "aux", pubkey: "e".repeat(64) }), null);
 });
 
 test("session username integrity messaging names the taken handle", () => {
@@ -325,6 +315,7 @@ test("session username integrity messaging names the taken handle", () => {
 
 test("network-backed username integrity refuses a taken username before saving the session and caches the conflict", async () => {
   const session = { username: "aux", pubkey: "b".repeat(64) };
+  let storedIntegrity = null;
 
   await assert.rejects(
     assertNetworkSessionUsernameIntegrity(
@@ -332,6 +323,9 @@ test("network-backed username integrity refuses a taken username before saving t
       session,
       {
         action: "open this account",
+        onRememberIntegrity: async (_session, integrity) => {
+          storedIntegrity = integrity;
+        },
         lookupUsers: async () => [{ pubkey: "a".repeat(64), username: "aux", claimedUsername: "aux", usernameConflict: false }],
         requireLookup: true
       }
@@ -339,15 +333,15 @@ test("network-backed username integrity refuses a taken username before saving t
     /already claimed/
   );
 
-  const cachedIntegrity = readCachedSessionUsernameIntegrity(session);
-  assert.equal(cachedIntegrity?.conflict, true);
-  assert.equal(cachedIntegrity?.ownerPubkey, "a".repeat(64));
+  assert.equal(storedIntegrity?.conflict, true);
+  assert.equal(storedIntegrity?.ownerPubkey, "a".repeat(64));
   await assert.rejects(
     assertNetworkSessionUsernameIntegrity(
       { usernameRegistry: [], users: [] },
       session,
       {
         action: "open this account",
+        storedIntegrity,
         lookupUsers: async () => [{ pubkey: "a".repeat(64), username: "aux", claimedUsername: "aux", usernameConflict: false }],
         requireLookup: true
       }
@@ -358,19 +352,16 @@ test("network-backed username integrity refuses a taken username before saving t
       return true;
     }
   );
-
-  clearCachedSessionUsernameIntegrity(session);
-  assert.equal(readCachedSessionUsernameIntegrity(session), null);
 });
 
 test("lookup-backed cached conflicts survive an untrusted no-conflict snapshot", () => {
   const session = { username: "aux", pubkey: "b".repeat(64) };
-  rememberSessionUsernameIntegrity(session, {
+  const storedIntegrity = {
     conflict: true,
     claimedUsername: "aux",
     ownerPubkey: "a".repeat(64),
     source: "lookup"
-  });
+  };
 
   const integrity = resolveSessionUsernameConflict(
     {
@@ -379,22 +370,22 @@ test("lookup-backed cached conflicts survive an untrusted no-conflict snapshot",
       usernameRegistry: [],
       users: []
     },
-    session
+    session,
+    { storedIntegrity }
   );
 
   assert.equal(integrity.conflict, true);
   assert.equal(integrity.source, "cache");
-  assert.equal(readCachedSessionUsernameIntegrity(session)?.conflict, true);
 });
 
 test("lookup-backed cached conflicts survive a generic trusted snapshot without explicit ownership", () => {
   const session = { username: "aux", pubkey: "b".repeat(64) };
-  rememberSessionUsernameIntegrity(session, {
+  const storedIntegrity = {
     conflict: true,
     claimedUsername: "aux",
     ownerPubkey: "a".repeat(64),
     source: "lookup"
-  });
+  };
 
   const integrity = resolveSessionUsernameConflict(
     {
@@ -403,12 +394,12 @@ test("lookup-backed cached conflicts survive a generic trusted snapshot without 
       usernameRegistry: [],
       users: []
     },
-    session
+    session,
+    { storedIntegrity }
   );
 
   assert.equal(integrity.conflict, true);
   assert.equal(integrity.source, "cache");
-  assert.equal(readCachedSessionUsernameIntegrity(session)?.conflict, true);
 });
 
 test("network-backed username integrity does not reject the canonical owner from provisional state conflict", async () => {

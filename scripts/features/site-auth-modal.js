@@ -1,7 +1,6 @@
 import {
-  assertNetworkSessionUsernameIntegrity,
   resolveNextAvailableUsername
-} from "../core/account-integrity.js";
+} from "../core/session-identity.js";
 import {
   buildPasswordLengthMessage,
   PASSWORD_MIN_LENGTH

@@ -6,20 +6,15 @@ import {
   buildStaleSessionMessage,
   createPasswordReuseError,
   isPasswordReuseError,
-  readStoredAccountHistory,
-  resetStoredAccountHistory,
-  rememberAccountRotation,
-  rememberCurrentAccountSession,
+  normalizeAccountHistoryEntry,
+  rememberAccountRotationHistoryEntry,
+  rememberCurrentAccountHistoryEntry,
   resolveSessionIdentityState,
   resolveStaleSessionFromHistory,
   resolveStaleSessionAccount,
   rotationReusesIdentityKey,
   sessionUsesCurrentIdentityKey
-} from "../scripts/core/account-management.js";
-
-test.beforeEach(() => {
-  resetStoredAccountHistory();
-});
+} from "../scripts/core/session-identity.js";
 
 test("account management resolves the latest identity head for rotated sessions", () => {
   const originalPubkey = "a".repeat(64);
@@ -99,21 +94,24 @@ test("account management uses local account history for current key and password
   const previousSession = { username: "aux", pubkey: "a".repeat(64) };
   const currentSession = { username: "aux", pubkey: "b".repeat(64) };
 
-  rememberCurrentAccountSession(previousSession);
-  rememberAccountRotation(previousSession, currentSession);
+  const accountHistory = rememberAccountRotationHistoryEntry(
+    rememberCurrentAccountHistoryEntry(null, previousSession),
+    previousSession,
+    currentSession
+  );
 
-  assert.deepEqual(readStoredAccountHistory("aux"), {
+  assert.deepEqual(normalizeAccountHistoryEntry(accountHistory, "aux"), {
     username: "aux",
     currentPubkey: "b".repeat(64),
     knownPubkeys: ["a".repeat(64), "b".repeat(64)],
-    updatedAt: readStoredAccountHistory("aux").updatedAt
+    updatedAt: normalizeAccountHistoryEntry(accountHistory, "aux").updatedAt
   });
-  assert.deepEqual(resolveStaleSessionFromHistory(previousSession), {
+  assert.deepEqual(resolveStaleSessionFromHistory(previousSession, accountHistory), {
     claimedUsername: "aux",
     sessionPubkey: "a".repeat(64),
     canonicalPubkey: "a".repeat(64),
     currentPubkey: "b".repeat(64),
     identityMemberPubkeys: ["a".repeat(64), "b".repeat(64)]
   });
-  assert.equal(rotationReusesIdentityKey({}, currentSession, "a".repeat(64)), true);
+  assert.equal(rotationReusesIdentityKey({}, currentSession, "a".repeat(64), accountHistory), true);
 });

@@ -98,6 +98,8 @@
   top: var(--rail-stick-top);
   max-height: var(--rail-max-height);
   overflow: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
 }
 
 .graph-rail__stack {
@@ -201,7 +203,9 @@
 
 .wiki-directory__card.is-draft,
 .wiki-rail__list-item.is-draft {
-  background: rgba(156, 29, 24, 0.04);
+  background:
+    linear-gradient(0deg, rgba(156, 29, 24, 0.04), rgba(156, 29, 24, 0.04)),
+    var(--panel);
 }
 
 .wiki-directory__head {

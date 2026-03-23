@@ -11,13 +11,11 @@ import {
 import {
   createStaleSessionError,
   isPasswordReuseError,
-  rememberAccountRotation,
-  rememberCurrentAccountSession,
-  resetStoredAccountHistory
-} from "../scripts/core/account-management.js";
+  rememberAccountRotationHistoryEntry,
+  rememberCurrentAccountHistoryEntry
+} from "../scripts/core/session-identity.js";
 
 test.beforeEach(() => {
-  resetStoredAccountHistory();
   const storage = new Map();
   globalThis.localStorage = {
     getItem: (key) => storage.get(key) || null,
@@ -103,10 +101,10 @@ test("rotateAccountPassword rejects a previously used password before publishing
     username: "testiprofile",
     pubkey: value.repeat(64)
   }));
-  rememberCurrentAccountSession(previousSession);
+  let accountHistory = rememberCurrentAccountHistoryEntry(null, previousSession);
   let currentSession = previousSession;
   for (const nextSession of nextSessions) {
-    rememberAccountRotation(currentSession, nextSession);
+    accountHistory = rememberAccountRotationHistoryEntry(accountHistory, currentSession, nextSession);
     currentSession = nextSession;
   }
 
@@ -119,6 +117,7 @@ test("rotateAccountPassword rejects a previously used password before publishing
       session: { username: "testiprofile", pubkey: "e".repeat(64) },
       nextPassword: "reused-password",
       currentPublicState: {},
+      loadAccountHistory: async () => accountHistory,
       loadPublicState: async () => ({ connected: true, usernameRegistry: [], users: [] }),
       deriveSecretKeyHex: async () => "b".repeat(64),
       deriveIdentity: (secretKeyHex) => ({ pubkey: secretKeyHex }),

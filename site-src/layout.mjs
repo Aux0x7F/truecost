@@ -17,10 +17,13 @@ function renderAttributes(attributes = {}) {
     .join(" ");
 }
 
-function renderHead({ page, site }) {
+function renderHead({ page, site, inlineStyles = "" }) {
   const preloadStyles = page.preloadStyles === false
     ? ""
     : '<link rel="preload" href="./styles.css" as="style">';
+  const inlineStyleTag = String(inlineStyles || "").trim()
+    ? `  <style data-inline-styles>${String(inlineStyles || "").trim()}</style>`
+    : "";
   const extraStyles = (Array.isArray(page.extraStyles) ? page.extraStyles : [])
     .map((style) => {
       if (typeof style === "string") {
@@ -44,6 +47,7 @@ function renderHead({ page, site }) {
     `  <meta http-equiv="Permissions-Policy" content="${escapeHtml(site.permissionsPolicy || "camera=(), microphone=(), geolocation=()")}">`,
     '  <link rel="icon" href="./favicon.svg" type="image/svg+xml">',
     preloadStyles ? `  ${preloadStyles}` : "",
+    inlineStyleTag,
     '  <link rel="stylesheet" href="./styles.css">',
     extraStyles,
     "</head>"
@@ -109,8 +113,8 @@ function renderScripts({ page }) {
   return [extraScripts, entryScripts].filter(Boolean).join("\n");
 }
 
-export function renderPageHtml({ page, site, mainHtml }) {
-  return `${renderHead({ page, site })}
+export function renderPageHtml({ page, site, mainHtml, inlineStyles = "" }) {
+  return `${renderHead({ page, site, inlineStyles })}
 <body data-page="${escapeHtml(page.dataPage)}">
 ${renderHeader({ site })}
 

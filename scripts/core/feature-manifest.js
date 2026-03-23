@@ -9,6 +9,9 @@ function defaultSchedule(task) {
 export function createFeatureManifest(definitions = {}, { schedule = defaultSchedule } = {}) {
   const loaders = new Map(Object.entries(definitions));
   const cache = new Map();
+  const preloadQueue = [];
+  const queuedKeys = new Set();
+  let preloadScheduled = false;
 
   function has(key) {
     return loaders.has(key);
@@ -30,11 +33,27 @@ export function createFeatureManifest(definitions = {}, { schedule = defaultSche
 
   function preload(keys = []) {
     const list = Array.isArray(keys) ? keys : [keys];
+    for (const key of list) {
+      if (!has(key) || cache.has(key) || queuedKeys.has(key)) continue;
+      queuedKeys.add(key);
+      preloadQueue.push(key);
+    }
+    schedulePreloadDrain();
+  }
+
+  function schedulePreloadDrain() {
+    if (preloadScheduled || !preloadQueue.length) return;
+    preloadScheduled = true;
     schedule(() => {
-      for (const key of list) {
-        if (!has(key)) continue;
-        void load(key).catch(() => null);
-      }
+      preloadScheduled = false;
+      const nextKey = preloadQueue.shift();
+      if (!nextKey) return;
+      queuedKeys.delete(nextKey);
+      void load(nextKey)
+        .catch(() => null)
+        .finally(() => {
+          schedulePreloadDrain();
+        });
     });
   }
 

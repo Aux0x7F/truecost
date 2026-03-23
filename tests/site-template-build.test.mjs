@@ -42,7 +42,8 @@ test("renderPageHtml uses page definitions as the source of truth", async () => 
   const rendered = renderPageHtml({
     page: mapPage,
     site: siteTemplate,
-    mainHtml
+    mainHtml,
+    inlineStyles: "body{background:#fff}"
   });
 
   assert.match(rendered, /<body data-page="map">/);
@@ -50,11 +51,50 @@ test("renderPageHtml uses page definitions as the source of truth", async () => 
   assert.match(rendered, /vendor\/leaflet\.js/);
   assert.match(rendered, /data-map-canvas/);
   assert.match(rendered, /scripts\/app\.js/);
+  assert.match(rendered, /data-inline-styles/);
+  assert.doesNotMatch(rendered, /<section class="hero">/);
+  assert.doesNotMatch(rendered, /section--page-intro/);
+});
+
+test("investigation pages that render preview maps include leaflet assets", async () => {
+  for (const fileName of ["investigations.html", "investigation.html"]) {
+    const page = pageDefinitions.find((entry) => entry.fileName === fileName);
+    assert.ok(page, `${fileName} should exist in page definitions`);
+    const mainHtml = await fs.readFile(path.join(pageSourceRoot, page.mainSource), "utf8");
+    const rendered = renderPageHtml({
+      page,
+      site: siteTemplate,
+      mainHtml,
+      inlineStyles: "body{background:#fff}"
+    });
+
+    assert.match(rendered, /vendor\/leaflet\.css/, `${fileName} should include leaflet styles for preview maps`);
+    assert.match(rendered, /vendor\/leaflet\.js/, `${fileName} should include leaflet scripts for preview maps`);
+  }
 });
 
 test("legacy root html pages are removed and generated output lives under dist", async () => {
   for (const fileName of legacyRootPages) {
     await assert.rejects(fs.access(path.join(root, fileName)));
     await fs.access(path.join(root, "dist", fileName));
+  }
+});
+
+test("interactive explore pages render without intro shells above the main surface", async () => {
+  for (const fileName of ["investigations.html", "map.html", "graph.html", "wiki.html"]) {
+    const page = pageDefinitions.find((entry) => entry.fileName === fileName);
+    assert.ok(page, `${fileName} should exist in page definitions`);
+    const mainHtml = await fs.readFile(path.join(pageSourceRoot, page.mainSource), "utf8");
+    const rendered = renderPageHtml({
+      page,
+      site: siteTemplate,
+      mainHtml,
+      inlineStyles: "body{background:#fff}"
+    });
+
+    assert.doesNotMatch(mainHtml, /<section class="hero">/, `${fileName} source should not carry a hero shell`);
+    assert.doesNotMatch(mainHtml, /section--page-intro/, `${fileName} source should not carry a page intro shell`);
+    assert.doesNotMatch(rendered, /<section class="hero">/, `${fileName} output should not render a hero shell`);
+    assert.doesNotMatch(rendered, /section--page-intro/, `${fileName} output should not render a page intro shell`);
   }
 });

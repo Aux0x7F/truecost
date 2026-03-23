@@ -1,15 +1,6 @@
 import SITE from "./core/site-config.js";
 import { createUniqueSlug, splitTags } from "./core/content-utils.js";
 import {
-  assertSessionUsernameIntegrity,
-  buildStaleSessionMessage,
-  currentSessionUsernameConflictMessage,
-  hydrateCachedSessionUsernameIntegrity,
-  resolveStaleSessionAccount,
-  sessionHasUsernameConflict
-} from "./core/account-integrity.js";
-import { hydrateStoredAccountHistory } from "./core/account-management.js";
-import {
   cleanSlug,
   deriveIdentity,
   uploadEncryptedBlob,
@@ -21,7 +12,8 @@ import {
   publishSubmissionChat,
   resolveSitePubkey
 } from "./core/nostr.js";
-import { createRuntimePublicStateStore } from "./core/runtime-public-state-store.js";
+import { createPublicStateProjectionStore } from "./core/public-state-projection.js";
+import { getSiteRuntimeClient } from "./core/runtime-client.js";
 import {
   dedupeStrings as dedupe,
   escapeAttribute,
@@ -38,6 +30,7 @@ import {
 
 const submitState = {
   session: getStoredSession(),
+  sessionIdentity: null,
   viewer: null,
   publicState: null,
   submissions: [],
@@ -52,7 +45,7 @@ const submitState = {
   }
 };
 
-const submitPublicStateStore = createRuntimePublicStateStore({
+const submitPublicStateStore = createPublicStateProjectionStore({
   getSessionSecretKey: async () => submitState.session?.secretKeyHex || "",
   page: "submit",
   refreshDelayMs: () => 0,
@@ -65,11 +58,18 @@ submitPublicStateStore.subscribe((snapshot) => {
   submitState.publicState = snapshot.value;
   if (
     submitState.session &&
-    submitSessionAccessBlocked(previousPublicState, submitState.session) !==
-      submitSessionAccessBlocked(submitState.publicState, submitState.session) &&
-    submitSessionAccessBlocked(submitState.publicState, submitState.session)
+    submitSessionAccessBlocked(previousPublicState, submitState.sessionIdentity) !==
+      submitSessionAccessBlocked(submitState.publicState, submitState.sessionIdentity) &&
+    submitSessionAccessBlocked(submitState.publicState, submitState.sessionIdentity)
   ) {
     submitState.submissions = [];
+  }
+  if (submitState.session) {
+    void hydrateSubmitSessionIdentity(true).then(() => {
+      if (!submitState.loading && !submitState.formModal && !submitState.chatModal) {
+        renderSubmitPage();
+      }
+    });
   }
   if (!submitState.loading && !submitState.formModal && !submitState.chatModal) {
     renderSubmitPage();
@@ -94,6 +94,7 @@ function handleSubmitSessionChanged() {
     suggestedEntity: { highlight: -1, closedValue: "" }
   };
   submitState.session = nextSession;
+  submitState.sessionIdentity = null;
   void refreshSubmitPage(true);
 }
 
@@ -214,6 +215,7 @@ async function refreshSubmitPage(force = false) {
     persistSession: true
   }).catch(() => getStoredSession());
   if (!submitState.session) {
+    submitState.sessionIdentity = null;
     submitState.loading = false;
     submitState.loadingMessage = "";
     submitState.publicState = submitPublicStateStore.value;
@@ -221,12 +223,9 @@ async function refreshSubmitPage(force = false) {
     renderSubmitPage();
     return;
   }
-  await Promise.all([
-    hydrateStoredAccountHistory(submitState.session),
-    hydrateCachedSessionUsernameIntegrity(submitState.session)
-  ]);
+  await hydrateSubmitSessionIdentity(force);
   const cachedPublicState = !force ? submitPublicStateStore.value : null;
-  const cachedBlocked = cachedPublicState && submitSessionAccessBlocked(cachedPublicState, submitState.session);
+  const cachedBlocked = cachedPublicState && submitSessionAccessBlocked(cachedPublicState, submitState.sessionIdentity);
   if (cachedPublicState) {
     submitState.publicState = cachedPublicState;
     if (cachedBlocked) {
@@ -250,7 +249,8 @@ async function hydrateSubmitRemoteState(force = false, { allowLoadingState = tru
     renderSubmitLoading("Looking up your submissions...");
   }
   submitState.publicState = (await submitPublicStateStore.hydrate({ force, reason: "submit-load" })).value;
-  if (submitSessionAccessBlocked(submitState.publicState, submitState.session)) {
+  await hydrateSubmitSessionIdentity(force);
+  if (submitSessionAccessBlocked(submitState.publicState, submitState.sessionIdentity)) {
     submitState.submissions = [];
     submitState.loading = false;
     submitState.loadingMessage = "";
@@ -272,9 +272,8 @@ function renderSubmitLoading(message) {
   renderSubmitPage();
 }
 
-function submitSessionAccessBlocked(publicState, session) {
-  if (!session) return false;
-  return Boolean(resolveStaleSessionAccount(publicState, session) || sessionHasUsernameConflict(publicState, session));
+function submitSessionAccessBlocked(_publicState, sessionIdentity) {
+  return Boolean(sessionIdentity?.blocked);
 }
 
 function renderSubmitPage() {
@@ -314,9 +313,7 @@ function workspaceOpenSubmission(submissionId) {
 async function handleSubmissionSave(form) {
   const status = form.querySelector("[data-submission-status]");
   try {
-    assertSessionUsernameIntegrity(submitState.publicState, submitState.session, {
-      action: "publish a submission"
-    });
+    await assertSubmitSessionAllowed("publish a submission");
     const next = await buildSubmissionDraft(form, submitState.formModal?.payload || {});
     if (next.pendingEntity) {
       const entity = await publishPendingEntity(next.pendingEntity);
@@ -371,9 +368,7 @@ async function maybeOpenChatFromUrl() {
 }
 
 async function handleChatSend(form) {
-  assertSessionUsernameIntegrity(submitState.publicState, submitState.session, {
-    action: "send submission chat"
-  });
+  await assertSubmitSessionAllowed("send submission chat");
   const formData = new FormData(form);
   const body = String(formData.get("body") || "").trim();
   if (!body) return;
@@ -456,24 +451,56 @@ function renderOption(value, current) {
 }
 
 function submitSurfaceDeps() {
-  const staleSession = resolveStaleSessionAccount(submitState.publicState, submitState.session);
+  const sessionIdentity = submitState.sessionIdentity || null;
   return {
     escapeAttribute,
     escapeHtml,
-    sessionHasStalePassword: Boolean(staleSession),
-    sessionStaleMessage: staleSession
-      ? buildStaleSessionMessage({
-          claimedUsername: staleSession.claimedUsername || submitState.session?.username,
-          currentContext: "publish from this account"
-        })
-      : "",
-    sessionConflictMessage: currentSessionUsernameConflictMessage(submitState.publicState, submitState.session, "publish from this account"),
-    sessionHasUsernameConflict: sessionHasUsernameConflict(submitState.publicState, submitState.session),
+    sessionHasStalePassword: Boolean(sessionIdentity?.staleKey),
+    sessionStaleMessage: String(sessionIdentity?.staleMessage || "").trim(),
+    sessionConflictMessage: String(sessionIdentity?.usernameConflictMessage || "").trim(),
+    sessionHasUsernameConflict: Boolean(sessionIdentity?.usernameConflict),
     renderLoadingState,
     renderOption,
     resolveEntityDisplayValue,
     trimmed
   };
+}
+
+async function hydrateSubmitSessionIdentity(force = false) {
+  if (!submitState.session) {
+    submitState.sessionIdentity = null;
+    return null;
+  }
+  const runtimeClient = await getSiteRuntimeClient().catch(() => null);
+  if (!runtimeClient) return submitState.sessionIdentity;
+  await runtimeClient.seedSession(submitState.session, { force: true }).catch(() => null);
+  const projection = (force
+    ? await runtimeClient.refreshProjection("sessionIdentity", {}, {
+        reason: "submit-session-identity-refresh"
+      }).catch(() => null)
+    : await runtimeClient.getProjection("sessionIdentity", {}, {
+        preferFresh: false,
+        reason: "submit-session-identity"
+      }).catch(() => null));
+  submitState.sessionIdentity = projection?.value || null;
+  return submitState.sessionIdentity;
+}
+
+async function assertSubmitSessionAllowed(action = "publish from this account") {
+  const sessionIdentity = await hydrateSubmitSessionIdentity(true);
+  if (sessionIdentity?.removed) {
+    throw new Error(String(sessionIdentity.removedMessage || "").trim() || "This account has been removed.");
+  }
+  if (sessionIdentity?.staleKey) {
+    throw new Error(String(sessionIdentity.staleMessage || "").trim() || "This session is using an older password.");
+  }
+  if (sessionIdentity?.usernameConflict) {
+    throw new Error(
+      String(sessionIdentity.usernameConflictMessage || "").trim() ||
+        `This session cannot ${String(action || "use this account").trim()}.`
+    );
+  }
+  return sessionIdentity;
 }
 
 function hydrateSubmissionEnhancements() {

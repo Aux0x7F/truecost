@@ -9,6 +9,7 @@ import { setText } from "./core/dom.js";
 import { formatDate, formatLocalTimestamp, buildArticleMetaLine } from "./core/formatting.js";
 import { createFeatureManifest } from "./core/feature-manifest.js";
 import { fetchJson, fetchText } from "./core/http.js";
+import { createSiteOverlayConnector } from "./core/overlay-connector.js";
 import {
   cleanSlug,
   deriveIdentity,
@@ -26,9 +27,8 @@ import {
   sanitizeTrustedHtml,
   stopPublicStateRepairPeer
 } from "./core/nostr.js";
-import { publicStateHasAdminPubkey } from "./core/public-state.js";
 import { getSiteRuntimeClient } from "./core/runtime-client.js";
-import { createRuntimePublicStateStore } from "./core/runtime-public-state-store.js";
+import { createPublicStateProjectionStore } from "./core/public-state-projection.js";
 import {
   draftOwnerPubkey,
   isPageDraft,
@@ -40,12 +40,7 @@ import { createNavigationUiState } from "./core/navigation-state.js";
 import NAV_KEYS from "./core/nav-keys.js";
 import { createNotificationState } from "./core/notification-state.js";
 import { createPageRouter } from "./core/page-router.js";
-import { createSiteNotificationBuilder } from "./core/notification-builders.js";
-import {
-  loadSiteRuntimeValue,
-  rememberSiteRuntimeValue
-} from "./core/runtime-local-state.js";
-import { getStoredGuestSession, getStoredSession, saveSession } from "./core/session.js";
+import { getOrCreateGuestSession, getStoredGuestSession, getStoredSession, saveSession } from "./core/session.js";
 import { createQueryState } from "./core/query-state.js";
 import {
   buildToc,
@@ -57,6 +52,7 @@ import {
   renderRecordList,
   renderTagList
 } from "./core/rendering.js";
+import { createSiteSignerClient } from "./core/site-signer.js";
 import { createContentPostStore } from "./core/posts-store.js";
 import { createViewerController } from "./core/viewer-controller.js";
 import { graphEntityHref } from "./core/graph-wiki.js";
@@ -65,11 +61,13 @@ import { createSiteRuntime } from "./features/site-runtime.js";
 
 let appRuntime = null;
 let siteShellFeature = null;
+let signerClient = null;
+let overlayConnector = null;
 const queryState = createQueryState();
 const navigationUi = createNavigationUiState();
 
-const publicStateStore = createRuntimePublicStateStore({
-  getSessionSecretKey: async () => (appRuntime ? appRuntime.getRequestSignerSecretKey() : ""),
+const publicStateStore = createPublicStateProjectionStore({
+  getSessionSecretKey: async () => (signerClient ? signerClient.resolveSecretKey() : ""),
   page: () => document.body.dataset.page || "site",
   refreshDelayMs: () => {
     const configured = Number(SITE.nostr.publicRefreshMs || 15000);
@@ -98,6 +96,7 @@ const postsStore = createContentPostStore({
 const state = {
   session: getStoredSession(),
   guestSession: getStoredGuestSession(),
+  isSigningOut: false,
   viewer: null,
   publicState: publicStateStore.value,
   publicStateDigest: publicStateStore.digest,
@@ -124,6 +123,18 @@ const state = {
   highlightedCommentId: ""
 };
 
+signerClient = createSiteSignerClient({
+  state,
+  ensureEventToolsLoaded,
+  getOrCreateGuestSession
+});
+
+overlayConnector = createSiteOverlayConnector({
+  resolveSecretKey: () => signerClient.resolveSecretKey(),
+  connectStaticPageOverlay,
+  connectStructuredUnitOverlay
+});
+
 const viewerController = createViewerController({
   state,
   site: SITE,
@@ -132,36 +143,14 @@ const viewerController = createViewerController({
   persistSession: saveSession
 });
 
-const buildSiteNotifications = createSiteNotificationBuilder({
-  deps: {
-    loadAdminKeyShare,
-    loadInboxSubmissions,
-    loadSubmissionThread,
-    loadUserSubmissions,
-    publicStateHasAdminPubkey
-  }
-});
-
 const notificationState = createNotificationState({
   storageNamespace: SITE.nostr.storageNamespace,
-  onChange: () => siteShellFeature?.renderNavigation(),
+  onChange: () => siteShellFeature?.renderNavigation?.(),
   getSession: () => state.session,
-  getViewerPubkey: () => state.viewer?.pubkey || "",
-  getPublicState: (force) => appRuntime?.getPublicState(force),
-  loadDismissedIds: async (viewerPubkey) => {
-    const value = await loadSiteRuntimeValue("dismissedNotifications", { viewerPubkey }).catch(() => []);
-    return Array.isArray(value) ? value : [];
-  },
-  saveDismissedIds: async (viewerPubkey, ids) => {
-    await rememberSiteRuntimeValue("dismissedNotifications", { viewerPubkey }, Array.from(ids || []), {
-      source: "notification-dismissed"
-    });
-  },
-  buildNotifications: ({ publicState }) => buildSiteNotifications({
-    publicState,
-    viewer: state.viewer,
-    sessionSecretKeyHex: state.session?.secretKeyHex || ""
-  })
+  getViewerPubkey: () =>
+    state.viewer?.pubkey ||
+    viewerController.resolvedSessionPubkey?.({ deriveWhenAvailable: true }) ||
+    ""
 });
 
 appRuntime = createSiteRuntime({
@@ -177,7 +166,8 @@ appRuntime = createSiteRuntime({
   ensureBlobAvailable,
   publishTaggedJson,
   loadUserSubmissions,
-  loadAdminKeyShare
+  loadAdminKeyShare,
+  resolveSignerSecretKey: () => signerClient.resolveSecretKey()
 });
 
 siteShellFeature = createSiteShellFeature({
@@ -207,6 +197,10 @@ const featureManifest = createFeatureManifest({
       viewerController,
       postsStore,
       getPublicState: (force) => appRuntime.getPublicState(force),
+      getProjection: (channel, params = {}, options = {}) =>
+        getSiteRuntimeClient().then((runtimeClient) =>
+          runtimeClient.getProjection(channel, params, options)
+        ),
       publicStateNeedsRepair,
       queueLeafletBoundsFit,
       renderError,
@@ -222,7 +216,17 @@ const featureManifest = createFeatureManifest({
       state,
       viewerController,
       getPublicState: (force) => appRuntime.getPublicState(force),
-      getRequestSignerSecretKey: () => appRuntime.getRequestSignerSecretKey(),
+      getSessionIdentity: (force = false) =>
+        getSiteRuntimeClient().then((runtimeClient) =>
+          force
+            ? runtimeClient.refreshProjection("sessionIdentity", {}, {
+                reason: "markdown-session-identity"
+              }).then((projection) => projection?.value || null)
+            : runtimeClient.getProjection("sessionIdentity", {}, {
+                preferFresh: false,
+                reason: "markdown-session-identity"
+              }).then((projection) => projection?.value || null)
+        ),
       commitLocalPublicState: (nextPublicState) => appRuntime.commitLocalPublicState(nextPublicState),
       publishTaggedJson,
       sanitizeTrustedHtml,
@@ -373,12 +377,11 @@ const featureManifest = createFeatureManifest({
           notificationState.reset();
           void appRuntime.hydrateNotifications(true);
         },
-        connectStaticPageOverlay,
+        connectStaticPageOverlay: (options) => overlayConnector.connectStaticPageOverlay(options),
         editorEntryAllowed: (publicState) => viewerController.canEdit(publicState),
         formatDate,
         formatLocalTimestamp,
         getPublicState: (force) => appRuntime.getPublicState(force),
-        getRequestSignerSecretKey: () => appRuntime.getRequestSignerSecretKey(),
         loadDraftBySlug: reviewWorkflow.loadDraftBySlug,
         publishReviewDecision: reviewWorkflow.publishReviewDecision,
         publishTaggedJson,
@@ -412,13 +415,12 @@ const featureManifest = createFeatureManifest({
         cleanSlug,
         archiveEntitiesForEntries: archiveSurface.archiveEntitiesForEntries,
         buildArticleMetaLine,
-        connectStructuredUnitOverlay,
+        connectStructuredUnitOverlay: (options) => overlayConnector.connectStructuredUnitOverlay(options),
         destroyLeafletPreview: archiveSurface.destroyLeafletPreview,
         editorEntryAllowed: (publicState) => viewerController.canEdit(publicState),
         enrichArticleEntities: (scope, publicState) => markdownBundle.markdownPageFeature.enrichArticleEntities(scope, publicState),
         formatDate,
         getPublicState: (force) => appRuntime.getPublicState(force),
-        getRequestSignerSecretKey: () => appRuntime.getRequestSignerSecretKey(),
         loadDraftBySlug: reviewBundle.reviewWorkflow.loadDraftBySlug,
         publishReviewDecision: reviewBundle.reviewWorkflow.publishReviewDecision,
         queueLeafletBoundsFit: mapSurface.queueLeafletBoundsFit,
@@ -444,19 +446,47 @@ const featureManifest = createFeatureManifest({
 
 function preloadFeatureGroups(page) {
   const pagePreloads = {
-    home: ["archivePage", "markdownPage", "mapPage", "graphPage", "wikiPage"],
-    investigations: ["archivePage", "markdownPage"],
-    guide: ["markdownPage", "staticPageEditSurface"],
-    investigation: ["archivePage", "markdownPage", "investigationDetailSurface", "staticPageEditSurface"],
-    map: ["mapPage", "archivePage", "graphPage"],
-    graph: ["graphPage", "wikiPage", "mapPage"],
+    home: ["markdownPage"],
+    investigations: ["markdownPage"],
+    guide: ["markdownPage"],
+    investigation: ["archivePage", "markdownPage"],
+    map: ["graphPage", "wikiPage"],
+    graph: ["wikiPage", "mapPage"],
     wiki: ["wikiPage", "graphPage"],
-    about: ["staticPageEditSurface"],
-    "get-involved": ["staticPageEditSurface"],
-    merch: ["staticPageEditSurface"]
+    about: ["archivePage"],
+    "get-involved": [],
+    merch: []
   };
   featureManifest.preload(pagePreloads[page] || ["archivePage"]);
-  featureManifest.preload(["staticPageEditSurface"]);
+}
+
+function pageNeedsArchiveFeature() {
+  return Boolean(
+    document.querySelector("[data-home-investigations], [data-investigation-list], [data-archive-summary]")
+  );
+}
+
+function pageSupportsStaticEdit() {
+  return Boolean(document.querySelector("[data-static-edit]"));
+}
+
+let staticPageEditInitPromise = null;
+
+function maybeInitStaticPageEdit() {
+  if (!pageSupportsStaticEdit()) return Promise.resolve(null);
+  const publicState = state.publicState;
+  if (!viewerController.canEdit(publicState)) return Promise.resolve(null);
+  if (staticPageEditInitPromise) return staticPageEditInitPromise;
+  staticPageEditInitPromise = featureManifest.load("staticPageEditSurface")
+    .then(async ({ staticPageEditSurface }) => {
+      await staticPageEditSurface.init();
+      return staticPageEditSurface;
+    })
+    .catch(() => null)
+    .finally(() => {
+      staticPageEditInitPromise = null;
+    });
+  return staticPageEditInitPromise;
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -468,10 +498,6 @@ document.addEventListener("DOMContentLoaded", () => {
   appRuntime.start();
 
   createPageRouter({ page })
-    .when(["home", "investigations"], async () => {
-      const { archivePageFeature } = await featureManifest.load("archivePage");
-      await archivePageFeature.mount();
-    })
     .when("guide", async () => {
       const { markdownPageFeature } = await featureManifest.load("markdownPage");
       markdownPageFeature.mount();
@@ -497,10 +523,20 @@ document.addEventListener("DOMContentLoaded", () => {
       await wikiPageFeature.mount();
     })
     .always(async () => {
-      const { staticPageEditSurface } = await featureManifest.load("staticPageEditSurface");
-      await staticPageEditSurface.init();
+      if (pageNeedsArchiveFeature()) {
+        const { archivePageFeature } = await featureManifest.load("archivePage");
+        await archivePageFeature.mount();
+      }
+      await maybeInitStaticPageEdit();
     })
     .mount();
+
+  window.addEventListener("truecost:public-state-updated", () => {
+    void maybeInitStaticPageEdit();
+  });
+  window.addEventListener("truecost:session-changed", () => {
+    void maybeInitStaticPageEdit();
+  });
 
   preloadFeatureGroups(page);
 });

@@ -767,6 +767,7 @@
   max-height: var(--rail-max-height);
   overflow: auto;
   overscroll-behavior: contain;
+  overflow-anchor: none;
   padding-right: 0.1rem;
 }
 

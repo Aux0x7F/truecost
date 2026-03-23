@@ -5,7 +5,7 @@ import {
   isStaleSessionError,
   isUsernameConflictError,
   rotationReusesIdentityKey
-} from "./account-integrity.js";
+} from "./session-identity.js";
 import { repairSession } from "./session.js";
 
 export const PASSWORD_MIN_LENGTH = 8;

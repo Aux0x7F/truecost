@@ -6,15 +6,21 @@ import {
 import { createEmptyGraphRecordState } from "./graph-records.js";
 import {
   assertNetworkSessionUsernameIntegrity
-} from "./account-integrity.js";
+} from "./session-identity.js";
 import {
   openAccountSession,
   rotateAccountPassword
 } from "./account-actions.js";
-import { isUsablePublicState } from "./public-state.js";
+import { createSiteNotificationBuilder } from "./notification-builders.js";
+import { isUsablePublicState, publicStateHasAdminPubkey } from "./public-state.js";
 import {
   lookupUsers,
+  loadAdminKeyShare,
+  loadAdminKeyShares,
+  loadInboxSubmissions,
+  loadSubmissionThread,
   loadPublicState,
+  loadUserSubmissions,
   publishAdminKeyShare,
   publishTaggedJson
 } from "./nostr.js";
@@ -29,14 +35,24 @@ import {
   signInWithCredentials
 } from "./session.js";
 import {
+  clearRuntimeUsernameIntegrity,
+  loadRuntimeAccountHistoryProjection,
+  loadRuntimeUsernameIntegrityProjection,
   readRuntimeAccountHistory,
+  readRuntimeUsernameIntegrity,
   rememberRuntimeAccountRotation,
-  rememberRuntimeCurrentAccountSession
-} from "./runtime-account-history.js";
+  rememberRuntimeCurrentAccountSession,
+  rememberRuntimeUsernameIntegrity,
+  loadSessionIdentityProjection
+} from "./runtime-session-identity.js";
 import {
   loadCommentsProjection,
+  loadContentPostsProjection,
   loadGraphProjection,
   loadMapEntitiesProjection,
+  loadNotificationsProjection,
+  loadWorkspaceInboxProjection,
+  loadWorkspaceSiteKeysProjection,
   loadWikiEntityProjection,
   loadWorkspaceProjection
 } from "./runtime-projections.js";
@@ -62,16 +78,39 @@ export function createSiteRuntimeHost({
     repairSession,
     publishAdminKeyShare,
     publishTaggedJson,
+    loadAdminKeyShare,
+    loadAdminKeyShares,
+    loadInboxSubmissions,
+    loadSubmissionThread,
+    loadUserSubmissions,
     readRuntimeAccountHistory,
+    readRuntimeUsernameIntegrity,
     rememberRuntimeCurrentAccountSession,
     rememberRuntimeAccountRotation,
+    rememberRuntimeUsernameIntegrity,
+    clearRuntimeUsernameIntegrity,
+    loadContentPostsProjection,
     loadGraphProjection,
     loadWikiEntityProjection,
     loadMapEntitiesProjection,
     loadCommentsProjection,
+    loadNotificationsProjection,
+    loadWorkspaceInboxProjection,
+    loadWorkspaceSiteKeysProjection,
     loadWorkspaceProjection,
+    loadSessionIdentityProjection,
     ...deps
   };
+
+  const buildNotifications = createSiteNotificationBuilder({
+    deps: {
+      publicStateHasAdminPubkey,
+      loadAdminKeyShare: runtime.loadAdminKeyShare,
+      loadInboxSubmissions: runtime.loadInboxSubmissions,
+      loadSubmissionThread: runtime.loadSubmissionThread,
+      loadUserSubmissions: runtime.loadUserSubmissions
+    }
+  });
 
   async function loadAvailablePublicState(force = false) {
     const cachedRecord = await database.getProjection("publicState", {}).catch(() => null);
@@ -90,7 +129,25 @@ export function createSiteRuntimeHost({
     }
   }
 
-  const host = createRuntimeHost({
+  let host = null;
+
+  async function assertRuntimeSessionUsernameIntegrity(publicState, session = null, options = {}) {
+    const [accountHistory, storedIntegrity] = await Promise.all([
+      runtime.readRuntimeAccountHistory(database, session),
+      runtime.readRuntimeUsernameIntegrity(database, session)
+    ]);
+    return runtime.assertNetworkSessionUsernameIntegrity(publicState, session, {
+      ...options,
+      accountHistory,
+      storedIntegrity,
+      onRememberIntegrity: async (_currentSession, integrity) =>
+        runtime.rememberRuntimeUsernameIntegrity(host, session, integrity),
+      onClearIntegrity: async () =>
+        runtime.clearRuntimeUsernameIntegrity(host, session)
+    });
+  }
+
+  host = createRuntimeHost({
     database,
     auth: {
       async signIn({ username, password }) {
@@ -103,7 +160,7 @@ export function createSiteRuntimeHost({
           rebroadcastAccount: runtime.rebroadcastAccount,
           rememberCurrentAccountSession: async (session) =>
             runtime.rememberRuntimeCurrentAccountSession(database, session),
-          assertNetworkSessionUsernameIntegrity: runtime.assertNetworkSessionUsernameIntegrity,
+          assertNetworkSessionUsernameIntegrity: assertRuntimeSessionUsernameIntegrity,
           lookupUsers: runtime.lookupUsers
         });
       },
@@ -125,7 +182,7 @@ export function createSiteRuntimeHost({
           loadPublicState: async () => loadAvailablePublicState(true),
           deriveSecretKeyHex: runtime.deriveSecretKeyHex,
           deriveIdentity: runtime.deriveIdentity,
-          assertNetworkSessionUsernameIntegrity: runtime.assertNetworkSessionUsernameIntegrity,
+          assertNetworkSessionUsernameIntegrity: assertRuntimeSessionUsernameIntegrity,
           lookupUsers: runtime.lookupUsers,
           rotateAccountCredentials: runtime.rotateAccountCredentials,
           repairAccountSession: (session) =>
@@ -169,9 +226,57 @@ export function createSiteRuntimeHost({
         return runtime.publishTaggedJson(payload);
       }
     },
+    actions: {
+      async "activity.recordVisitPulse"(payload = {}, { session }) {
+        const secretKeyHex = String(session?.secretKeyHex || payload?.secretKeyHex || "").trim().toLowerCase();
+        const day = String(payload?.day || new Date().toISOString().slice(0, 10)).trim();
+        const page = String(payload?.page || "site").trim().toLowerCase() || "site";
+        if (!secretKeyHex || !day || !SITE?.nostr?.kinds?.visitPulse) return null;
+        const markerParams = {
+          day,
+          __projectionScope: "global"
+        };
+        const marker = await host.getProjectionValue("visitPulseMarker", markerParams, {
+          preferFresh: false
+        }).catch(() => null);
+        if (marker) return marker;
+        await runtime.publishTaggedJson({
+          kind: SITE.nostr.kinds.visitPulse,
+          secretKeyHex,
+          tags: [
+            ["t", SITE.nostr.appTag],
+            ["k", page]
+          ],
+          content: {
+            day,
+            page
+          }
+        });
+        const saved = {
+          page,
+          recordedAt: Date.now()
+        };
+        await host.rememberProjection("visitPulseMarker", markerParams, saved, {
+          source: "visit-pulse"
+        });
+        return saved;
+      }
+    },
     projectionLoaders: {
       async publicState({ params }) {
         return loadAvailablePublicState(Boolean(params?.force));
+      },
+      async accountHistory(context) {
+        return loadRuntimeAccountHistoryProjection(context);
+      },
+      async usernameIntegrity(context) {
+        return loadRuntimeUsernameIntegrityProjection(context);
+      },
+      async sessionIdentity(context) {
+        return loadSessionIdentityProjection(context);
+      },
+      async contentPosts(context) {
+        return runtime.loadContentPostsProjection(context);
       },
       async graph(context) {
         return runtime.loadGraphProjection(context);
@@ -188,17 +293,35 @@ export function createSiteRuntimeHost({
       async workspace(context) {
         return runtime.loadWorkspaceProjection(context);
       },
+      async notifications(context) {
+        return runtime.loadNotificationsProjection({
+          ...context,
+          buildNotifications
+        });
+      },
+      async workspaceAccess(context) {
+        return runtime.loadWorkspaceProjection(context);
+      },
+      async workspaceSiteKeys(context) {
+        return runtime.loadWorkspaceSiteKeysProjection({
+          ...context,
+          loadAdminKeyShare: runtime.loadAdminKeyShare,
+          loadAdminKeyShares: runtime.loadAdminKeyShares,
+          deriveIdentity: runtime.deriveIdentity
+        });
+      },
+      async workspaceInbox(context) {
+        return runtime.loadWorkspaceInboxProjection({
+          ...context,
+          loadInboxSubmissions: runtime.loadInboxSubmissions
+        });
+      },
       async graphDraft({ database: runtimeDatabase, session }) {
         const scopedParams = {
           __sessionScope: String(session?.pubkey || "anonymous").trim().toLowerCase()
         };
         const record = await runtimeDatabase.getProjection("graphDraft", scopedParams).catch(() => null);
         return record?.value || createEmptyGraphRecordState();
-      },
-      async notifications() {
-        return {
-          items: []
-        };
       },
       ...projectionLoaders
     }

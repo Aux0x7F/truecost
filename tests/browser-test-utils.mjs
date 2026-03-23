@@ -1,5 +1,6 @@
 import http from "node:http";
 import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -42,16 +43,23 @@ export async function createStaticServer(root, port = 0) {
 }
 
 export async function loadPlaywright(repoRoot = process.cwd()) {
-  const candidatePaths = [
-    path.resolve(repoRoot, "../nostr-site-hotfix/tooling/browser-smoke/node_modules/playwright/index.mjs"),
-    path.resolve(repoRoot, "../nostr-site/tooling/browser-smoke/node_modules/playwright/index.mjs")
+  const candidateRoots = [
+    path.resolve(repoRoot),
+    path.resolve(repoRoot, "../nostr-site/tooling/browser-smoke"),
+    path.resolve(repoRoot, "../nostr-site-hotfix/tooling/browser-smoke")
   ];
+  const candidatePackages = ["playwright", "@playwright/test"];
   try {
-    for (const playwrightPath of candidatePaths) {
-      try {
-        return await import(pathToFileURL(playwrightPath).href);
-      } catch {
-        continue;
+    for (const root of candidateRoots) {
+      const requireFromRoot = createRequire(path.join(root, "__browser-test-utils__.cjs"));
+      for (const packageName of candidatePackages) {
+        try {
+          const resolvedPath = requireFromRoot.resolve(packageName);
+          const loaded = await import(pathToFileURL(resolvedPath).href);
+          return loaded?.chromium || loaded?.firefox ? loaded : loaded?.default || loaded;
+        } catch {
+          continue;
+        }
       }
     }
     return null;
@@ -283,7 +291,8 @@ export async function seedConflictedUsernameSession(page, { port, secretKeyHex, 
   await hydrateLegacyRuntimeCaches(page);
   const derivedConflictSession = await page.evaluate(
     async ({ nextSecretKeyHex, nextClaimedUsername }) => {
-      const { deriveIdentity } = await import("./scripts/core/nostr.js");
+      const { deriveIdentity, ensureEventToolsLoaded } = await import("./scripts/core/nostr.js");
+      await ensureEventToolsLoaded();
       const identity = deriveIdentity(String(nextSecretKeyHex || "").trim().toLowerCase());
       return {
         username: String(nextClaimedUsername || "").trim().toLowerCase(),

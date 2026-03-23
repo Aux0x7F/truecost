@@ -1,52 +1,86 @@
-import {
-  loadSiteRuntimeValue,
-  rememberSiteRuntimeValue
-} from "./runtime-local-state.js";
+import { createRuntimeProjectionStore } from "./runtime-projection-store.js";
 
 export function createContentPostStore({
-  indexPath,
-  contentDir,
   cacheKey,
   initialPosts = [],
-  fetchJson,
-  fetchText,
-  parseContentDocument,
-  slugify,
-  loadCachedPosts = loadSiteRuntimeValue,
-  rememberCachedPosts = rememberSiteRuntimeValue
+  getCachedProjection = null,
+  loadProjection = null,
+  rememberProjection = null,
+  subscribeProjection = null
 } = {}) {
-  let posts = clonePosts(initialPosts);
+  const scopedParams = {
+    cacheKey: String(cacheKey || "content-posts").trim() || "content-posts",
+    __projectionScope: "global"
+  };
+  const postsProjection = createRuntimeProjectionStore({
+    channel: "contentPosts",
+    params: scopedParams,
+    createDigest: createContentPostsDigest,
+    refreshDelayMs: () => 0,
+    shouldRefresh: () => true,
+    deps: {
+      ...(typeof getCachedProjection === "function"
+        ? {
+            getCachedProjection: () => getCachedProjection("contentPosts", scopedParams)
+          }
+        : {}),
+      ...(typeof loadProjection === "function"
+        ? {
+            loadProjection: (force = false, reason = "content-posts") =>
+              loadProjection("contentPosts", scopedParams, { preferFresh: Boolean(force), reason })
+          }
+        : {}),
+      ...(typeof rememberProjection === "function"
+        ? {
+            rememberProjection: (value, meta = {}) =>
+              createProjectionEnvelope(
+                rememberProjection("contentPosts", scopedParams, value, meta),
+                value
+              )
+          }
+        : {}),
+      ...(typeof subscribeProjection === "function"
+        ? {
+            subscribeProjection: (listener, options = {}) =>
+              subscribeProjection("contentPosts", scopedParams, listener, options)
+          }
+        : {})
+    }
+  });
+
+  let posts = clonePosts(Array.isArray(initialPosts) && initialPosts.length
+    ? initialPosts
+    : postsProjection.value);
   let postsPromise = null;
-  let cachePromise = null;
+
+  postsProjection.subscribe(({ value }) => {
+    if (Array.isArray(value)) {
+      posts = clonePosts(value);
+    }
+  }, { emitCurrent: true });
 
   function current() {
     return clonePosts(posts);
   }
 
   async function hydrateCache() {
-    if (cachePromise) return cachePromise;
-    cachePromise = loadCachedPosts("contentPosts", { cacheKey }, {
+    const result = await postsProjection.hydrate({
+      force: false,
       reason: "content-post-cache",
-      preferFresh: false
-    })
-      .then((cachedPosts) => {
-        if (Array.isArray(cachedPosts) && cachedPosts.length) {
-          posts = clonePosts(cachedPosts);
-        }
-        return current();
-      })
-      .catch(() => current())
-      .finally(() => {
-        cachePromise = null;
-      });
-    return cachePromise;
+      requestRepair: false
+    });
+    if (Array.isArray(result?.value)) {
+      posts = clonePosts(result.value);
+    }
+    return current();
   }
 
   async function remember(nextPosts) {
     posts = clonePosts(nextPosts);
-    await rememberCachedPosts("contentPosts", { cacheKey }, posts, {
-      source: "content-post-cache"
-    }).catch(() => null);
+    postsProjection.remember(posts, {
+      notify: false,
+      reason: "content-post-cache"
+    });
     return current();
   }
 
@@ -60,17 +94,15 @@ export function createContentPostStore({
 
   async function refresh() {
     if (postsPromise) return postsPromise;
-    postsPromise = fetchJson(indexPath)
-      .then((data) => Promise.all((Array.isArray(data.files) ? data.files : []).map((file) => loadOne(file))))
-      .then((entries) => {
-        const nextPosts = entries
-          .filter(Boolean)
-          .sort((left, right) => String(right.date || "").localeCompare(String(left.date || "")));
-        return remember(nextPosts);
-      })
-      .catch((error) => {
-        if (posts.length) return current();
-        throw error;
+    postsPromise = postsProjection.sync({
+      force: true,
+      reason: "content-post-refresh"
+    })
+      .then((result) => {
+        if (Array.isArray(result?.value)) {
+          posts = clonePosts(result.value);
+        }
+        return current();
       })
       .finally(() => {
         postsPromise = null;
@@ -78,26 +110,13 @@ export function createContentPostStore({
     return postsPromise;
   }
 
-  async function loadOne(file) {
-    const text = await fetchText(`${contentDir}/${file}`);
-    const parsed = parseContentDocument(text, {
-      file,
-      slug: slugify(file.replace(/\.md$/i, ""))
-    });
-    return {
-      ...parsed.meta,
-      file,
-      slug: parsed.meta.slug || slugify(file.replace(/\.md$/i, "")),
-      body: parsed.body
-    };
-  }
-
   return {
     current,
     hydrateCache,
     load,
     refresh,
-    remember
+    remember,
+    subscribe: postsProjection.subscribe
   };
 }
 
@@ -119,6 +138,30 @@ export function buildEntityUsage(posts, entities, collectEntityRefsFromText) {
     }
   }
   return usage;
+}
+
+function createContentPostsDigest(posts) {
+  return JSON.stringify(
+    (Array.isArray(posts) ? posts : []).map((post) => [
+      String(post?.slug || "").trim(),
+      String(post?.date || "").trim(),
+      String(post?.title || "").trim(),
+      Array.isArray(post?.entity_refs) ? [...post.entity_refs] : []
+    ])
+  );
+}
+
+function createProjectionEnvelope(envelope, fallbackValue) {
+  if (envelope && typeof envelope === "object" && "value" in envelope) {
+    return envelope;
+  }
+  return {
+    value: Array.isArray(envelope) ? envelope : fallbackValue ?? null,
+    status: Array.isArray(envelope) || Array.isArray(fallbackValue) ? "ready" : "idle",
+    digest: createContentPostsDigest(Array.isArray(envelope) ? envelope : fallbackValue),
+    updatedAt: Date.now(),
+    meta: {}
+  };
 }
 
 function clonePosts(posts) {

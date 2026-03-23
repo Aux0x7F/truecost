@@ -106,23 +106,71 @@ test("graph explorer and wiki pages render seeded graph content", async (t) => {
     assert.equal(wikiNavMetrics.graphIsCurrent, false, "Graph should not stay current on wiki pages");
     assert.equal(wikiNavMetrics.wikiIsCurrent, true, "Wiki should be the current Explore child on wiki pages");
 
+    await page.goto(`http://127.0.0.1:${port}/wiki.html`, { waitUntil: "domcontentloaded" });
+    await page.waitForSelector("#wikiSearchInput", { timeout: 15000 });
+    await page.locator("#wikiSearchInput").click();
+    await page.locator("#wikiSearchInput").fill("north");
+    const wikiSearchState = await page.evaluate(() => ({
+      activeId: document.activeElement?.id || "",
+      value: document.querySelector("#wikiSearchInput")?.value || "",
+      articleText: document.querySelector("[data-wiki-article]")?.textContent || ""
+    }));
+    assert.equal(wikiSearchState.activeId, "wikiSearchInput", "wiki search should keep focus while typing");
+    assert.equal(wikiSearchState.value, "north");
+    assert.match(wikiSearchState.articleText, /North Valley/i);
+
     await page.goto(`http://127.0.0.1:${port}/graph.html?focus=animal-agriculture`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(
       () => (document.querySelector("[data-graph-rail]")?.textContent || "").includes("Animal Agriculture"),
       { timeout: 15000 }
     );
-    await page.locator('[data-graph-node="north-valley-foods"]').click();
+    await page.setViewportSize({ width: 1440, height: 720 });
+    await page.evaluate(() => {
+      const rail = document.querySelector("[data-graph-rail]");
+      if (rail instanceof HTMLElement) {
+        rail.style.maxHeight = "12rem";
+      }
+    });
+    await page.evaluate(() => window.scrollTo(0, 180));
+    await page.waitForFunction(() => window.scrollY >= 100, { timeout: 5000 });
+    await page.locator("#graphSearchInput").click();
+    await page.locator("#graphSearchInput").fill("north");
+    await page.waitForFunction(
+      () => document.querySelectorAll("[data-graph-search-suggestion]").length > 0,
+      { timeout: 15000 }
+    );
+    const graphSearchState = await page.evaluate(() => ({
+      activeId: document.activeElement?.id || "",
+      value: document.querySelector("#graphSearchInput")?.value || "",
+      suggestionCount: document.querySelectorAll("[data-graph-search-suggestion]").length
+    }));
+    assert.equal(graphSearchState.activeId, "graphSearchInput", "graph search should keep focus while typing");
+    assert.equal(graphSearchState.value, "north");
+    assert.ok(graphSearchState.suggestionCount > 0, "graph search should show autocomplete suggestions from the filtered graph");
+    const graphWindowScrollBefore = await page.evaluate(() => window.scrollY);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
     await page.waitForFunction(
       () => (document.querySelector("[data-graph-rail]")?.textContent || "").includes("North Valley Foods"),
       { timeout: 15000 }
     );
+    await page.waitForTimeout(250);
     const focusMetrics = await page.evaluate(() => ({
       href: window.location.href,
-      railText: document.querySelector("[data-graph-rail]")?.textContent || ""
+      railText: document.querySelector("[data-graph-rail]")?.textContent || "",
+      railScrollTop: document.querySelector("[data-graph-rail]")?.scrollTop || 0,
+      windowScrollY: window.scrollY,
+      inputValue: document.querySelector("#graphSearchInput")?.value || ""
     }));
     assert.match(focusMetrics.href, /focus=north-valley-foods/);
     assert.match(focusMetrics.railText, /North Valley Foods/);
     assert.match(focusMetrics.railText, /Clear filters/);
+    assert.equal(focusMetrics.inputValue, "North Valley Foods");
+    assert.ok(focusMetrics.railScrollTop > 0, "graph rail should scroll to the selected summary card");
+    assert.ok(
+      Math.abs(focusMetrics.windowScrollY - graphWindowScrollBefore) <= 2,
+      "graph selection should scroll the rail without nudging the page"
+    );
 
     await seedAdminSession(page, { port, secretKeyHex, pubkey });
     await page.goto(`http://127.0.0.1:${port}/graph.html`, { waitUntil: "domcontentloaded" });

@@ -33,6 +33,11 @@ const STRUCTURED_TO_LEGACY_PLACEMENT = Object.freeze({
 
 export const INVESTIGATION_IMAGE_PLACEMENTS = STRUCTURED_IMAGE_PLACEMENTS;
 
+export function investigationDocumentId(value) {
+  const slug = cleanSlug(value || "");
+  return slug ? `investigation:${slug}` : "";
+}
+
 export function normalizeInvestigationImagePlacement(value, fallback = "full-width") {
   const cleanValue = String(value || "").trim().toLowerCase();
   const normalized = LEGACY_TO_STRUCTURED_PLACEMENT[cleanValue] || cleanValue;

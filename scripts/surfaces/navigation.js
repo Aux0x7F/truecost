@@ -52,6 +52,7 @@ export function renderNavigationMarkup({
   notificationsLoading = false,
   profileMenuOpen = false,
   notificationsExpanded = false,
+  openGroupKey = "",
   deps = {}
 } = {}) {
   const escapeHtml = deps.escapeHtml || ((value) => String(value || ""));
@@ -111,7 +112,7 @@ export function renderNavigationMarkup({
 
   return `
     <a class="${navLinkClass(page, navKeys, "home")}" href="./index.html">Home</a>
-    <div class="nav-group ${navKeys.explore?.includes(page) ? "is-current" : ""}" data-nav-group>
+    <div class="nav-group ${navKeys.explore?.includes(page) ? "is-current" : ""} ${openGroupKey === "explore" ? "is-open" : ""}" data-nav-group data-nav-group-key="explore">
       <button class="nav-group__toggle" type="button" data-submenu-toggle>
         Explore
       </button>
@@ -123,7 +124,7 @@ export function renderNavigationMarkup({
         ${isAdmin ? `<a class="nav-link" href="./editor.html">Create Investigation</a>` : ""}
       </div>
     </div>
-    <div class="nav-group ${navKeys["get-involved"]?.includes(page) ? "is-current" : ""}" data-nav-group>
+    <div class="nav-group ${navKeys["get-involved"]?.includes(page) ? "is-current" : ""} ${openGroupKey === "get-involved" ? "is-open" : ""}" data-nav-group data-nav-group-key="get-involved">
       <button class="nav-group__toggle" type="button" data-submenu-toggle>
         Get Involved
       </button>

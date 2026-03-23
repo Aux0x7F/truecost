@@ -2,7 +2,6 @@ import SITE from "./site-config.js";
 import {
   createSharedRuntimeClient
 } from "../../vendor/nostr-site-support.esm.js";
-import { getCachedPublicState, hydrateCachedPublicState } from "./nostr.js";
 import { clearSession, getStoredSession, resolveStoredSession, saveSession } from "./session.js";
 import { createSiteRuntimeHost } from "./site-runtime-host.js";
 
@@ -11,6 +10,9 @@ let runtimeClientRef = null;
 const cachedProjectionEnvelopes = new Map();
 const RUNTIME_PUBLIC_STATE_BOOTSTRAP_KEY = `${SITE.nostr.storageNamespace}.runtime-public-state-bootstrap`;
 const RUNTIME_GLOBAL_PROJECTION_BOOTSTRAP_KEY = `${SITE.nostr.storageNamespace}.runtime-global-projection-bootstrap`;
+const LEGACY_ACCOUNT_HISTORY_KEY = `${SITE.nostr.storageNamespace}.account-history`;
+const LEGACY_USERNAME_INTEGRITY_KEY = `${SITE.nostr.storageNamespace}.username-integrity`;
+let lastDispatchedSessionKey = "";
 
 export function getCachedSiteRuntimeProjection(channel = "", params = {}) {
   return cachedProjectionEnvelopes.get(projectionCacheKey(channel, params)) ||
@@ -61,25 +63,25 @@ export function createSiteRuntimeClient({
     workerName,
     seedSession,
     seedProjections: async () => {
-      await hydrateCachedPublicState().catch(() => null);
-      const cachedPublicState = getCachedPublicState();
-      if (cachedPublicState) {
-        rememberCachedProjection("publicState", {}, {
-          value: cachedPublicState,
-          status: "ready",
-          digest: JSON.stringify(cachedPublicState),
-          updatedAt: Date.now(),
-          meta: { source: "cached-public-state" }
-        });
+      const cachedPublicStateEnvelope = readBootstrapProjection("publicState", {});
+      const cachedPublicState = cachedPublicStateEnvelope?.value || null;
+      if (cachedPublicStateEnvelope) {
+        rememberCachedProjection("publicState", {}, cachedPublicStateEnvelope);
       }
-      return cachedPublicState
+      const bootstrapProjections = cachedPublicStateEnvelope
         ? [{
             channel: "publicState",
             params: {},
             value: cachedPublicState,
-            meta: { source: "cached-public-state" }
+            meta: {
+              ...(cachedPublicStateEnvelope.meta || {}),
+              source: "runtime-bootstrap"
+            }
           }]
         : [];
+      bootstrapProjections.push(...readLegacyAccountHistoryBootstrapProjections());
+      bootstrapProjections.push(...readLegacyUsernameIntegrityBootstrapProjections());
+      return bootstrapProjections;
     },
     hostFactory: resolvedHostFactory,
     sharedWorkerFactory: resolvedSharedWorkerFactory,
@@ -99,6 +101,9 @@ export async function getSiteRuntimeClient() {
       runtimeClientRef = createSiteRuntimeClient({
         seedSession: stored,
         onSessionChanged: (session) => {
+          const nextSessionKey = sessionEventKey(session);
+          if (nextSessionKey === lastDispatchedSessionKey) return;
+          lastDispatchedSessionKey = nextSessionKey;
           window.dispatchEvent(
             new CustomEvent("truecost:session-changed", {
               detail: {
@@ -115,6 +120,15 @@ export async function getSiteRuntimeClient() {
     })();
   }
   return runtimeClientPromise;
+}
+
+function sessionEventKey(session = null) {
+  if (!session || typeof session !== "object") return "";
+  return JSON.stringify({
+    username: String(session.username || "").trim().toLowerCase(),
+    pubkey: String(session.pubkey || "").trim().toLowerCase(),
+    secretKeyHex: String(session.secretKeyHex || "").trim().toLowerCase()
+  });
 }
 
 export default getSiteRuntimeClient;
@@ -248,6 +262,63 @@ function isBootstrapProjectionTarget(channel = "", params = {}) {
 
 function isGlobalBootstrapProjectionTarget(params = {}) {
   return String(params?.__projectionScope || "").trim().toLowerCase() === "global";
+}
+
+function readLegacyAccountHistoryBootstrapProjections() {
+  const raw = readLegacyJson(LEGACY_ACCOUNT_HISTORY_KEY);
+  if (!raw || typeof raw !== "object") return [];
+  return Object.entries(raw)
+    .map(([username, value]) => {
+      const cleanUsername = String(username || "").trim().toLowerCase();
+      if (!cleanUsername || !value || typeof value !== "object") return null;
+      return {
+        channel: "accountHistory",
+        params: {
+          username: cleanUsername,
+          __projectionScope: "global"
+        },
+        value,
+        meta: {
+          source: "legacy-bootstrap"
+        }
+      };
+    })
+    .filter(Boolean);
+}
+
+function readLegacyUsernameIntegrityBootstrapProjections() {
+  const raw = readLegacyJson(LEGACY_USERNAME_INTEGRITY_KEY);
+  if (!raw || typeof raw !== "object") return [];
+  return Object.entries(raw)
+    .map(([compoundKey, value]) => {
+      if (!value || typeof value !== "object") return null;
+      const fallbackParts = String(compoundKey || "").trim().toLowerCase().split(":");
+      const username = String(value.claimedUsername || fallbackParts[0] || "").trim().toLowerCase();
+      const pubkey = String(value.pubkey || fallbackParts[1] || "").trim().toLowerCase();
+      if (!username || !pubkey) return null;
+      return {
+        channel: "usernameIntegrity",
+        params: {
+          username,
+          pubkey,
+          __projectionScope: "global"
+        },
+        value,
+        meta: {
+          source: "legacy-bootstrap"
+        }
+      };
+    })
+    .filter(Boolean);
+}
+
+function readLegacyJson(storageKey = "") {
+  try {
+    const raw = globalThis.localStorage?.getItem?.(storageKey) || "";
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
 }
 
 function clearBootstrapProjection(channel = "", params = {}) {

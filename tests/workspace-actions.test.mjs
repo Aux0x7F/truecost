@@ -65,7 +65,7 @@ test("renderUserCard flags conflicting username claims prominently", () => {
 
   assert.match(markup, /Username conflict/);
   assert.match(markup, /claimed @aux/i);
-  assert.match(markup, /data-account-integrity="conflict"/);
+  assert.match(markup, /data-session-integrity="conflict"/);
 });
 
 test("renderLookupCandidate stays action-oriented without duplicating roster logic", () => {

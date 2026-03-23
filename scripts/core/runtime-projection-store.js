@@ -1,98 +1,84 @@
-import {
-  publicStateNeedsRepair,
-  requestPublicStateRepair,
-  startPublicStateRepairPeer
-} from "./nostr.js";
 import { getCachedSiteRuntimeProjection, getSiteRuntimeClient } from "./runtime-client.js";
-import { normalizeAdminPubkeys } from "./public-state.js";
 
-export function createPublicStateDigest(publicState) {
-  const digest = {
-    admins: normalizeAdminPubkeys(publicState).sort(),
-    identityLinks: (publicState?.identityChain?.validLinks || []).map(
-      (link) => `${link.old_pubkey || ""}:${link.new_pubkey || ""}`
-    ),
-    users: (publicState?.users || []).map(
-      (user) =>
-        [
-          user.pubkey,
-          user.isAdmin ? 1 : 0,
-          user.commentCount || 0,
-          user.submissionCount || 0,
-          user.username || "",
-          user.claimedUsername || "",
-          user.usernameConflict ? 1 : 0,
-          user.usernameOwnerPubkey || ""
-        ].join(":")
-    ),
-    usernameCollisions: (publicState?.usernameCollisions || []).map(
-      (entry) => `${entry.username}:${entry.owner_pubkey}:${(entry.claimant_pubkeys || []).join(",")}:${entry.conflict ? 1 : 0}`
-    ),
-    removedPubkeys: (publicState?.removedPubkeys || []).map((pubkey) => String(pubkey || "").trim().toLowerCase()),
-    entities: (publicState?.approvedEntities || []).map(
-      (entity) => `${entity.slug}:${entity.status || ""}:${entity.updated_at || entity.created_at || ""}`
-    ),
-    drafts: (publicState?.drafts || []).map(
-      (draft) => `${draft.id || draft.slug}:${draft.status || ""}:${draft.created_at || ""}`
-    ),
-    comments: (publicState?.allComments || []).map(
-      (comment) => `${comment.id}:${comment.visibility || "visible"}:${comment.created_at || ""}`
-    ),
-    keyRequests: (publicState?.pendingAdminKeyRequests || []).map(
-      (request) => `${request.id}:${request.requester_pubkey}:${request.site_pubkey}`
-    ),
-    activeSite: publicState?.siteInfo?.activePubkey || ""
-  };
-  return JSON.stringify(digest);
-}
-
-export function createRuntimePublicStateStore({
+export function createRuntimeProjectionStore({
+  channel = "",
+  params = {},
+  createDigest = defaultDigest,
   getSessionSecretKey = async () => "",
   page = "site",
   refreshDelayMs = () => 15000,
   shouldRefresh = () => true,
-  repairCooldownMs = 45000,
-  repairRefreshDelayMs = 2800,
+  repair = {},
   deps = {}
 } = {}) {
+  const cleanChannel = String(channel || "").trim();
+  if (!cleanChannel) {
+    throw new Error("createRuntimeProjectionStore requires a projection channel.");
+  }
+
+  const repairConfig = {
+    cooldownMs: Number(repair?.cooldownMs || 45000) || 45000,
+    refreshDelayMs: Number(repair?.refreshDelayMs || 2800) || 2800,
+    needsRepair: typeof repair?.needsRepair === "function" ? repair.needsRepair : () => false,
+    requestRepair: typeof repair?.requestRepair === "function" ? repair.requestRepair : async () => {},
+    startPeer: typeof repair?.startPeer === "function" ? repair.startPeer : async () => {},
+    buildPayload: typeof repair?.buildPayload === "function"
+      ? repair.buildPayload
+      : (value, reason, resolvedPage) => ({ reason, page: resolvedPage }),
+    enabled: Boolean(
+      repair?.enabled ??
+        (typeof repair?.needsRepair === "function" &&
+          typeof repair?.requestRepair === "function" &&
+          typeof repair?.startPeer === "function")
+    )
+  };
+
   const runtime = {
-    getCachedPublicState: () => normalizeStoreEnvelope(getCachedSiteRuntimeProjection("publicState", {})),
-    loadPublicState: async (force = false, reason = "runtime-public-state") => {
+    getCachedProjection: () => normalizeStoreEnvelope(getCachedSiteRuntimeProjection(cleanChannel, params), { createDigest }),
+    loadProjection: async (force = false, reason = `runtime-${cleanChannel}`) => {
       const runtimeClient = await getSiteRuntimeClient();
-      return normalizeStoreEnvelope(force
-        ? await runtimeClient.refreshProjection("publicState", {}, { reason })
-        : await runtimeClient.getProjection("publicState", {}, { preferFresh: false, reason }));
+      return normalizeStoreEnvelope(
+        force
+          ? await runtimeClient.refreshProjection(cleanChannel, params, { reason })
+          : await runtimeClient.getProjection(cleanChannel, params, { preferFresh: false, reason }),
+        { createDigest }
+      );
     },
-    rememberPublicState: (nextValue, meta = {}) => {
+    rememberProjection: (nextValue, meta = {}) => {
       const source = String(meta?.source || "local-remember").trim() || "local-remember";
-      const envelope = createStoreEnvelope(nextValue, { source });
+      const envelope = createStoreEnvelope(nextValue, {
+        createDigest,
+        source
+      });
       void getSiteRuntimeClient()
-        .then((runtimeClient) => runtimeClient.rememberProjection("publicState", {}, nextValue, { source }))
+        .then((runtimeClient) => runtimeClient.rememberProjection(cleanChannel, params, nextValue, { source }))
         .catch(() => null);
       return envelope;
     },
-    subscribePublicState: async (listener, options = {}) => {
+    subscribeProjection: async (listener, options = {}) => {
       if (typeof listener !== "function") return () => {};
       const runtimeClient = await getSiteRuntimeClient();
-      return runtimeClient.subscribeProjection("publicState", {}, listener, {
+      return runtimeClient.subscribeProjection(cleanChannel, params, listener, {
         emitCurrent: options?.emitCurrent !== false,
         refresh: options?.refresh !== false,
-        reason: options?.reason || "runtime-public-state-store-source"
+        reason: options?.reason || `runtime-projection-store:${cleanChannel}`
       });
     },
-    publicStateNeedsRepair,
-    requestPublicStateRepair,
-    startPublicStateRepairPeer,
+    needsRepair: repairConfig.needsRepair,
+    requestRepair: repairConfig.requestRepair,
+    startRepairPeer: repairConfig.startPeer,
+    buildRepairPayload: repairConfig.buildPayload,
     setTimeout: (callback, delay) => window.setTimeout(callback, delay),
     clearTimeout: (timerId) => window.clearTimeout(timerId),
     ...deps
   };
+
   const listeners = new Set();
-  const initialEnvelope = normalizeStoreEnvelope(runtime.getCachedPublicState() || null);
+  const initialEnvelope = normalizeStoreEnvelope(runtime.getCachedProjection() || null, { createDigest });
   const state = {
     envelope: initialEnvelope,
     value: initialEnvelope?.value || null,
-    digest: initialEnvelope?.digest || createPublicStateDigest(initialEnvelope?.value || null),
+    digest: initialEnvelope?.digest || createDigest(initialEnvelope?.value || null),
     status: initialEnvelope?.status || "idle",
     updatedAt: initialEnvelope?.updatedAt || 0,
     refreshTimer: 0,
@@ -106,10 +92,10 @@ export function createRuntimePublicStateStore({
   };
 
   function applyEnvelope(envelope = null) {
-    const normalizedEnvelope = normalizeStoreEnvelope(envelope);
+    const normalizedEnvelope = normalizeStoreEnvelope(envelope, { createDigest });
     state.envelope = normalizedEnvelope;
     state.value = normalizedEnvelope?.value || null;
-    state.digest = normalizedEnvelope?.digest || createPublicStateDigest(normalizedEnvelope?.value || null);
+    state.digest = normalizedEnvelope?.digest || createDigest(normalizedEnvelope?.value || null);
     state.status = String(normalizedEnvelope?.status || "idle");
     state.updatedAt = Number(normalizedEnvelope?.updatedAt || 0) || 0;
   }
@@ -147,28 +133,28 @@ export function createRuntimePublicStateStore({
   }
 
   async function ensureRepairPeer() {
-    if (state.repairPeerStarted) return;
-    await runtime.startPublicStateRepairPeer();
+    if (!repairConfig.enabled || state.repairPeerStarted) return;
+    await runtime.startRepairPeer();
     state.repairPeerStarted = true;
   }
 
-  async function maybeRequestRepair(publicState, reason = "") {
-    if (!runtime.publicStateNeedsRepair(publicState) || state.repairInFlight) return false;
+  async function maybeRequestRepair(value, reason = "") {
+    if (!repairConfig.enabled || !runtime.needsRepair(value) || state.repairInFlight) return false;
     const now = Date.now();
-    if (now - state.repairRequestedAt < repairCooldownMs) return false;
+    if (now - state.repairRequestedAt < repairConfig.cooldownMs) return false;
     const secretKeyHex = await getSessionSecretKey().catch(() => "");
     if (!secretKeyHex) return false;
+    const resolvedPage = typeof page === "function" ? page() : page;
     state.repairInFlight = true;
     state.repairRequestedAt = now;
     try {
-      await runtime.requestPublicStateRepair(secretKeyHex, {
-        reason,
-        page: typeof page === "function" ? page() : page,
-        knownEventCount: Array.isArray(publicState?.rawEvents) ? publicState.rawEvents.length : 0
-      });
+      await runtime.requestRepair(
+        secretKeyHex,
+        runtime.buildRepairPayload(value, reason, resolvedPage)
+      );
       runtime.setTimeout(() => {
         void hydrate({ force: true, reason: `${reason || "repair"}-followup`, requestRepair: false });
-      }, repairRefreshDelayMs);
+      }, repairConfig.refreshDelayMs);
       return true;
     } catch {
       return false;
@@ -180,7 +166,7 @@ export function createRuntimePublicStateStore({
   async function ensureSourceSubscription() {
     if (state.sourceSubscribed || state.sourceSubscriptionPromise) return;
     state.sourceSubscriptionPromise = Promise.resolve(
-      runtime.subscribePublicState(
+      runtime.subscribeProjection(
         (nextEnvelope, meta = {}) => {
           const previousValue = state.value;
           const previousDigest = state.digest;
@@ -194,7 +180,7 @@ export function createRuntimePublicStateStore({
         {
           emitCurrent: false,
           refresh: true,
-          reason: "runtime-public-state-store-source"
+          reason: `runtime-projection-store:${cleanChannel}:source`
         }
       )
     )
@@ -215,7 +201,7 @@ export function createRuntimePublicStateStore({
     const previousValue = state.value;
     const previousDigest = state.digest;
     const previousStatus = state.status;
-    const nextEnvelope = await runtime.loadPublicState(force, reason);
+    const nextEnvelope = await runtime.loadProjection(force, reason);
     applyEnvelope(nextEnvelope);
     const changed = state.digest !== previousDigest || state.status !== previousStatus;
     if (requestRepair) {
@@ -278,9 +264,7 @@ export function createRuntimePublicStateStore({
     const previousValue = state.value;
     const previousDigest = state.digest;
     const previousStatus = state.status;
-    applyEnvelope(runtime.rememberPublicState(nextValue, {
-      source: reason
-    }));
+    applyEnvelope(runtime.rememberProjection(nextValue, { source: reason }));
     const changed = state.digest !== previousDigest || state.status !== previousStatus;
     if (shouldNotify && changed) {
       notify(reason, previousValue, previousDigest, previousStatus, changed);
@@ -349,34 +333,12 @@ export function createRuntimePublicStateStore({
   };
 }
 
-function createStoreEnvelope(value, {
-  status = value ? "ready" : "idle",
-  digest = "",
-  updatedAt = Date.now(),
-  source = "runtime-public-state",
-  ...meta
-} = {}) {
-  const nextValue = value || null;
-  const nextUpdatedAt = Number(updatedAt || Date.now()) || Date.now();
-  return {
-    value: nextValue,
-    status: normalizeStatus(status, nextValue),
-    digest: String(digest || createPublicStateDigest(nextValue)),
-    updatedAt: nextUpdatedAt,
-    meta: {
-      source,
-      updatedAt: nextUpdatedAt,
-      ...meta
-    }
-  };
-}
-
-function normalizeStoreEnvelope(envelope = null) {
+export function normalizeStoreEnvelope(envelope = null, { createDigest = defaultDigest } = {}) {
   if (envelope && typeof envelope === "object" && "value" in envelope && ("status" in envelope || "digest" in envelope || "updatedAt" in envelope)) {
     return {
       value: envelope.value ?? null,
       status: String(envelope.status || "idle"),
-      digest: String(envelope.digest || createPublicStateDigest(envelope.value ?? null)),
+      digest: String(envelope.digest || createDigest(envelope.value ?? null)),
       updatedAt: Number(envelope.updatedAt || envelope.meta?.updatedAt || 0) || 0,
       meta: envelope.meta && typeof envelope.meta === "object" ? { ...envelope.meta } : {}
     };
@@ -384,9 +346,32 @@ function normalizeStoreEnvelope(envelope = null) {
   return {
     value: envelope || null,
     status: envelope ? "ready" : "idle",
-    digest: createPublicStateDigest(envelope || null),
+    digest: createDigest(envelope || null),
     updatedAt: Date.now(),
     meta: {}
+  };
+}
+
+function createStoreEnvelope(value, {
+  createDigest = defaultDigest,
+  status = value ? "ready" : "idle",
+  digest = "",
+  updatedAt = Date.now(),
+  source = "runtime-projection",
+  ...meta
+} = {}) {
+  const nextValue = value || null;
+  const nextUpdatedAt = Number(updatedAt || Date.now()) || Date.now();
+  return {
+    value: nextValue,
+    status: normalizeStatus(status, nextValue),
+    digest: String(digest || createDigest(nextValue)),
+    updatedAt: nextUpdatedAt,
+    meta: {
+      source,
+      updatedAt: nextUpdatedAt,
+      ...meta
+    }
   };
 }
 
@@ -398,4 +383,8 @@ function normalizeStatus(status, value) {
   return value ? "ready" : "idle";
 }
 
-export default createRuntimePublicStateStore;
+function defaultDigest(value) {
+  return JSON.stringify(value ?? null);
+}
+
+export default createRuntimeProjectionStore;

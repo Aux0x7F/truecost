@@ -1,84 +1,69 @@
 # The True Cost Project
 
-Static-first True Cost site draft for GitHub Pages with a shared Nostr-backed account, submission, entity, and draft layer.
+True Cost is the concrete site repo: public pages, operator workflows, site styling, and project-specific policy built on top of [`nostr-site`](https://github.com/Aux0x7F/nostr-site). The site stays static-first, then layers in live relay-backed state where it helps.
 
-The reusable framework now lives separately in the sibling `nostr-site` repo.
+## What lives here
 
-## Structure
+- public pages and site copy
+- investigation content and page templates
+- site-specific workspace, moderation, and publishing flows
+- styling, layout, and downstream UI choices
+- the vendored browser support bundle built from `nostr-site`
 
-- `scripts/`: True Cost browser code and route entrypoints
-- `scripts/core/`: shared services, stores, controllers, formatting, and transport helpers
-- `scripts/features/`: route-owned feature orchestration and lifecycle modules
-- `scripts/surfaces/`: shared presentational UI families
-- `scripts/shell.js`: immediate public-shell bootstrap for nav/profile interactivity before heavier page features hydrate
-- `docs/`: contract, operations, and roadmap documents for the current site
-- `docs/README.md`: index of architecture, component, testing, browser-support, and operating contracts
-- `vendor/nostr-site-support.esm.js`: vendored minified browser bundle built from `nostr-site/support-lib`
-- sibling `nostr-site/`: standalone generic framework repo boundary, including the bundled `peer-pinner` package
+## How this fits with the sibling repos
 
-## Pages
+- [`nostr-site`](https://github.com/Aux0x7F/nostr-site)
+  - reusable framework/runtime layer
+  - projections, document runtime, template shells, support bundle, and pinner integration
+- [`nostr-crdt`](https://github.com/YousefED/nostr-crdt)
+  - transport and sync layer for collaborative units
 
-- `index.html`: landing page
-- `investigations.html`: archive
-- `investigation.html`: markdown-backed detail page with comments
-- `guide.html`: markdown-backed guide
-- `submit.html`: logged-in submission list, edit flow, and message thread
-- `map.html`: entity map and geographic index
-- `admin.html`: login, profile options, and role-based workspace
-- `get-involved.html`, `about.html`, `merch.html`: supporting pages
+`truecost` is where the abstract pieces turn into the actual site.
 
-## Content updates
+## Repo layout
 
-### Investigations
+- `site-src/`
+  - page sources and page definitions
+- `content/`
+  - investigations, guide content, and baked data
+- `scripts/core/`
+  - shared site-side controllers, runtime adapters, and helpers
+- `scripts/features/`
+  - route and feature orchestration
+- `scripts/surfaces/`
+  - reusable rendering families
+- `styles/`
+  - ordered stylesheet partials bundled into `styles.css`
+- `docs/`
+  - architecture, workflow, testing, operations, and style notes
+- `dist/`
+  - generated deploy output
 
-1. Add or edit a markdown file in `content/investigations/`.
-2. Add the filename to `content/investigations/index.json`.
-3. Keep post metadata in the `<!--TCMETA ... -->` block at the top of the file.
+## Build and output
 
-### Guide
+`npm run build` rebuilds the bundled site output in `dist/`.
 
-Edit `content/pages/guide.md`.
+That build:
 
-## Config
+- generates HTML from `site-src`
+- rebuilds `styles.css`
+- bundles browser scripts
+- copies content, assets, and fonts needed for deploys
 
-Update `scripts/core/site-config.js` for project links, relay list, and keys:
+Repo root is source. `dist/` is the browser artifact.
 
-- `donateUrl`
-- `merchUrl`
-- `youtubeUrl`
-- `contactEmail`
-- `nostr.relays`
-- `nostr.inboxPubkey`
-- `nostr.rootAdminPubkey`
+## Start here
 
-`nostr.inboxPubkey` is now the bootstrap / fallback inbox pubkey. Live site-key rotation events can move the active inbox pubkey forward without another config edit.
-
-## Nostr model
-
-- account login is deterministic from username + password, scoped to this project namespace
-- account claims and profiles are public events
-- submission bodies and submission chat use encrypted direct messages to the configured inbox key
-- the active inbox key can rotate through public site-key events and encrypted re-shares to remaining admins
-- admin grants, moderation actions, entities, drafts, comments, and submission status use public events
-
-## Smoke testing
-
-The generic live-browser smoke harness now lives in `nostr-site/tooling/browser-smoke`.
-
-## Build
-
-- `npm run build`
-  - rebuilds `styles.css`
-  - bundles and minifies the browser entry scripts into `dist/scripts`
-  - minifies HTML into `dist/`
-  - copies content, vendor assets, and font files needed for static deploys
-
-## Hardening
-
-The production hardening and release checklist lives in the sibling `nostr-site` repo at `docs/SECURITY_CHECKLIST.md`. Use that as the release gate for this site along with the live smoke suite.
-
-## Generic boundary
-
-`truecost` now consumes the built `nostr-site` support bundle rather than maintaining its own local copy of the generic relay/CMS source layer.
-
-See `docs/ARCHITECTURE.md` for the current static-baseline plus verified-live-overlay model and how this repo fits alongside `nostr-site` and `nostr-crdt`.
+- Want the big picture?
+  - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
+- Working on UI or page behavior?
+  - [docs/COMPONENTS.md](./docs/COMPONENTS.md)
+  - [docs/STYLE_GUIDE.md](./docs/STYLE_GUIDE.md)
+- Touching runtime behavior or edge cases?
+  - [docs/TESTING.md](./docs/TESTING.md)
+- Running the site or thinking about bakedown?
+  - [docs/OPERATIONS.md](./docs/OPERATIONS.md)
+- Want the roadmap and current priorities?
+  - [docs/ROADMAP.md](./docs/ROADMAP.md)
+- Need the docs map?
+  - [docs/README.md](./docs/README.md)

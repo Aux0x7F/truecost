@@ -1,4 +1,4 @@
-import { cleanSlug } from "../core/nostr.js";
+import { investigationDocumentId } from "../core/investigation-document.js";
 import { draftToInvestigationPreview, isPageDraft } from "../core/page-drafts.js";
 import { bindReviewPreviewPanel, renderReviewPreviewPanel } from "./review-preview.js";
 
@@ -25,7 +25,6 @@ export function createInvestigationDetailSurface({ site, state, deps = {} } = {}
   const destroyLeafletPreview = deps.destroyLeafletPreview || (() => {});
   const renderComments = deps.renderComments || (async () => {});
   const connectStructuredUnitOverlay = deps.connectStructuredUnitOverlay || (async () => null);
-  const getRequestSignerSecretKey = deps.getRequestSignerSecretKey || (async () => "");
   const trustedAdminPubkeys = deps.trustedAdminPubkeys || (() => []);
   const formatDate = deps.formatDate || ((value) => String(value || ""));
 
@@ -236,11 +235,8 @@ export function createInvestigationDetailSurface({ site, state, deps = {} } = {}
     if (!overlayState?.documentId || overlayState.controller) return;
 
     try {
-      const secretKeyHex = await getRequestSignerSecretKey();
-      if (!secretKeyHex) return;
       overlayState.controller = await connectStructuredUnitOverlay({
         documentId: overlayState.documentId,
-        secretKeyHex,
         kind: site.nostr.kinds.collabDocument,
         getTrustedPubkeys: () => trustedAdminPubkeys(state.publicState),
         canPublish: () => false,
@@ -315,11 +311,6 @@ export function createInvestigationDetailSurface({ site, state, deps = {} } = {}
     destroy,
     renderState
   };
-}
-
-export function investigationDocumentId(value) {
-  const slug = cleanSlug(value || "");
-  return slug ? `investigation:${slug}` : "";
 }
 
 export function mergeInvestigationPostOverlay(basePost, liveContent) {

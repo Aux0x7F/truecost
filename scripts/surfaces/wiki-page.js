@@ -165,33 +165,79 @@ export function renderWikiIndexView({
     `,
     rail: `
       <div class="graph-rail__stack">
-        <article class="surface-panel graph-rail__panel">
-          <div class="eyebrow">Search wiki</div>
-          <label class="sr-only" for="wikiSearchInput">Search wiki</label>
-          <input id="wikiSearchInput" class="workspace-search__input" type="search" value="${escapeAttribute(query)}" placeholder="Search entities, aliases, or taxonomy" data-wiki-search>
-          <p class="muted-text">Search narrows the current wiki directory. Open any record to inspect the full wiki page.</p>
+        <article class="surface-panel graph-rail__panel" data-wiki-rail-search-panel>
+          ${renderWikiIndexRailSearchPanel({ query })}
         </article>
 
-        <article class="surface-panel graph-rail__panel">
-          <div class="eyebrow">Types</div>
-          <div class="tag-row graph-filter-row">
-            ${availableTypes.map((type) => renderWikiFilterChip(type, activeTypeFilters.includes(type))).join("")}
-          </div>
+        <article class="surface-panel graph-rail__panel" data-wiki-rail-types-panel>
+          ${renderWikiIndexRailTypesPanel({
+            availableTypes,
+            activeTypeFilters
+          })}
         </article>
 
-        <article class="surface-panel graph-rail__panel">
-          <div class="eyebrow">Directory</div>
-          <div class="metric-inline"><strong>${entities.length}</strong><span>Total entities</span></div>
-          <div class="metric-inline"><strong>${filteredEntities.length}</strong><span>Visible records</span></div>
-          ${
+        <article class="surface-panel graph-rail__panel" data-wiki-rail-directory-panel>
+          ${renderWikiIndexRailDirectoryPanel({
+            totalEntities: entities.length,
+            filteredEntities: filteredEntities.length,
             viewerIsAdmin
-              ? `<button class="button button-ghost" type="button" data-open-graph-entity-modal>Create entity</button>`
-              : ""
-          }
+          })}
         </article>
       </div>
     `
   };
+}
+
+export function renderWikiIndexRailShell({ query = "" } = {}) {
+  return `
+    <div class="graph-rail__stack">
+      <article class="surface-panel graph-rail__panel" data-wiki-rail-search-panel>
+        ${renderWikiIndexRailSearchPanel({ query })}
+      </article>
+
+      <article class="surface-panel graph-rail__panel" data-wiki-rail-types-panel></article>
+
+      <article class="surface-panel graph-rail__panel" data-wiki-rail-directory-panel></article>
+    </div>
+  `;
+}
+
+export function renderWikiIndexRailSearchPanel({ query = "" } = {}) {
+  return `
+    <div class="eyebrow">Search wiki</div>
+    <label class="sr-only" for="wikiSearchInput">Search wiki</label>
+    <input id="wikiSearchInput" class="workspace-search__input" type="search" value="${escapeAttribute(query)}" placeholder="Search entities, aliases, or taxonomy" data-wiki-search>
+    <p class="muted-text">Search narrows the current wiki directory. Open any record to inspect the full wiki page.</p>
+  `;
+}
+
+export function renderWikiIndexRailTypesPanel({
+  availableTypes = [],
+  activeTypeFilters = []
+} = {}) {
+  return `
+    <div class="eyebrow">Types</div>
+    <div class="tag-row graph-filter-row">
+      ${availableTypes.map((type) => renderWikiFilterChip(type, activeTypeFilters.includes(type))).join("")}
+    </div>
+  `;
+}
+
+export function renderWikiIndexRailDirectoryPanel({
+  totalEntities = 0,
+  filteredEntities = 0,
+  viewerIsAdmin = false
+} = {}) {
+  return `
+    <div class="eyebrow">Directory</div>
+    <div class="metric-inline"><strong>${totalEntities}</strong><span>Total entities</span></div>
+    <div class="metric-inline"><strong>${filteredEntities}</strong><span>Visible records</span></div>
+    ${
+      viewerIsAdmin
+        ? `<button class="button button-ghost" type="button" data-open-graph-entity-modal>Create entity</button>`
+        : ""
+    }
+  `;
 }
 
 function renderWikiFilterChip(value, active) {

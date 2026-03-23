@@ -110,7 +110,9 @@ export function createMapPageFeature({
 
   function visibleMapEntities(publicState) {
     const approvedEntities = Array.isArray(publicState?.approvedEntities) ? publicState.approvedEntities : [];
-    if (approvedEntities.length) return approvedEntities;
+    if (approvedEntities.length) {
+      return approvedEntities.filter((entity) => Number.isFinite(entity?.lat) && Number.isFinite(entity?.lng));
+    }
     if (Array.isArray(state.lastGoodMapEntities) && state.lastGoodMapEntities.length) {
       return state.lastGoodMapEntities.map((entity) => ({ ...entity }));
     }
@@ -195,7 +197,7 @@ export function createMapPageFeature({
     );
   }
 
-  function scheduleMapEntityFocus(slug, options = {}, attempt = 0) {
+  function scheduleMapEntityFocus(slug, attempt = 0) {
     scheduleLeafletFocus(
       slug,
       state,
@@ -203,7 +205,7 @@ export function createMapPageFeature({
         cleanSlug,
         queryEntityCard: (value) => document.querySelector(`[data-entity-card="${value}"]`)
       },
-      options,
+      {},
       attempt
     );
   }

@@ -119,6 +119,50 @@ test("site runtime client keeps a sync bootstrap snapshot for cached public stat
   client.destroy();
 });
 
+test("site runtime client seeds public state from the runtime bootstrap envelope without hitting the host loader", async () => {
+  const storage = new Map();
+  const bootstrapKey = "truecost.v2.runtime-public-state-bootstrap";
+  storage.set(bootstrapKey, JSON.stringify({
+    value: {
+      admins: ["bootstrap-admin"],
+      users: [{ pubkey: "bootstrap-admin", username: "aux", displayName: "Aux" }]
+    },
+    status: "ready",
+    digest: "bootstrap-digest",
+    updatedAt: 1,
+    meta: { source: "runtime-bootstrap" }
+  }));
+  globalThis.localStorage = {
+    getItem: (key) => storage.get(key) || null,
+    setItem: (key, value) => storage.set(key, value),
+    removeItem: (key) => storage.delete(key)
+  };
+
+  let loaderCalls = 0;
+  const host = createSiteRuntimeHost({
+    database: createMemoryRuntimeDatabase(),
+    deps: {
+      loadPublicState: async () => {
+        loaderCalls += 1;
+        return createPublicState("loader");
+      }
+    }
+  });
+
+  const client = createSiteRuntimeClient({
+    workerUrl: "",
+    hostFactory: () => host
+  });
+
+  await client.seedSession(null, { force: false });
+  const cached = client.getCachedProjection("publicState", {});
+
+  assert.equal(cached?.value?.admins?.includes("bootstrap-admin"), true);
+  assert.equal(loaderCalls, 0);
+
+  client.destroy();
+});
+
 test("site runtime client keeps sync bootstrap snapshots for global projection state", async () => {
   const storage = new Map();
   globalThis.localStorage = {

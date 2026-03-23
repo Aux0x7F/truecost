@@ -25,7 +25,7 @@ test("navigation ui state keeps notification panel constrained to available item
   keepProfileMenuOpen(state);
   assert.equal(state.profileMenuOpen, true);
   closeProfileMenu(state);
-  assert.deepEqual(state, { profileMenuOpen: false, notificationsExpanded: false });
+  assert.deepEqual(state, { profileMenuOpen: false, notificationsExpanded: false, openGroupKey: "" });
 });
 
 test("notification state hydrates, dismisses, and clears items against runtime-backed dismissed ids", async () => {

@@ -52,7 +52,8 @@ for (const page of pageDefinitions) {
   const html = renderPageHtml({
     page,
     site: siteTemplate,
-    mainHtml
+    mainHtml,
+    inlineStyles: minifiedCss.code
   });
   const minified = await minifyHtml(html, {
     collapseWhitespace: true,

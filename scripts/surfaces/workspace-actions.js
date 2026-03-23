@@ -46,7 +46,7 @@ export function renderUserCard(user, workspaceState, deps = {}) {
   const escapeHtml = deps.escapeHtml || ((value) => String(value || ""));
   const escapeAttribute = deps.escapeAttribute || ((value) => String(value || ""));
   return `
-    <article class="roster-item" id="user-${escapeAttribute(user.pubkey)}" data-user-card="${escapeAttribute(user.pubkey)}" ${usernameConflict ? 'data-account-integrity="conflict"' : ""}>
+    <article class="roster-item" id="user-${escapeAttribute(user.pubkey)}" data-user-card="${escapeAttribute(user.pubkey)}" ${usernameConflict ? 'data-session-integrity="conflict"' : ""}>
       <div class="workspace-list__row">
         <div>
           ${deps.renderUserIdentityButton(user)}
@@ -96,7 +96,7 @@ export function renderLookupCandidate(workspaceState, deps = {}) {
   const usernameConflict = deps.userHasUsernameConflict ? deps.userHasUsernameConflict(user) : Boolean(user?.usernameConflict);
   const escapeAttribute = deps.escapeAttribute || ((value) => String(value || ""));
   return `
-    <article class="roster-item" data-user-card="${escapeAttribute(user.pubkey)}" ${usernameConflict ? 'data-account-integrity="conflict"' : ""}>
+    <article class="roster-item" data-user-card="${escapeAttribute(user.pubkey)}" ${usernameConflict ? 'data-session-integrity="conflict"' : ""}>
       <div class="workspace-list__row">
         <div>
           ${deps.renderUserIdentityButton(user)}

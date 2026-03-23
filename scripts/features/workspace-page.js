@@ -57,6 +57,27 @@ export function createWorkspacePageController({
 
   let started = false;
 
+  function sameSession(left = null, right = null) {
+    return JSON.stringify({
+      username: String(left?.username || "").trim().toLowerCase(),
+      pubkey: String(left?.pubkey || "").trim().toLowerCase(),
+      secretKeyHex: String(left?.secretKeyHex || "").trim().toLowerCase()
+    }) === JSON.stringify({
+      username: String(right?.username || "").trim().toLowerCase(),
+      pubkey: String(right?.pubkey || "").trim().toLowerCase(),
+      secretKeyHex: String(right?.secretKeyHex || "").trim().toLowerCase()
+    });
+  }
+
+  function sameLogicalSession(left = null, right = null) {
+    const leftUsername = String(left?.username || "").trim().toLowerCase();
+    const rightUsername = String(right?.username || "").trim().toLowerCase();
+    const leftSecretKeyHex = String(left?.secretKeyHex || "").trim().toLowerCase();
+    const rightSecretKeyHex = String(right?.secretKeyHex || "").trim().toLowerCase();
+    if (!leftUsername && !rightUsername && !leftSecretKeyHex && !rightSecretKeyHex) return true;
+    return leftUsername === rightUsername && leftSecretKeyHex === rightSecretKeyHex;
+  }
+
   function start() {
     if (started) return false;
     if (!runtime.document?.querySelector?.("[data-workspace-page]")) return false;
@@ -70,7 +91,13 @@ export function createWorkspacePageController({
   }
 
   async function handleSessionChanged() {
-    state.session = runtime.getStoredSession();
+    const nextSession = runtime.getStoredSession();
+    if (sameSession(state.session, nextSession)) return;
+    if (sameLogicalSession(state.session, nextSession)) {
+      state.session = nextSession;
+      return;
+    }
+    state.session = nextSession;
     state.viewer = null;
     state.passwordRotationModal = null;
     await hooks.refreshWorkspace(true);

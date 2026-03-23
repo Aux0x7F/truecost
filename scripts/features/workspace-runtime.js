@@ -146,7 +146,7 @@ export function createWorkspaceRuntime({
 
   async function hydrateInboxSubmissions({ background = false } = {}) {
     if (!accessController.hasInboxAccess()) return;
-    if (!background) {
+    if (!background && hooks.shouldSoftRefreshWorkspace()) {
       state.inboxLoading = true;
       hooks.renderWorkspace({ soft: true });
     }
@@ -161,7 +161,7 @@ export function createWorkspaceRuntime({
       });
     }
     state.inboxLoading = false;
-    if (!background) {
+    if (!background && hooks.shouldSoftRefreshWorkspace()) {
       hooks.renderWorkspace({ soft: true });
     }
     await hooks.maybeOpenAdminChatFromUrl();
@@ -215,7 +215,9 @@ export function createWorkspaceRuntime({
     await hydrate(force);
     state.staticSlugs = await runtime.loadStaticSlugs().catch(() => state.staticSlugs || []);
     state.activeTab = accessController.chooseInitialTab(state.activeTab);
-    hooks.renderWorkspace();
+    if (hooks.shouldSoftRefreshWorkspace()) {
+      hooks.renderWorkspace({ soft: true });
+    }
     await hooks.maybeResolveUserDeepLink();
     hooks.maybeResolveCommentDeepLink();
     state.keyRequestState = "";
@@ -229,6 +231,7 @@ export function createWorkspaceRuntime({
       state.inboxLoading = false;
       state.inboxSubmissions = [];
     }
+    hooks.renderWorkspace();
     scheduleSync();
   }
 
