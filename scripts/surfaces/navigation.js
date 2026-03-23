@@ -52,7 +52,7 @@ export function renderNavigationMarkup({
   notificationsLoading = false,
   profileMenuOpen = false,
   notificationsExpanded = false,
-  mapEnabled = true,
+  openGroupKey = "",
   deps = {}
 } = {}) {
   const escapeHtml = deps.escapeHtml || ((value) => String(value || ""));
@@ -108,21 +108,23 @@ export function renderNavigationMarkup({
         </div>
       </div>
     `
-    : `<a class="profile-cta" href="./admin.html?tab=login" aria-label="Create or log in">Create/Login</a>`;
+    : `<button class="profile-cta" type="button" data-auth-open aria-label="Create or log in">Create/Login</button>`;
 
   return `
     <a class="${navLinkClass(page, navKeys, "home")}" href="./index.html">Home</a>
-    <div class="nav-group ${navKeys.explore?.includes(page) ? "is-current" : ""}" data-nav-group>
+    <div class="nav-group ${navKeys.explore?.includes(page) ? "is-current" : ""} ${openGroupKey === "explore" ? "is-open" : ""}" data-nav-group data-nav-group-key="explore">
       <button class="nav-group__toggle" type="button" data-submenu-toggle>
         Explore
       </button>
       <div class="nav-group__panel">
         <a class="${navLinkClass(page, navKeys, "investigations")}" href="./investigations.html">Investigations</a>
-        <a class="${navLinkClass(page, navKeys, "map", !mapEnabled && !navKeys.map?.includes(page))}" href="./map.html" ${!mapEnabled && !navKeys.map?.includes(page) ? 'aria-disabled="true"' : ""}>Map</a>
+        <a class="${navLinkClass(page, navKeys, "map")}" href="./map.html">Map</a>
+        <a class="${navLinkClass(page, navKeys, "graph")}" href="./graph.html">Graph</a>
+        <a class="${navLinkClass(page, navKeys, "wiki")}" href="./wiki.html">Wiki</a>
         ${isAdmin ? `<a class="nav-link" href="./editor.html">Create Investigation</a>` : ""}
       </div>
     </div>
-    <div class="nav-group ${navKeys["get-involved"]?.includes(page) ? "is-current" : ""}" data-nav-group>
+    <div class="nav-group ${navKeys["get-involved"]?.includes(page) ? "is-current" : ""} ${openGroupKey === "get-involved" ? "is-open" : ""}" data-nav-group data-nav-group-key="get-involved">
       <button class="nav-group__toggle" type="button" data-submenu-toggle>
         Get Involved
       </button>

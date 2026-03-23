@@ -1,0 +1,17 @@
+{
+  "name": "truecost",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:styles": "node tooling/build-styles.mjs",
+    "build": "node build.mjs",
+    "test:unit": "node tooling/run-tests.mjs unit",
+    "test:browser": "node tooling/run-tests.mjs browser"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "esbuild": "^0.25.1",
+    "html-minifier-terser": "^7.2.0"
+  }
+}

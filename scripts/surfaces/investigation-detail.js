@@ -1,4 +1,4 @@
-import { cleanSlug } from "../core/nostr.js";
+import { investigationDocumentId } from "../core/investigation-document.js";
 import { draftToInvestigationPreview, isPageDraft } from "../core/page-drafts.js";
 import { bindReviewPreviewPanel, renderReviewPreviewPanel } from "./review-preview.js";
 
@@ -6,12 +6,14 @@ export function createInvestigationDetailSurface({ site, state, deps = {} } = {}
   const cleanSlug = deps.cleanSlug || ((value) => String(value || "").trim().toLowerCase());
   const renderError = deps.renderError || (() => {});
   const renderLoadingState = deps.renderLoadingState || ((value) => String(value || ""));
+  const getCachedPosts = deps.getCachedPosts || (() => []);
   const refreshPosts = deps.refreshPosts || (async () => []);
   const getPublicState = deps.getPublicState || (async () => null);
   const editorEntryAllowed = deps.editorEntryAllowed || (() => false);
   const loadDraftBySlug = deps.loadDraftBySlug || (async () => null);
   const setText = deps.setText || (() => {});
   const renderMarkdown = deps.renderMarkdown || (() => {});
+  const renderArticleBody = deps.renderArticleBody || null;
   const buildArticleMetaLine = deps.buildArticleMetaLine || (() => "");
   const renderTagList = deps.renderTagList || (() => "");
   const renderRecordList = deps.renderRecordList || (() => "");
@@ -23,7 +25,6 @@ export function createInvestigationDetailSurface({ site, state, deps = {} } = {}
   const destroyLeafletPreview = deps.destroyLeafletPreview || (() => {});
   const renderComments = deps.renderComments || (async () => {});
   const connectStructuredUnitOverlay = deps.connectStructuredUnitOverlay || (async () => null);
-  const getRequestSignerSecretKey = deps.getRequestSignerSecretKey || (async () => "");
   const trustedAdminPubkeys = deps.trustedAdminPubkeys || (() => []);
   const formatDate = deps.formatDate || ((value) => String(value || ""));
 
@@ -42,7 +43,7 @@ export function createInvestigationDetailSurface({ site, state, deps = {} } = {}
     const params = new URLSearchParams(window.location.search);
     const slug = cleanSlug(params.get("slug") || "");
     const draftSlug = cleanSlug(params.get("draft") || "");
-    const cachedPosts = clonePosts(state.posts);
+    const cachedPosts = clonePosts(getCachedPosts());
     const cachedPublicState = state.publicState;
 
     if (!draftSlug && cachedPosts.length) {
@@ -159,7 +160,11 @@ export function createInvestigationDetailSurface({ site, state, deps = {} } = {}
     } = overlayState;
     const refreshComments = Boolean(options.refreshComments);
 
-    renderMarkdown(article, post.body);
+    if (typeof renderArticleBody === "function") {
+      renderArticleBody(article, post);
+    } else {
+      renderMarkdown(article, post.body);
+    }
     setText("[data-investigation-title]", post.title);
     setText("[data-investigation-summary]", post.summary);
     setText("[data-investigation-meta]", buildArticleMetaLine(post));
@@ -230,11 +235,8 @@ export function createInvestigationDetailSurface({ site, state, deps = {} } = {}
     if (!overlayState?.documentId || overlayState.controller) return;
 
     try {
-      const secretKeyHex = await getRequestSignerSecretKey();
-      if (!secretKeyHex) return;
       overlayState.controller = await connectStructuredUnitOverlay({
         documentId: overlayState.documentId,
-        secretKeyHex,
         kind: site.nostr.kinds.collabDocument,
         getTrustedPubkeys: () => trustedAdminPubkeys(state.publicState),
         canPublish: () => false,
@@ -311,11 +313,6 @@ export function createInvestigationDetailSurface({ site, state, deps = {} } = {}
   };
 }
 
-export function investigationDocumentId(value) {
-  const slug = cleanSlug(value || "");
-  return slug ? `investigation:${slug}` : "";
-}
-
 export function mergeInvestigationPostOverlay(basePost, liveContent) {
   const base = cloneInvestigationPost(basePost);
   const live = liveContent && typeof liveContent === "object" ? liveContent : {};
@@ -345,6 +342,25 @@ export function mergeInvestigationPostOverlay(basePost, liveContent) {
   }
   if (Object.prototype.hasOwnProperty.call(live, "records")) {
     next.records = Array.isArray(live.records) ? JSON.parse(JSON.stringify(live.records)) : [];
+  }
+  if (Object.prototype.hasOwnProperty.call(live, "structured_document")) {
+    next.structured_document = live.structured_document ? JSON.parse(JSON.stringify(live.structured_document)) : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(live, "body_html")) {
+    next.body_html = String(live.body_html || "");
+  }
+  if (Object.prototype.hasOwnProperty.call(live, "search_text")) {
+    next.search_text = String(live.search_text || "");
+  }
+  if (Object.prototype.hasOwnProperty.call(live, "relationship_candidates")) {
+    next.relationship_candidates = Array.isArray(live.relationship_candidates)
+      ? JSON.parse(JSON.stringify(live.relationship_candidates))
+      : [];
+  }
+  if (Object.prototype.hasOwnProperty.call(live, "citations")) {
+    next.citations = Array.isArray(live.citations)
+      ? JSON.parse(JSON.stringify(live.citations))
+      : [];
   }
   if (Object.prototype.hasOwnProperty.call(live, "featured")) {
     next.featured = Boolean(live.featured);

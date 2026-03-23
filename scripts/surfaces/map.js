@@ -35,6 +35,7 @@ export function renderLeafletMapSurface(canvas, entities, mapState, deps = {}) {
   if (!mapState.map) {
     canvas.innerHTML = "";
     mapState.map = window.L.map(canvas, {
+      keyboard: false,
       zoomControl: true,
       scrollWheelZoom: false
     }).setView(SITE.map.defaultCenter, SITE.map.defaultZoom);
@@ -69,8 +70,10 @@ export function renderLeafletMapSurface(canvas, entities, mapState, deps = {}) {
       </div>
     `);
     marker.on("click", () => {
-      const card = deps.queryEntityCard ? deps.queryEntityCard(entity.slug) : document.querySelector(`[data-entity-card="${entity.slug}"]`);
-      if (card instanceof HTMLElement) card.scrollIntoView({ behavior: "smooth", block: "center" });
+      highlightMapEntityCard(
+        entity.slug,
+        deps.queryEntityCard || ((slug) => document.querySelector(`[data-entity-card="${slug}"]`))
+      );
     });
   }
 
@@ -82,7 +85,7 @@ export function renderLeafletMapSurface(canvas, entities, mapState, deps = {}) {
     singleZoom: 8,
     onSettled: () => {
       if (mapState.pendingMapEntitySlug && typeof deps.scheduleMapEntityFocus === "function") {
-        deps.scheduleMapEntityFocus(mapState.pendingMapEntitySlug, { scrollCard: false });
+        deps.scheduleMapEntityFocus(mapState.pendingMapEntitySlug);
       }
     }
   });
@@ -138,9 +141,15 @@ export function bindMapEntityCards(onFocus, root = document) {
   for (const card of root.querySelectorAll("[data-entity-card]")) {
     if (!(card instanceof HTMLElement) || card.dataset.bound === "yes") continue;
     card.dataset.bound = "yes";
+    card.addEventListener("mousedown", (event) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".entity-card__links a")) return;
+      event.preventDefault();
+    });
     card.addEventListener("click", (event) => {
       const target = event.target;
       if (target instanceof Element && target.closest(".entity-card__links a")) return;
+      event.preventDefault();
       onFocus?.(card.getAttribute("data-entity-card") || "");
     });
     card.addEventListener("keydown", (event) => {
@@ -153,20 +162,13 @@ export function bindMapEntityCards(onFocus, root = document) {
   }
 }
 
-export function focusEntityOnRenderedMap(slug, mapState, deps = {}, options = {}) {
+export function focusEntityOnRenderedMap(slug, mapState, deps = {}) {
   const cleanSlug = deps.cleanSlug || ((value) => String(value || "").trim());
   const clean = cleanSlug(slug || "");
   if (!clean) return false;
   const marker = mapState?.markerIndex?.get(clean);
   const queryEntityCard = deps.queryEntityCard || ((value) => document.querySelector(`[data-entity-card="${value}"]`));
-  const card = queryEntityCard(clean);
-  if (card instanceof HTMLElement) {
-    for (const item of document.querySelectorAll(".entity-card--focus")) item.classList.remove("entity-card--focus");
-    card.classList.add("entity-card--focus");
-    if (options.scrollCard !== false) {
-      card.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }
+  highlightMapEntityCard(clean, queryEntityCard);
   if (marker && mapState?.map) {
     mapState.pendingMapEntitySlug = "";
     const latLng = marker.getLatLng();
@@ -183,7 +185,7 @@ export function scheduleMapEntityFocus(slug, mapState, deps = {}, options = {}, 
   const clean = cleanSlug(slug || "");
   if (!clean) return;
   mapState.pendingMapEntitySlug = clean;
-  const applied = focusEntityOnRenderedMap(clean, mapState, deps, options);
+  const applied = focusEntityOnRenderedMap(clean, mapState, deps);
   if (applied || attempt >= 10) return;
   window.setTimeout(() => {
     scheduleMapEntityFocus(clean, mapState, deps, options, attempt + 1);
@@ -192,4 +194,16 @@ export function scheduleMapEntityFocus(slug, mapState, deps = {}, options = {}, 
 
 export function requestedMapEntity(search = window.location.search, cleanSlug = (value) => String(value || "").trim()) {
   return cleanSlug(new URLSearchParams(search).get("entity") || "");
+}
+
+function highlightMapEntityCard(slug, queryEntityCard) {
+  const cleanSlug = String(slug || "").trim();
+  if (!cleanSlug) return;
+  for (const item of document.querySelectorAll(".entity-card--focus")) {
+    item.classList.remove("entity-card--focus");
+  }
+  const card = typeof queryEntityCard === "function" ? queryEntityCard(cleanSlug) : null;
+  if (card instanceof HTMLElement) {
+    card.classList.add("entity-card--focus");
+  }
 }

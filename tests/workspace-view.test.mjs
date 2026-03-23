@@ -91,6 +91,8 @@ test("workspace view does not render a fake login tab and keeps the profile hand
   });
 
   assert.doesNotMatch(profileView.paneMarkup, /data-profile-username-input/);
+  assert.doesNotMatch(profileView.paneMarkup, /name="displayName"/);
+  assert.doesNotMatch(profileView.paneMarkup, /Display name/);
   assert.match(profileView.paneMarkup, /@aux/);
   assert.match(profileView.paneMarkup, /Usernames are fixed account handles/);
   assert.match(profileView.paneMarkup, /data-open-password-rotation/);

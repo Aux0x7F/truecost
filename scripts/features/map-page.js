@@ -5,20 +5,28 @@ export function createMapPageFeature({
   state,
   postsStore,
   getPublicState,
+  getProjection,
+  subscribeProjection,
+  queryState,
   cleanSlug,
   collectEntityRefsFromText,
   renderLeafletMapSurface,
   bindMapEntityCards,
-  requestedMapEntity,
   scheduleLeafletFocus,
   renderMapPageSurface,
   renderError,
   renderLoadingState
 } = {}) {
+  let queryBound = false;
+  let projectionBound = false;
+  let projectionUnsubscribe = null;
+
   async function mount() {
     const list = document.querySelector("[data-map-list]");
     const canvas = document.querySelector("[data-map-canvas]");
     if (!(list instanceof HTMLElement) || !(canvas instanceof HTMLElement)) return;
+    bindQueryState();
+    bindProjection();
     const mapReady = Boolean(state.map && state.mapCanvas === canvas);
     const cachedEntities = visibleMapEntities(state.publicState);
     const renderedCachedMap = Boolean(cachedEntities.length);
@@ -27,22 +35,24 @@ export function createMapPageFeature({
     } else {
       const hasStableMapData = Array.isArray(state.lastGoodMapEntities) && state.lastGoodMapEntities.length;
       if (!hasStableMapData) list.innerHTML = renderLoadingState("Looking up map entries...");
-      if (!mapReady) canvas.innerHTML = renderLoadingState("Looking up map data...");
+      if (!mapReady) {
+        mapSurfaceDeps().renderLeafletMapSurface(canvas, []);
+      }
     }
 
     try {
-      const publicState = await getPublicState();
-      const entities = visibleMapEntities(publicState);
-      if (!entities.length) {
-        list.innerHTML = `<div class="empty-state">Published entities will appear here once approved entries are available.</div>`;
-        canvas.innerHTML = `<div class="map-empty">Map data unavailable.</div>`;
-        return;
-      }
-      state.lastGoodMapEntities = entities.map((entity) => ({ ...entity }));
-      const posts = await postsStore.load().catch(() => []);
-      const entityUsage = buildEntityUsage(posts, entities, collectEntityRefsFromText);
-      renderMapPageSurface(list, canvas, entities, entityUsage, mapSurfaceDeps());
-      state.mapViewDigest = dataDigest({ approvedEntities: entities });
+      const [publicState, projectedEntities] = await Promise.all([
+        getPublicState(),
+        typeof getProjection === "function"
+          ? getProjection("mapEntities", {}, { preferFresh: false })
+              .then((projection) => projection?.value ?? projection)
+              .catch(() => null)
+          : Promise.resolve(null)
+      ]);
+      const entities = Array.isArray(projectedEntities) && projectedEntities.length
+        ? projectedEntities
+        : visibleMapEntities(publicState);
+      await renderEntities(list, canvas, entities);
     } catch {
       if (!renderedCachedMap) {
         renderError(list, "Map entries unavailable.");
@@ -51,9 +61,58 @@ export function createMapPageFeature({
     }
   }
 
+  function bindProjection() {
+    if (projectionBound || typeof subscribeProjection !== "function") return;
+    projectionBound = true;
+    Promise.resolve(
+      subscribeProjection(
+        "mapEntities",
+        {},
+        (envelope) => {
+          const list = document.querySelector("[data-map-list]");
+          const canvas = document.querySelector("[data-map-canvas]");
+          if (!(list instanceof HTMLElement) || !(canvas instanceof HTMLElement)) return;
+          const projectedEntities = envelope?.value ?? envelope;
+          void renderEntities(
+            list,
+            canvas,
+            Array.isArray(projectedEntities) ? projectedEntities : visibleMapEntities(state.publicState)
+          );
+        },
+        {
+          emitCurrent: true,
+          refresh: true,
+          reason: "map-page-projection"
+        }
+      )
+    )
+      .then((unsubscribe) => {
+        if (typeof unsubscribe === "function") {
+          projectionUnsubscribe = unsubscribe;
+        }
+      })
+      .catch(() => null);
+  }
+
+  function bindQueryState() {
+    if (queryBound || !queryState) return;
+    queryBound = true;
+    queryState.subscribe(["entity"], ({ entity }) => {
+      const requested = cleanSlug(entity || "");
+      if (!requested || !pageReady()) return;
+      scheduleMapEntityFocus(requested);
+    }, {
+      normalizers: {
+        entity: cleanSlug
+      }
+    });
+  }
+
   function visibleMapEntities(publicState) {
     const approvedEntities = Array.isArray(publicState?.approvedEntities) ? publicState.approvedEntities : [];
-    if (approvedEntities.length) return approvedEntities;
+    if (approvedEntities.length) {
+      return approvedEntities.filter((entity) => Number.isFinite(entity?.lat) && Number.isFinite(entity?.lng));
+    }
     if (Array.isArray(state.lastGoodMapEntities) && state.lastGoodMapEntities.length) {
       return state.lastGoodMapEntities.map((entity) => ({ ...entity }));
     }
@@ -77,6 +136,22 @@ export function createMapPageFeature({
     };
   }
 
+  async function renderEntities(list, canvas, entities) {
+    const normalizedEntities = Array.isArray(entities) ? entities : [];
+    if (!normalizedEntities.length) {
+      list.innerHTML = `<div class="empty-state">Published entities will appear here once approved entries are available.</div>`;
+      mapSurfaceDeps().renderLeafletMapSurface(canvas, []);
+      focusRequestedEntity();
+      state.mapViewDigest = dataDigest({ approvedEntities: [] });
+      return;
+    }
+    state.lastGoodMapEntities = normalizedEntities.map((entity) => ({ ...entity }));
+    const posts = await postsStore.load().catch(() => []);
+    const entityUsage = buildEntityUsage(posts, normalizedEntities, collectEntityRefsFromText);
+    renderMapPageSurface(list, canvas, normalizedEntities, entityUsage, mapSurfaceDeps());
+    state.mapViewDigest = dataDigest({ approvedEntities: normalizedEntities });
+  }
+
   function renderEntityCard(entity, posts) {
     return `
       <article class="entity-card entity-card--interactive" id="entity-card-${escapeAttribute(entity.slug)}" data-entity-card="${escapeAttribute(entity.slug)}" tabindex="0">
@@ -89,6 +164,7 @@ export function createMapPageFeature({
           ${Number.isFinite(entity.lat) && Number.isFinite(entity.lng) ? `<span class="tag">${escapeHtml(entity.lat.toFixed(2))}, ${escapeHtml(entity.lng.toFixed(2))}</span>` : ""}
         </div>
         <div class="entity-card__links">
+          <a href="./wiki.html?entity=${encodeURIComponent(entity.slug)}">Open wiki</a>
           ${
             posts.length
               ? posts
@@ -121,7 +197,7 @@ export function createMapPageFeature({
     );
   }
 
-  function scheduleMapEntityFocus(slug, options = {}, attempt = 0) {
+  function scheduleMapEntityFocus(slug, attempt = 0) {
     scheduleLeafletFocus(
       slug,
       state,
@@ -129,21 +205,26 @@ export function createMapPageFeature({
         cleanSlug,
         queryEntityCard: (value) => document.querySelector(`[data-entity-card="${value}"]`)
       },
-      options,
+      {},
       attempt
     );
   }
 
   function focusRequestedEntity() {
-    const requested = requestedMapEntity(window.location.search, cleanSlug);
+    const requested = queryState ? queryState.get("entity", cleanSlug) : cleanSlug(new URLSearchParams(window.location.search).get("entity") || "");
     if (!requested) return;
     scheduleMapEntityFocus(requested);
+  }
+
+  function pageReady() {
+    return Boolean(document.querySelector("[data-map-shell]"));
   }
 
   return {
     dataDigest,
     isInteractionActive,
     mount,
+    projectionUnsubscribe: () => projectionUnsubscribe,
     visibleMapEntities,
     mapSurfaceDeps,
     scheduleMapEntityFocus,

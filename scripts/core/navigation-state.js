@@ -1,7 +1,8 @@
 export function createNavigationUiState() {
   return {
     profileMenuOpen: false,
-    notificationsExpanded: false
+    notificationsExpanded: false,
+    openGroupKey: ""
   };
 }
 

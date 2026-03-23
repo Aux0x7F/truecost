@@ -6,13 +6,13 @@ export function createWorkspaceSiteKeyController({
 } = {}) {
   const runtime = {
     buildSiteKeyShare: () => null,
-    clearCachedInboxSubmissions: () => {},
+    clearCachedInboxSubmissions: async () => {},
     dedupe: (values) => values,
     deriveIdentity: () => null,
     findSiteKeyShare: () => null,
     generateSecretKeyHex: async () => "",
     mergeSiteKeyShares: (primary) => primary || [],
-    persistCachedSiteKeyShares: () => {},
+    persistCachedSiteKeyShares: async () => {},
     publishAdminKeyRequest: async () => {},
     publishAdminKeyShare: async () => {},
     publishSiteKeyEvent: async () => {},
@@ -67,13 +67,13 @@ export function createWorkspaceSiteKeyController({
     );
     state.siteKeyShares = runtime.mergeSiteKeyShares([currentShare, ...state.siteKeyShares], []);
     state.siteKeyShare = currentShare;
-    runtime.persistCachedSiteKeyShares({
+    await runtime.persistCachedSiteKeyShares({
       storageNamespace: site?.nostr?.storageNamespace,
       viewerPubkey: accessController.viewerPubkey(),
       shares: state.siteKeyShares
     });
     state.keyRequestState = "";
-    runtime.clearCachedInboxSubmissions({
+    await runtime.clearCachedInboxSubmissions({
       storageNamespace: site?.nostr?.storageNamespace,
       viewerPubkey: accessController.viewerPubkey(),
       sitePubkey: previousSitePubkey

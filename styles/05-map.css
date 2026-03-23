@@ -81,6 +81,8 @@
   gap: 1rem;
   max-height: 36rem;
   overflow: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
   padding-right: 0.35rem;
 }
 

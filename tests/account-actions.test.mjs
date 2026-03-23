@@ -8,7 +8,21 @@ import {
   rotateAccountPassword,
   translateLoginError
 } from "../scripts/core/account-actions.js";
-import { createStaleSessionError, isPasswordReuseError } from "../scripts/core/account-management.js";
+import {
+  createStaleSessionError,
+  isPasswordReuseError,
+  rememberAccountRotationHistoryEntry,
+  rememberCurrentAccountHistoryEntry
+} from "../scripts/core/session-identity.js";
+
+test.beforeEach(() => {
+  const storage = new Map();
+  globalThis.localStorage = {
+    getItem: (key) => storage.get(key) || null,
+    setItem: (key, value) => storage.set(key, value),
+    removeItem: (key) => storage.delete(key)
+  };
+});
 
 test("login translates stale-password verification into a generic mismatch", async () => {
   const error = translateLoginError(
@@ -82,23 +96,17 @@ test("openAccountSession rejects short passwords before any network work", async
 });
 
 test("rotateAccountPassword rejects a previously used password before publishing or mutating local state", async () => {
-  const storage = new Map();
-  globalThis.localStorage = {
-    getItem: (key) => storage.get(key) || null,
-    setItem: (key, value) => storage.set(key, value),
-    removeItem: (key) => storage.delete(key)
-  };
-  storage.set(
-    "truecost.v2.account-history",
-    JSON.stringify({
-      testiprofile: {
-        username: "testiprofile",
-        currentPubkey: "e".repeat(64),
-        knownPubkeys: ["a", "b", "c", "d", "e"].map((ch) => ch.repeat(64)),
-        updatedAt: Date.now()
-      }
-    })
-  );
+  const previousSession = { username: "testiprofile", pubkey: "a".repeat(64) };
+  const nextSessions = ["b", "c", "d", "e"].map((value) => ({
+    username: "testiprofile",
+    pubkey: value.repeat(64)
+  }));
+  let accountHistory = rememberCurrentAccountHistoryEntry(null, previousSession);
+  let currentSession = previousSession;
+  for (const nextSession of nextSessions) {
+    accountHistory = rememberAccountRotationHistoryEntry(accountHistory, currentSession, nextSession);
+    currentSession = nextSession;
+  }
 
   let rotateCalled = false;
   let saveCalled = false;
@@ -109,6 +117,7 @@ test("rotateAccountPassword rejects a previously used password before publishing
       session: { username: "testiprofile", pubkey: "e".repeat(64) },
       nextPassword: "reused-password",
       currentPublicState: {},
+      loadAccountHistory: async () => accountHistory,
       loadPublicState: async () => ({ connected: true, usernameRegistry: [], users: [] }),
       deriveSecretKeyHex: async () => "b".repeat(64),
       deriveIdentity: (secretKeyHex) => ({ pubkey: secretKeyHex }),

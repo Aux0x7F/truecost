@@ -287,6 +287,24 @@
   margin-top: 1rem;
 }
 
+.editor-image-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.editor-image-grid label {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.editor-image-grid span {
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
 .editor-entity-form input,
 .editor-entity-form textarea,
 .editor-image-form input,

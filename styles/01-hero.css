@@ -214,6 +214,21 @@
   padding: 1.6rem 0 0;
 }
 
+.section--page-intro {
+  padding-top: 2.35rem;
+}
+
+.page-intro {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.page-intro__lede {
+  max-width: 52rem;
+  font-size: 1.08rem;
+  color: var(--ink-soft);
+}
+
 .section__head {
   display: flex;
   align-items: end;

@@ -1,4 +1,8 @@
 import { escapeAttribute, escapeHtml } from "./text-utils.js";
+import {
+  parseInvestigationImageTitleSpec,
+  renderStructuredInvestigationHtml
+} from "./investigation-document.js";
 
 export function buildToc(article, target) {
   if (!(target instanceof HTMLElement) || !(article instanceof HTMLElement)) return;
@@ -76,6 +80,22 @@ export function renderMarkedHtml(markdown, options = {}, sanitizeTrustedHtml = (
   return sanitizeTrustedHtml(renderBasicMarkdown(source, options));
 }
 
+export function renderInvestigationArticleHtml(record, {
+  renderMarkedHtml: renderMarkdown = renderMarkedHtml,
+  sanitizeTrustedHtml = (value) => String(value || "")
+} = {}) {
+  if (record?.structured_document) {
+    return sanitizeTrustedHtml(
+      renderStructuredInvestigationHtml(record.structured_document, {
+        renderMarkedHtml: renderMarkdown,
+        sanitizeTrustedHtml
+      })
+    );
+  }
+  const source = String(record?.body || record?.markdown || "").trim();
+  return renderMarkdown(source, { breaks: false, articleImages: true }, sanitizeTrustedHtml);
+}
+
 export function transformArticleImageMarkup(rawHtml) {
   if (typeof document === "undefined") return String(rawHtml || "");
   const template = document.createElement("template");
@@ -88,13 +108,23 @@ export function transformArticleImageMarkup(rawHtml) {
       return node.nodeType === Node.TEXT_NODE && !String(node.textContent || "").trim();
     });
     if (!onlyImage) continue;
-    const spec = parseArticleImageSpec(image.getAttribute("title") || "");
+    const spec = parseInvestigationImageTitleSpec(image.getAttribute("title") || "");
     const figure = document.createElement("figure");
-    figure.className = `article-image article-image--${spec.align}`;
+    figure.className = `article-image article-image--${mapStructuredPlacementToLegacy(spec.placement)} article-image--${spec.placement}`;
+    figure.dataset.articleImagePlacement = spec.placement;
+    figure.style.setProperty("--image-focus-x", String(spec.drag.x));
+    figure.style.setProperty("--image-focus-y", String(spec.drag.y));
+    figure.style.setProperty("--image-crop-x", String(spec.crop.x));
+    figure.style.setProperty("--image-crop-y", String(spec.crop.y));
+    figure.style.setProperty("--image-crop-width", String(spec.crop.width));
+    figure.style.setProperty("--image-crop-height", String(spec.crop.height));
     image.loading = "lazy";
     image.decoding = "async";
     image.removeAttribute("title");
-    figure.append(image);
+    const frame = document.createElement("div");
+    frame.className = "article-image__frame";
+    frame.append(image);
+    figure.append(frame);
     if (spec.caption) {
       const caption = document.createElement("figcaption");
       caption.textContent = spec.caption;
@@ -119,12 +149,18 @@ export function trimmed(value, length) {
 }
 
 function parseArticleImageSpec(rawTitle) {
-  const title = String(rawTitle || "").trim();
-  if (!title) return { align: "full", caption: "" };
-  const [alignPart, ...captionParts] = title.split("|");
-  const alignMatch = String(alignPart || "").trim().match(/^align:(left|right|full)$/i);
+  const spec = parseInvestigationImageTitleSpec(rawTitle);
   return {
-    align: alignMatch ? alignMatch[1].toLowerCase() : "full",
-    caption: captionParts.join("|").trim()
+    align: mapStructuredPlacementToLegacy(spec.placement),
+    caption: spec.caption
   };
+}
+
+function mapStructuredPlacementToLegacy(value) {
+  const clean = String(value || "").trim().toLowerCase();
+  if (clean === "float-left") return "left";
+  if (clean === "float-right") return "right";
+  if (clean === "center") return "center";
+  if (clean === "fill-crop") return "fill-crop";
+  return "full";
 }

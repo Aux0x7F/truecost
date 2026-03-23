@@ -12,6 +12,7 @@ const sourceFiles = [
   "styles/02-content.css",
   "styles/03-editor.css",
   "styles/04-forms.css",
+  "styles/05-graph-wiki.css",
   "styles/05-map.css",
   "styles/06-workspace.css",
   "styles/07-overlays-comments.css",

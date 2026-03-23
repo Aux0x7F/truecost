@@ -110,7 +110,7 @@ function renderArchiveSearchField(field, value) {
           ariaLabel: `Clear ${field} filter`
         }
       : null,
-    resultsHtml: `<div class="picker-results picker-results--dropdown archive-filters__results" data-filter-results="${escapeAttribute(field)}"></div>`
+    resultsHtml: `<div data-filter-results="${escapeAttribute(field)}"></div>`
   });
 }
 
@@ -201,8 +201,9 @@ export function archiveEntryEntityOptions(entry, publicState) {
   );
 }
 
-export function archiveEntitiesForEntries(entries, publicState) {
-  const entityMap = new Map((publicState?.approvedEntities || []).map((entity) => [entity.slug, entity]));
+export function archiveEntitiesForEntries(entries, publicState, entityPool = null) {
+  const sourceEntities = Array.isArray(entityPool) ? entityPool : (publicState?.approvedEntities || []);
+  const entityMap = new Map(sourceEntities.map((entity) => [entity.slug, entity]));
   const refs = dedupeStrings(
     (Array.isArray(entries) ? entries : []).flatMap((entry) => [
       ...(Array.isArray(entry?.entity_refs) ? entry.entity_refs : []),

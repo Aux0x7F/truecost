@@ -34,6 +34,7 @@ export function createWorkspaceAccountController({
     openAccountSession: async () => {
       throw new Error("openAccountSession is not configured.");
     },
+    signIn: null,
     PASSWORD_MIN_LENGTH: 8,
     persistCachedSiteKeyShares: () => {},
     publishAdminKeyShare: async () => {},
@@ -44,6 +45,7 @@ export function createWorkspaceAccountController({
     rotateAccountCredentials: async () => {
       throw new Error("rotateAccountCredentials is not configured.");
     },
+    rotatePasswordRequest: null,
     rotateAccountPassword: async () => {
       throw new Error("rotateAccountPassword is not configured.");
     },
@@ -127,24 +129,29 @@ export function createWorkspaceAccountController({
         status.dataset.state = "pending";
       }
       const formData = new FormData(form);
-      const login = await runtime.openAccountSession({
-        username: formData.get("username"),
-        password: formData.get("password"),
-        loadPublicState: async () =>
-          ((await publicStateStore
-            .hydrate({
-              force: true,
-              reason: "login-username-check",
-              requestRepair: false
-            })
-            .catch(() => ({ value: state.publicState }))).value || state.publicState),
-        signInWithCredentials: runtime.signInWithCredentials,
-        saveSession: runtime.saveSession,
-        rebroadcastAccount: runtime.rebroadcastAccount,
-        rememberCurrentAccountSession: runtime.rememberCurrentAccountSession,
-        assertNetworkSessionUsernameIntegrity: runtime.assertNetworkSessionUsernameIntegrity,
-        lookupUsers: runtime.lookupUsers
-      });
+      const login = typeof runtime.signIn === "function"
+        ? await runtime.signIn({
+            username: formData.get("username"),
+            password: formData.get("password")
+          })
+        : await runtime.openAccountSession({
+            username: formData.get("username"),
+            password: formData.get("password"),
+            loadPublicState: async () =>
+              ((await publicStateStore
+                .hydrate({
+                  force: true,
+                  reason: "login-username-check",
+                  requestRepair: false
+                })
+                .catch(() => ({ value: state.publicState }))).value || state.publicState),
+            signInWithCredentials: runtime.signInWithCredentials,
+            saveSession: runtime.saveSession,
+            rebroadcastAccount: runtime.rebroadcastAccount,
+            rememberCurrentAccountSession: runtime.rememberCurrentAccountSession,
+            assertNetworkSessionUsernameIntegrity: runtime.assertNetworkSessionUsernameIntegrity,
+            lookupUsers: runtime.lookupUsers
+          });
       const session = login.session;
       if (status) {
         status.textContent = login.warning
@@ -195,7 +202,7 @@ export function createWorkspaceAccountController({
       let avatarUrl = String(current?.avatarUrl || "").trim();
       let avatarBlob = current?.avatarBlob || null;
       const profilePayload = {
-        displayName: formData.get("displayName"),
+        displayName: current?.displayName || "",
         avatarUrl,
         avatarBlob,
         bio: formData.get("bio"),
@@ -364,74 +371,92 @@ export function createWorkspaceAccountController({
         bio: current?.bio || "",
         socialLinks: Array.isArray(current?.socialLinks) ? current.socialLinks : []
       };
-      const rotation = await runtime.rotateAccountPassword({
-        session: state.session,
-        nextPassword: password,
-        currentPublicState: state.publicState,
-        loadPublicState: async () =>
-          ((await publicStateStore
-            .hydrate({
-              force: true,
-              reason: "password-rotation-check",
-              requestRepair: false
-            })
-            .catch(() => ({ value: state.publicState }))).value || state.publicState),
-        deriveSecretKeyHex: runtime.deriveSecretKeyHex,
-        deriveIdentity: runtime.deriveIdentity,
-        assertNetworkSessionUsernameIntegrity: runtime.assertNetworkSessionUsernameIntegrity,
-        lookupUsers: runtime.lookupUsers,
-        rotateAccountCredentials: runtime.rotateAccountCredentials,
-        saveSession: runtime.saveSession,
-        rememberAccountRotation: runtime.rememberAccountRotation,
-        afterCommit: async ({ previousSession, rotation: committedRotation, publicState }) => {
-          const warnings = [];
-          const optimisticRotatedState = runtime.applyOptimisticIdentityRotation(
-            state.publicState,
-            previousSession.pubkey,
-            committedRotation.session.pubkey
-          );
-          state.publicState = publicStateStore.remember(optimisticRotatedState, {
-            notify: true,
-            reason: "password-rotation"
-          });
-          if (hooks.currentUserIsAdmin() && state.siteKeyShare?.siteSecretKeyHex) {
-            try {
-              await runtime.publishAdminKeyShare(
-                previousSession.secretKeyHex,
-                committedRotation.session.pubkey,
-                state.siteKeyShare.siteSecretKeyHex
+      const rotation = typeof runtime.rotatePasswordRequest === "function"
+        ? await runtime.rotatePasswordRequest({
+            session: state.session,
+            nextPassword: password,
+            profilePayload,
+            isAdmin: hooks.currentUserIsAdmin(),
+            siteKeyShare: state.siteKeyShare,
+            workspaceSitePubkey: hooks.resolveWorkspaceSitePubkey(state.publicState)
+          })
+        : await runtime.rotateAccountPassword({
+            session: state.session,
+            nextPassword: password,
+            currentPublicState: state.publicState,
+            loadPublicState: async () =>
+              ((await publicStateStore
+                .hydrate({
+                  force: true,
+                  reason: "password-rotation-check",
+                  requestRepair: false
+                })
+                .catch(() => ({ value: state.publicState }))).value || state.publicState),
+            deriveSecretKeyHex: runtime.deriveSecretKeyHex,
+            deriveIdentity: runtime.deriveIdentity,
+            assertNetworkSessionUsernameIntegrity: runtime.assertNetworkSessionUsernameIntegrity,
+            lookupUsers: runtime.lookupUsers,
+            rotateAccountCredentials: runtime.rotateAccountCredentials,
+            saveSession: runtime.saveSession,
+            rememberAccountRotation: runtime.rememberAccountRotation,
+            afterCommit: async ({ previousSession, rotation: committedRotation, publicState }) => {
+              const warnings = [];
+              const optimisticRotatedState = runtime.applyOptimisticIdentityRotation(
+                state.publicState,
+                previousSession.pubkey,
+                committedRotation.session.pubkey
               );
-              const optimisticShare = runtime.buildSiteKeyShare(state.siteKeyShare.siteSecretKeyHex, {
-                sender_pubkey: previousSession.pubkey,
-                shared_at: new Date().toISOString()
+              state.publicState = publicStateStore.remember(optimisticRotatedState, {
+                notify: true,
+                reason: "password-rotation"
               });
-              if (optimisticShare) {
-                state.siteKeyShares = runtime.mergeSiteKeyShares([optimisticShare], state.siteKeyShares);
-                runtime.persistCachedSiteKeyShares({
-                  storageNamespace: site?.nostr?.storageNamespace,
-                  viewerPubkey: committedRotation.session.pubkey,
-                  shares: state.siteKeyShares
-                });
+              if (hooks.currentUserIsAdmin() && state.siteKeyShare?.siteSecretKeyHex) {
+                try {
+                  await runtime.publishAdminKeyShare(
+                    previousSession.secretKeyHex,
+                    committedRotation.session.pubkey,
+                    state.siteKeyShare.siteSecretKeyHex
+                  );
+                  const optimisticShare = runtime.buildSiteKeyShare(state.siteKeyShare.siteSecretKeyHex, {
+                    sender_pubkey: previousSession.pubkey,
+                    shared_at: new Date().toISOString()
+                  });
+                  if (optimisticShare) {
+                    state.siteKeyShares = runtime.mergeSiteKeyShares([optimisticShare], state.siteKeyShares);
+                    runtime.persistCachedSiteKeyShares({
+                      storageNamespace: site?.nostr?.storageNamespace,
+                      viewerPubkey: committedRotation.session.pubkey,
+                      shares: state.siteKeyShares
+                    });
+                  }
+                } catch (error) {
+                  warnings.push(
+                    String(error?.message || error || "The inbox key share could not be refreshed yet.")
+                  );
+                }
               }
-            } catch (error) {
-              warnings.push(
-                String(error?.message || error || "The inbox key share could not be refreshed yet.")
+              try {
+                await runtime.rebroadcastAccount(committedRotation.session, profilePayload);
+              } catch (error) {
+                warnings.push(
+                  String(error?.message || error || "The account profile could not be refreshed on the network yet.")
+                );
+              }
+              state.siteKeyShare = runtime.findSiteKeyShare(
+                state.siteKeyShares,
+                hooks.resolveWorkspaceSitePubkey(publicState)
               );
+              return { warnings };
             }
-          }
-          try {
-            await runtime.rebroadcastAccount(committedRotation.session, profilePayload);
-          } catch (error) {
-            warnings.push(
-              String(error?.message || error || "The account profile could not be refreshed on the network yet.")
-            );
-          }
-          state.siteKeyShare = runtime.findSiteKeyShare(
-            state.siteKeyShares,
-            hooks.resolveWorkspaceSitePubkey(publicState)
-          );
-          return { warnings };
-        }
+          });
+      const optimisticRotatedState = runtime.applyOptimisticIdentityRotation(
+        state.publicState,
+        state.session?.pubkey,
+        rotation.session?.pubkey
+      );
+      state.publicState = publicStateStore.remember(optimisticRotatedState, {
+        notify: true,
+        reason: "password-rotation"
       });
       state.session = rotation.session;
       state.viewer = { pubkey: rotation.session.pubkey };

@@ -12,11 +12,9 @@ import {
 import {
   buildRemovedAccountMessage,
   buildStaleSessionMessage,
-  buildUsernameConflictMessage,
-  resolveRemovedSessionAccount,
-  resolveStaleSessionAccount,
-  resolveSessionUsernameConflict
-} from "../core/account-integrity.js";
+  buildUsernameConflictMessage
+} from "../core/session-identity.js";
+import { cleanSlug } from "../core/nostr.js";
 import { applyDerivedCommentState } from "../core/public-state.js";
 import { formatDateTime } from "../core/formatting.js";
 import { renderAvatarBadge } from "../core/profile-markup.js";
@@ -35,7 +33,7 @@ export function createMarkdownPageFeature({
   state,
   viewerController,
   getPublicState,
-  getRequestSignerSecretKey,
+  getSessionIdentity = async () => null,
   commitLocalPublicState,
   publishTaggedJson,
   sanitizeTrustedHtml,
@@ -44,9 +42,11 @@ export function createMarkdownPageFeature({
   renderLoadingState,
   renderMiniMarkdown,
   renderMarkedHtml,
+  renderInvestigationArticleHtml,
   fetchText,
   slugify,
-  enrichEntityReferences
+  enrichEntityReferences,
+  entityHrefBuilder
 } = {}) {
   function mount() {
     void initMarkdownArticles();
@@ -74,10 +74,21 @@ export function createMarkdownPageFeature({
     const panel = document.querySelector("[data-comment-panel]");
     if (!(panel instanceof HTMLElement)) return;
 
+    if (state.session) {
+      await getSessionIdentity(false).catch(() => null);
+    }
+
     const isLoggedIn = Boolean(state.session);
-    const removedAccount = resolveRemovedSessionAccount(publicState, state.session);
-    const staleSession = resolveStaleSessionAccount(publicState, state.session);
-    const usernameIntegrity = resolveSessionUsernameConflict(publicState, state.session);
+    const sessionIdentity = isLoggedIn
+      ? await getSessionIdentity(false).catch(() => null)
+      : null;
+    const removedAccount = sessionIdentity?.removedAccount || null;
+    const staleSession = sessionIdentity?.staleSession || null;
+    const usernameIntegrity = sessionIdentity?.usernameIntegrity || {
+      conflict: false,
+      claimedUsername: "",
+      ownerPubkey: ""
+    };
     const isAdmin = Boolean(state.viewer && viewerController.trustedPubkeys(publicState).includes(state.viewer.pubkey));
     const viewerPubkey = viewerController.sessionPubkey();
     const threadedComments = rankVisibleCommentThreads(publicState.commentThreadsByPost?.get(postSlug) || [], publicState, viewerPubkey);
@@ -170,6 +181,19 @@ export function createMarkdownPageFeature({
 
   function renderMarkdown(node, markdown) {
     node.innerHTML = renderMarkedHtml(markdown, { breaks: false, articleImages: true }, sanitizeTrustedHtml);
+    finalizeArticleMarkup(node);
+  }
+
+  function renderArticleBody(node, postRecord) {
+    if (!(node instanceof HTMLElement)) return;
+    node.innerHTML = renderInvestigationArticleHtml(postRecord, {
+      renderMarkedHtml,
+      sanitizeTrustedHtml
+    });
+    finalizeArticleMarkup(node);
+  }
+
+  function finalizeArticleMarkup(node) {
     for (const heading of node.querySelectorAll("h2, h3")) {
       heading.id = heading.id || slugify(heading.textContent || "section");
     }
@@ -184,7 +208,9 @@ export function createMarkdownPageFeature({
 
   function enrichArticleEntities(scope, publicState) {
     if (!scope || !publicState?.approvedEntities?.length) return;
-    enrichEntityReferences(scope, publicState.approvedEntities);
+    enrichEntityReferences(scope, publicState.approvedEntities, {
+      hrefBuilder: typeof entityHrefBuilder === "function" ? entityHrefBuilder : undefined
+    });
   }
 
   function bindCommentComposer(panel, postSlug, usernameIntegrity, removedAccount, staleSession) {
@@ -514,6 +540,7 @@ export function createMarkdownPageFeature({
     mount,
     enrichArticleEntities,
     renderComments,
+    renderArticleBody,
     renderMarkdown,
     commentAuthorLabel,
     resolveUserKarma,

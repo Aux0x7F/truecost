@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 const repoRoot = process.cwd();
+const distRoot = path.join(repoRoot, "dist");
 const htmlPages = [
   "index.html",
   "about.html",
@@ -20,8 +21,9 @@ const htmlPages = [
 
 test("pages load the bundled stylesheet instead of split partial links", async () => {
   for (const relativePath of htmlPages) {
-    const content = await fs.readFile(path.join(repoRoot, relativePath), "utf8");
+    const content = await fs.readFile(path.join(distRoot, relativePath), "utf8");
     assert.match(content, /<link rel="stylesheet" href="\.\/styles\.css">/);
+    assert.match(content, /<style data-inline-styles>/);
     assert.doesNotMatch(content, /\.\/styles\/00-fonts\.css/);
   }
 });

@@ -28,6 +28,7 @@ export function createArchivePageFeature({
   viewerController,
   postsStore,
   getPublicState,
+  getProjection,
   publicStateNeedsRepair,
   queueLeafletBoundsFit,
   renderError,
@@ -75,6 +76,11 @@ export function createArchivePageFeature({
 
     try {
       const publicStatePromise = getPublicState();
+      const mapEntitiesPromise = typeof getProjection === "function"
+        ? getProjection("mapEntities", {}, { preferFresh: false })
+            .then((projection) => projection?.value ?? projection)
+            .catch(() => null)
+        : Promise.resolve(null);
       const posts = await postsStore.refresh();
       const optimisticState = state.publicState || cachedPublicState || { drafts: [], approvedEntities: [], users: [] };
       const optimisticCanEdit = viewerController.canEdit(optimisticState);
@@ -90,6 +96,7 @@ export function createArchivePageFeature({
         initializeArchiveView(optimisticEntries, optimisticState, optimisticCanEdit);
       }
       const publicState = await publicStatePromise;
+      const mapEntitiesProjection = await mapEntitiesPromise;
       const canEdit = viewerController.canEdit(publicState);
       if (archiveSummaryHosts.length) hydrateArchiveSummaryLinks(posts, publicState);
       if (homeGrid instanceof HTMLElement) {
@@ -100,7 +107,12 @@ export function createArchivePageFeature({
         const entries = canEdit
           ? buildInvestigationArchiveEntries(posts, investigationDrafts(publicState.drafts || []))
           : buildPublishedArchiveEntries(posts);
-        initializeArchiveView(entries, publicState, canEdit);
+        initializeArchiveView(
+          entries,
+          publicState,
+          canEdit,
+          Array.isArray(mapEntitiesProjection) ? mapEntitiesProjection : null
+        );
       }
     } catch {
       if (!renderedCachedCards) {
@@ -207,7 +219,7 @@ export function createArchivePageFeature({
     return state.archiveFilters || { tag: "", entity: "", status: "", author: "" };
   }
 
-  function initializeArchiveView(entries, publicState, canEdit) {
+  function initializeArchiveView(entries, publicState, canEdit, mapEntities = null) {
     const listGrid = document.querySelector("[data-investigation-list]");
     const filtersShell = document.querySelector("[data-investigation-filters-shell]");
     const mapShell = document.querySelector("[data-investigation-map-shell]");
@@ -216,6 +228,11 @@ export function createArchivePageFeature({
     state.archiveFilterOpenField = "";
     state.archiveFilterHighlight = -1;
     state.archiveStatusMenuOpen = false;
+    state.archiveMapEntities = Array.isArray(mapEntities)
+      ? mapEntities.map((entity) => ({ ...entity }))
+      : Array.isArray(state.archiveMapEntities)
+        ? state.archiveMapEntities
+        : [];
     listGrid.innerHTML = `${canEdit ? renderAuthoringLeadCard() : ""}<div class="story-list__results" data-investigation-results></div>`;
     if (filtersShell instanceof HTMLElement) {
       filtersShell.innerHTML = renderArchiveFiltersPanel({ filters: activeArchiveFilters(), canEdit, statusMenuOpen: state.archiveStatusMenuOpen });
@@ -460,25 +477,20 @@ export function createArchivePageFeature({
     const tagsHost = document.querySelector("[data-investigation-map-tags]");
     const canvas = document.querySelector("[data-investigation-map-canvas]");
     if (!(tagsHost instanceof HTMLElement) || !(canvas instanceof HTMLElement)) return;
-    const activeEntities = archiveEntitiesForEntries(filteredEntries, publicState);
-    const defaultEntities = archiveHasActiveFilters() ? [] : archiveEntitiesForEntries(entries, publicState);
+    const mapEntities = Array.isArray(state.archiveMapEntities) ? state.archiveMapEntities : [];
+    const activeEntities = archiveEntitiesForEntries(filteredEntries, publicState, mapEntities);
+    const defaultEntities = archiveHasActiveFilters() ? [] : archiveEntitiesForEntries(entries, publicState, mapEntities);
     const fallbackEntities = !archiveHasActiveFilters() && publicStateNeedsRepair(publicState) && state.lastGoodArchiveMapEntities.length ? state.lastGoodArchiveMapEntities : [];
     const entities = activeEntities.length ? activeEntities : defaultEntities.length ? defaultEntities : fallbackEntities;
     if (!entities.length) {
       tagsHost.innerHTML = "";
       destroyLeafletPreview(canvas);
-      canvas.innerHTML = `<div class="map-empty">${archiveHasActiveFilters() ? "No locations tagged in filtered results." : "No locations tagged in the archive yet."}</div>`;
+      canvas.innerHTML = `<div class="map-empty">${archiveHasActiveFilters() ? "No mapped locations in the current results." : "No mapped locations in the archive yet."}</div>`;
       return;
     }
     state.lastGoodArchiveMapEntities = entities.map((entity) => ({ ...entity }));
-    const mappedEntities = entities.filter((entity) => Number.isFinite(entity.lat) && Number.isFinite(entity.lng));
     tagsHost.innerHTML = entities.slice(0, 4).map((entity) => `<a class="tag tag--link" href="./map.html?entity=${encodeURIComponent(entity.slug)}">${escapeHtml(entity.name)}</a>`).join("");
-    if (!mappedEntities.length) {
-      destroyLeafletPreview(canvas);
-      canvas.innerHTML = `<div class="map-empty">No mapped locations in the current results.</div>`;
-      return;
-    }
-    renderLeafletPreviewMap(canvas, mappedEntities, queueLeafletBoundsFit);
+    renderLeafletPreviewMap(canvas, entities, queueLeafletBoundsFit);
   }
 
   return {

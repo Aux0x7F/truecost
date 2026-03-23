@@ -1,83 +1,110 @@
-# Testing Contract
+# Testing
 
-`truecost` is the concrete product surface. Regressions here are user-visible immediately.
+`truecost` is the user-facing site. If something slips here, people see it immediately. The testing bar should reflect that.
 
-## Minimum bar
+## Baseline
 
-Changes to live state, cached state, comments, filters, maps, workspace surfaces, or collaborative units should have:
+For most changes, the minimum bar is:
 
-- a focused deterministic test for the data/state contract
-- a focused feature/runtime test when route-owned logic moves out of a root controller
-- a focused surface test when a new render family is extracted from a page controller
-- a browser regression when the failure mode is a runtime boot error, DOM lifecycle error, or broken attached-field interaction
-- a browser or controller regression when the failure mode is an unrelated rerender wiping active local input state
-- syntax validation for touched modules
-- a clear statement of what user behavior was verified
-- a compatibility note when introducing non-baseline browser features
-- a bundle or source-contract check when a change alters first-paint assets such as `styles.css`
+- a deterministic test for the state or rendering rule you changed
+- a feature/runtime test when behavior moves out of an entry file
+- a browser check when the bug depends on real DOM timing, boot order, layout, or interaction
+- syntax/build validation for touched modules
 
-Pure presentation refinements should be checked in manual design runs unless they change runtime behavior or a documented interaction contract.
+Pure copy or cosmetic docs work does not need the full runtime suite. Live-state, shell, workspace, and authoring work does.
 
-Authentication and password-rotation work must also cover:
+## What different changes need
 
-- generic login mismatch behavior for stale or superseded passwords
-- minimum password length enforcement in both rendered fields and action-layer validation
-- synchronous password-reuse rejection before any session/history mutation
-- rotation commit boundaries, so failed follow-up work does not leave local session/history in a contradictory state
-- vendored support-lib contract checks when upstream session primitives change
+### Runtime and projection changes
 
-## Required live-state cases
+Cover:
 
-Where applicable, cover:
+- projection envelope behavior
+- `status` changes that do not wipe last good `value`
+- cached-first restore
+- stale or degraded refresh behavior
+- cross-tab or shared-runtime expectations when relevant
+
+### Document and editor changes
+
+Cover:
+
+- immediate restore from durable document state
+- draft/history round-trip
+- document-controller behavior
+- exporter behavior when storage or structured fields change
+- structured image placement round-trip
+
+### UI and surface changes
+
+Cover:
+
+- the surface that owns the behavior
+- in-place patching instead of whole-shell replacement
+- attached search/dropdown behavior when relevant
+- preservation of active inputs during background updates
+
+### Browser-sensitive changes
+
+Browser checks are required when the failure depends on:
+
+- boot order
+- focus/blur timing
+- dropdown geometry
+- mounted-shell rerender boundaries
+- first interaction timing
+- service worker or build output behavior
+
+### Auth and account changes
+
+Cover:
+
+- generic mismatch behavior for stale or superseded passwords
+- password minimum enforcement in UI and action logic
+- password reuse rejection before any session mutation
+- current-owner validation before persisting a session
+- support-bundle compatibility when upstream session behavior changes
+
+## Core scenarios worth keeping honest
+
+Where applicable, tests should exercise:
 
 - cached-first render
-- optimistic local updates
+- optimistic local change
 - reload resilience
-- stale remote merge behavior
+- stale merge against richer local state
 - nested thread integrity
-- visible control effect after local mutation
-- ranking and ordering rules when local mutation changes score or status
-- manual verification for motion where visual continuity is part of the interaction contract
-- manual verification that motion remains slow enough to perceive when timing is a user-facing part of the interaction
-- if motion ends with viewport repositioning, verify that the resulting scroll is smooth and lands on the acted-on item
+- visible control effect after mutation
+- ranking or ordering rules
+- session integrity and removed/conflict behavior
+- shell or modal stability during background updates
 
 ## Current commands
 
 - `node --check <file>`
-- `node --test tests/archive-surface.test.mjs`
-- `node --test tests/shell-surfaces.test.mjs`
-- `node --test tests/comment-refresh.test.mjs`
-- `node --test tests/comment-vote-ranking.test.mjs`
-- `node --test tests/public-state-store.test.mjs`
+- `node --test tests/runtime-client.test.mjs`
+- `node --test tests/site-runtime.test.mjs`
 - `node --test tests/navigation-notification.test.mjs`
-- `node --test tests/notification-builder.test.mjs`
-- `node --test tests/page-drafts.test.mjs`
-- `node --test tests/public-state-store.test.mjs`
-- `node --test tests/workspace-actions.test.mjs`
-- `node --test tests/workspace-filters.test.mjs`
-- `node --test tests/editor-shell.test.mjs`
-- `node --test tests/investigation-detail-surface.test.mjs`
-- `node --test tests/map-surface.test.mjs`
-- `node --test tests/static-page-edit.test.mjs`
-- `node --test tests/submit-shell.test.mjs`
-- `node --test tests/observed-regions.test.mjs`
-- `node --test tests/admin-editor-submit.browser.test.mjs`
 - `node --test tests/account-actions.test.mjs`
-- `node --test tests/session-api-vendor.test.mjs`
-- `node --test tests/stylesheets-bundle.test.mjs`
-- `node --test tests/workspace-shell.test.mjs`
-- `node --test tests/workspace-tabs.test.mjs`
-- `node --test tests/workspace-site-key.test.mjs`
-- `node --test tests/workspace-selectors.test.mjs`
-Use the checked-in browser regression whenever a fix touches:
+- `node --test tests/workspace-actions.test.mjs`
+- `node --test tests/workspace-runtime-projections.test.mjs`
+- `node --test tests/document-local-state.test.mjs`
+- `node --test tests/document-projection-sync.test.mjs`
+- `node --test tests/editor-live-overlay.test.mjs`
+- `node --test tests/graph-wiki.browser.test.mjs`
+- `node --test tests/admin-editor-submit.browser.test.mjs`
+- `npm run build`
+
+`node --test tests\\*.test.mjs` remains the broad downstream sweep.
+
+## When browser validation is mandatory
+
+Use the checked-in browser regressions when a fix touches:
 
 - admin/workspace boot
-- cached-first admin tab and control visibility
-- session-integrity gating for conflicting username claims
-- session-integrity gating for removed identities
-- create/login refusal and next-available username actions for taken handles
+- shell interactivity timing
+- cached-first admin rendering
+- dropdown geometry or close behavior
+- modal/input stability during rerenders
 - editor boot or editor lifecycle
-- attached autocomplete/dropdown geometry
-- attached autocomplete close behavior on `Enter` or blur
-- mounted-shell rerender boundaries, such as password modal inputs surviving unrelated workspace pane updates
-- other runtime paths that unit tests can miss because the failure only appears in a real browser
+- projection-backed DOM timing that unit tests can miss

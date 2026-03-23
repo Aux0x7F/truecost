@@ -71,6 +71,7 @@ test("workspace runtime renders cached admin state before full sync and restores
     },
     deps: {
       ensureEventToolsLoaded: async () => ensureEventToolsLoaded,
+      resolveStoredSession: async () => ({ pubkey: "admin-pubkey", secretKeyHex: "sekret" }),
       getStoredSession: () => ({ pubkey: "admin-pubkey", secretKeyHex: "sekret" }),
       loadCachedSiteKeyShares: () => [{ sitePubkey: "site-pubkey", siteSecretKeyHex: "a".repeat(64) }],
       loadCachedInboxSubmissions: () => [{ id: "sub-1", latest: { payload: { subject: "Cached" } } }],
@@ -109,7 +110,12 @@ test("workspace runtime renders cached admin state before full sync and restores
   });
 
   const refreshPromise = runtime.refresh(false);
-  await Promise.resolve();
+  for (let index = 0; index < 6 && !state.siteKeyShare; index += 1) {
+    await Promise.resolve();
+  }
+  for (let index = 0; index < 6 && !state.inboxSubmissions.length; index += 1) {
+    await Promise.resolve();
+  }
 
   assert.equal(state.activeTab, "dashboard");
   assert.equal(Boolean(state.siteKeyShare), true);
@@ -117,9 +123,15 @@ test("workspace runtime renders cached admin state before full sync and restores
   assert.deepEqual(renderCalls[0], {
     soft: true,
     activeTab: "dashboard",
+    inboxIds: [],
+    hasSiteShare: false
+  });
+  assert.ok(renderCalls.some((entry) => JSON.stringify(entry) === JSON.stringify({
+    soft: true,
+    activeTab: "dashboard",
     inboxIds: ["sub-1"],
     hasSiteShare: true
-  });
+  })));
 
   releaseEventTools();
   await refreshPromise;
@@ -182,6 +194,7 @@ test("workspace runtime renders the root admin shell immediately while full hydr
     },
     deps: {
       ensureEventToolsLoaded: async () => {},
+      resolveStoredSession: async () => ({ pubkey: "root-admin-pubkey", secretKeyHex: "sekret" }),
       getStoredSession: () => ({ pubkey: "root-admin-pubkey", secretKeyHex: "sekret" }),
       loadCachedSiteKeyShares: () => [],
       loadCachedInboxSubmissions: () => [],
@@ -216,7 +229,9 @@ test("workspace runtime renders the root admin shell immediately while full hydr
   });
 
   const refreshPromise = runtime.refresh(false);
-  await Promise.resolve();
+  for (let index = 0; index < 6 && !renderCalls.length; index += 1) {
+    await Promise.resolve();
+  }
 
   assert.deepEqual(renderCalls[0], {
     loading: false,

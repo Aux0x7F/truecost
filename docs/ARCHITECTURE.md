@@ -1,223 +1,103 @@
 # Architecture
 
-This document captures the current operating model for The True Cost Project site.
+`truecost` is the concrete site layer. It owns the public experience, operator workflows, project policy, site copy, and styling. It builds on [`nostr-site`](https://github.com/Aux0x7F/nostr-site), which in turn uses [`nostr-crdt`](https://github.com/YousefED/nostr-crdt) for collaborative transport.
 
-## Repo boundary
-
-The site depends on two sibling layers:
+## Repo split
 
 - `nostr-crdt`
-  - generic CRDT transport over Nostr
+  - sync and transport
 - `nostr-site`
-  - generic site framework, admin model, moderation model, peer pinner integration
+  - generic site runtime, projections, document plumbing, pinner integration
+- `truecost`
+  - actual site behavior, visuals, content model, moderation flow, and operator choices
 
-`truecost` is the project-specific implementation layer.
+The framework stays generic upstream. Site-specific behavior stays here.
 
-## Product model
+## How the site works
 
-The publishing model is:
+The site is static-first:
 
-1. Visitors load static content first.
-2. After load, the browser may connect to Nostr and receive newer live state.
-3. If a live update is signed by a currently trusted admin, the client may apply that update as an overlay.
-4. Peer pinner periodically materializes the latest trusted state into repo files and opens or updates a GitHub PR.
-5. GitHub review and merge advance the static baseline.
+1. GitHub Pages serves a built snapshot.
+2. The browser boots the shell immediately.
+3. Runtime state restores from local durable data when it can.
+4. Live relay state reconciles in the background.
+5. Mounted features patch their own regions instead of rebuilding whole pages.
 
-This means the public site should feel static-first, but still allow live admin-authored updates between bakedowns.
+That keeps the site readable without JavaScript and still lets the live layer do useful work after load.
 
-## Cache-first live component contract
+## Browser runtime
 
-Every live component on the site should follow the same rule:
+The browser runtime is split into four jobs:
 
-1. render static or cached baseline immediately
-2. load fresher relay state in the background
-3. patch the mounted component in place through the feature or component root that actually owns that state
+- shared worker
+  - same-origin runtime owner
+  - auth/session actions
+  - relay-backed reductions
+  - shared projection state
+- IndexedDB
+  - durable local store for projections, document state, cached events, and session metadata
+- service worker
+  - cache and fetch boundary for pages, assets, and materialized snapshots
+- feature controllers
+  - subscribe to projection slices and patch only the DOM roots they own
 
-Comments, filters, maps, workspace lists, notifications, and collaborative units should all behave that way.
+Shared projections use one envelope shape:
 
-A loading state is only appropriate when there is no useful cached or static baseline to show.
+- `value`
+- `status`
+- `digest`
+- `updatedAt`
 
-Network state and local draft UI state should stay separate. Background relay or cache updates must not replace unrelated active form DOM.
+If a refresh degrades or comes back empty, the runtime updates `status` without wiping the last good `value`.
 
-## Code layering
+## Code layout
 
-The implementation now follows four layers:
+- `scripts/core/`
+  - runtime adapters, controllers, state helpers, projection helpers, and shared utilities
+- `scripts/features/`
+  - route-level orchestration and lifecycle
+- `scripts/surfaces/`
+  - reusable rendering families and DOM-facing UI helpers
 
-- `scripts/core`
-  - transport wrappers
-  - cache and public-state normalization
-  - subscribed public-state store lifecycle
-  - observed-region routing helpers for mounted shells and feature roots
-  - account action orchestration for login and password rotation commit boundaries
-  - navigation UI state
-  - notification state
-  - viewer/session/request-signer controllers
-  - workspace access, cache, projections, selectors, site-key, entity-form, and filter-data helpers
-  - shared draft and review helpers
-  - shared rendering helpers for loading, markdown, tags, and TOC
-  - reusable rendering helpers for shared controls
-- `scripts/features`
-  - route-owned state + logic modules
-  - feature-owned root observation and region routing
-  - site runtime/bootstrap lifecycle
-  - archive page
-  - map page
-  - markdown/article page
-  - review workflow
-  - workspace account/login/profile/password flows
-  - workspace runtime
-  - workspace shell
-  - workspace tabs
-  - workspace inbox/chat
-  - workspace deep links
-  - workspace mutations
-  - workspace user lookup
-  - any future route-level collaborative shells
-- `scripts/surfaces`
-  - composed surface modules that render and update one UI family at a time
-  - profile overlays
-  - archive
-  - comments
-  - investigation detail
-  - map
-  - review preview
-  - static page edit
-  - submit shell
-  - workspace
-  - workspace filters
-  - workspace actions
-  - workspace review and audit log
-  - editor shell
-- HTML documents
-  - static baseline markup
-  - mount points for live surfaces
+Keep the split strict:
 
-`app.js` should stay a bootstrap and route-mount file, not a dumping ground for feature logic. Page files should compose shared features and surfaces. They should not reintroduce duplicate escaping, duplicate comment threading, duplicate request-signer logic, or duplicate attached-search behavior.
+- persistent shared state belongs in runtime/document helpers
+- orchestration belongs in features
+- rendering belongs in surfaces
+- tab-local UI state stays local to the page
 
-The CSS now follows the same split:
+## Publication and bakedown
 
-- `styles.css`
-  - generated bundled stylesheet loaded by pages for first paint
-- `styles/`
-  - ordered source partials by shared foundation, surface family, and responsive override layer
-  - shared control, dropdown, comment, workspace, editor, and responsive selector families should collapse into the early partials instead of being recopied per surface
-- `tooling/build-styles.mjs`
-  - rebuilds `styles.css` from the ordered source partials
+The browser is not the final publisher.
 
-That keeps the CSS boundary closer to the JS surface split instead of letting one root stylesheet keep absorbing every component family.
+The publishing path is:
 
-The codebase now applies this split to navigation, profile-menu state, notifications, archive, comments, investigation detail, static-page editing, submit shell rendering, public profile overlays, workspace rendering, workspace actions, workspace review/log rendering, map shells, editor-shell rendering, shared draft/review helpers, shared rendering helpers, request-signer helpers, workspace cache/access/projection helpers, workspace account flows, and a shared `public-state-store` boundary for public, workspace, and editor controllers. Future refactors should keep reducing remaining heavy controllers into composed feature modules backed by explicit shared state helpers.
+1. live state exists on relays
+2. admins work against the live layer
+3. pinner materializes approved state into static output
+4. GitHub review and merge advance the baseline
 
-Mounted shell updates now also follow an observed-region rule:
+That means:
 
-- if the shell structure is already mounted, features should update only the changed regions
-- unchanged overlays and active form roots must be left in place
-- full shell replacement is only appropriate when the structure itself changes
+- public HTML stays crawlable
+- the browser is progressive enhancement, not the source of truth for publication output
+- built pages and bakedown inputs need to stay aligned
 
-Account auth flows follow a similar separation:
+## Current authoring model
 
-- identity-chain resolution belongs in shared resolvers and upstream session primitives
-- session persistence belongs in session management, not UI handlers
-- login and password rotation orchestration belongs in a dedicated account action layer
-- login must not leak whether a password was previously valid; stale or superseded credentials should collapse to a generic mismatch at login time
+The site now has a runtime-backed document layer and a structured-document path for richer authored units. Investigations still carry transitional markdown-compatible behavior in places, but document state, projection state, and publication state are no longer page-local one-offs.
 
-The next tightening step is thinning the remaining upload, moderation-detail, and other handler-heavy families the same way the workspace account, shell, tabs, inbox, site-key, selector, and mutation layers were reduced, then continuing feature-facing work on top of the normalized shell: collaborative editor rails, richer entity relationships, and broader live-unit coverage.
+## A few terms
 
-## Trust model
-
-For now, an admin is an admin.
-
-The client rule is:
-
-- each live privileged update is signed by the admin's own key
-- the client reconstructs the current admin set from the existing True Cost admin grant and revoke chain
-- only updates from currently trusted admins are applied as live overlay
-
-The inbox key is not the signing key for public live content updates.
-
-## Collaborative units
-
-The units already targeted for collaboration are:
-
-- static pages such as `home`, `about`, `guide`, and other editable public sections
-- investigations
-- entity records and eventual wiki-like enrichment
-
-Recommended document ids:
-
-- `page:<page-id>`
-- `post:<slug-or-id>`
-- `entity:<entity-id>`
-
-Each unit should collaborate independently. The site should not use one giant shared document.
-
-## Current implementation
-
-Today, True Cost already has:
-
-- static-first pages
-- relay-backed live state for admin actions, drafts, entities, comments, and submissions
-- peer-pinner PR bakedown support
-- in-place page editing and editorial review mechanics
-- CRDT-backed live overlay plumbing for static page units
-- trusted static-page live updates applied after the static baseline loads
-- trusted investigation live updates applied in the editor and detail view on top of the static or draft baseline
-- cached-first admin workspace boot, including admin tabs and inbox-aware state before relay sync completes
-
-Today, True Cost does not yet have:
-
-- archive-wide and entity-record live overlay coverage
-- periodic PR cadence driven from the live collaborative unit layer instead of the older review queue
-
-## Testing contract
-
-Feature work is not complete until the expected behavior is covered at the right layer.
-
-At minimum, changes to live or cached behavior should be covered for:
-
-- cache-first restore
-- optimistic update persistence
-- reload resilience
-- stale remote merge behavior
-- hierarchy preservation for threaded data
-
-## Target implementation
-
-The next architectural shift is:
-
-- expand `nostr-crdt` usage beyond static pages into investigations and entity records
-- let `nostr-site` keep the trust and publishing policy
-- let `truecost` define which units are collaborative and how they render
-
-That should simplify:
-
-- concurrent editing
-- merge handling
-- multi-admin live updates
-- periodic bakedown into GitHub
-
-## Pinner cadence
-
-The pinner behavior is periodic PR generation, not per-edit PR generation.
-
-Initial cadence:
-
-- start around once per week while traffic is low
-- increase toward once per day as activity justifies it
-
-The pinner should materialize current trusted live state into repo files and update a PR on that cadence.
-
-## Why this model
-
-This keeps the UX simple:
-
-- admins edit units
-- visitors see trusted live improvements quickly
-- the repo still remains the reviewed static baseline
-
-It also keeps the system understandable:
-
-- Nostr is transport
-- CRDT handles shared state and merging
-- `nostr-site` handles trust and publishing policy
-- GitHub remains the reviewed static publication layer
+- static-first
+  - the built site must already be useful before live state arrives
+- live overlay
+  - relay-backed updates applied after load when they are trusted
+- projection
+  - a reduced runtime view of shared state
+- document controller
+  - the layer that owns document open/apply/close behavior
+- bakedown
+  - turning approved live state back into reviewed static output
+- pinner
+  - the service that materializes approved state and opens or updates PRs

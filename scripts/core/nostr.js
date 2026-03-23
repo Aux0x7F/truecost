@@ -32,6 +32,7 @@ export const {
   deriveIdentity,
   generateSecretKeyHex,
   resolveSitePubkey,
+  hydrateCachedPublicState,
   getCachedPublicState: getCachedPublicStateFromClient,
   publicStateNeedsRepair,
   requestPublicStateRepair,

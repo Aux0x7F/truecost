@@ -7,17 +7,17 @@ import {
   buildRemovedAccountMessage,
   buildUsernameLoginMismatchMessage,
   buildUsernameConflictMessage,
-  clearCachedSessionUsernameIntegrity,
   currentSessionUsernameConflictMessage,
   inspectUsernameClaim,
   isRemovedAccountError,
   isUsernameConflictError,
-  readCachedSessionUsernameIntegrity,
+  rememberAccountRotationHistoryEntry,
+  rememberCurrentAccountHistoryEntry,
   resolveRemovedSessionAccount,
   resolveNextAvailableUsername,
   resolveSessionUsernameConflict,
   sessionHasUsernameConflict
-} from "../scripts/core/account-integrity.js";
+} from "../scripts/core/session-identity.js";
 
 test("session username integrity accepts the canonical owner and rejects newer claimants", () => {
   const publicState = {
@@ -168,22 +168,10 @@ test("session username integrity rejects an older rotated key as stale", async (
 });
 
 test("network-backed username integrity rejects an older password from local account history before lookup", async () => {
-  const storage = new Map();
-  globalThis.localStorage = {
-    getItem: (key) => storage.get(key) || null,
-    setItem: (key, value) => storage.set(key, value),
-    removeItem: (key) => storage.delete(key)
-  };
-  storage.set(
-    "truecost.v2.account-history",
-    JSON.stringify({
-      aux: {
-        username: "aux",
-        currentPubkey: "c".repeat(64),
-        knownPubkeys: ["a".repeat(64), "c".repeat(64)],
-        updatedAt: Date.now()
-      }
-    })
+  const accountHistory = rememberAccountRotationHistoryEntry(
+    rememberCurrentAccountHistoryEntry(null, { username: "aux", pubkey: "a".repeat(64) }),
+    { username: "aux", pubkey: "a".repeat(64) },
+    { username: "aux", pubkey: "c".repeat(64) }
   );
 
   await assert.rejects(
@@ -197,6 +185,7 @@ test("network-backed username integrity rejects an older password from local acc
       { username: "aux", pubkey: "a".repeat(64) },
       {
         action: "open this account",
+        accountHistory,
         lookupUsers: async () => {
           throw new Error("lookup should not run for a known stale key");
         },
@@ -208,23 +197,14 @@ test("network-backed username integrity rejects an older password from local acc
 });
 
 test("local current account history suppresses provisional conflicts from older keys in the same account", async () => {
-  const storage = new Map();
-  globalThis.localStorage = {
-    getItem: (key) => storage.get(key) || null,
-    setItem: (key, value) => storage.set(key, value),
-    removeItem: (key) => storage.delete(key)
-  };
-  storage.set(
-    "truecost.v2.account-history",
-    JSON.stringify({
-      aux: {
-        username: "aux",
-        currentPubkey: "e".repeat(64),
-        knownPubkeys: ["a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64), "e".repeat(64)],
-        updatedAt: Date.now()
-      }
-    })
-  );
+  const accountChain = ["a", "b", "c", "d", "e"].map((value) => ({
+    username: "aux",
+    pubkey: value.repeat(64)
+  }));
+  let accountHistory = rememberCurrentAccountHistoryEntry(null, accountChain[0]);
+  for (let index = 1; index < accountChain.length; index += 1) {
+    accountHistory = rememberAccountRotationHistoryEntry(accountHistory, accountChain[index - 1], accountChain[index]);
+  }
 
   const integrity = resolveSessionUsernameConflict(
     {
@@ -248,7 +228,8 @@ test("local current account history suppresses provisional conflicts from older 
         }
       ]
     },
-    { username: "aux", pubkey: "e".repeat(64) }
+    { username: "aux", pubkey: "e".repeat(64) },
+    { accountHistory }
   );
 
   assert.equal(integrity.conflict, false);
@@ -265,6 +246,7 @@ test("local current account history suppresses provisional conflicts from older 
       { username: "aux", pubkey: "e".repeat(64) },
       {
         action: "rotate this account",
+        accountHistory,
         lookupUsers: async () => [
           {
             pubkey: "b".repeat(64),
@@ -280,35 +262,14 @@ test("local current account history suppresses provisional conflicts from older 
 });
 
 test("cached lookup conflicts from older keys do not poison the current local account head", () => {
-  const storage = new Map();
-  globalThis.localStorage = {
-    getItem: (key) => storage.get(key) || null,
-    setItem: (key, value) => storage.set(key, value),
-    removeItem: (key) => storage.delete(key)
-  };
-  storage.set(
-    "truecost.v2.account-history",
-    JSON.stringify({
-      aux: {
-        username: "aux",
-        currentPubkey: "e".repeat(64),
-        knownPubkeys: ["a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64), "e".repeat(64)],
-        updatedAt: Date.now()
-      }
-    })
-  );
-  storage.set(
-    "truecost.v2.username-integrity",
-    JSON.stringify({
-      [`aux:${"e".repeat(64)}`]: {
-        conflict: true,
-        claimedUsername: "aux",
-        ownerPubkey: "b".repeat(64),
-        checkedAt: Date.now(),
-        source: "lookup"
-      }
-    })
-  );
+  const accountChain = ["a", "b", "c", "d", "e"].map((value) => ({
+    username: "aux",
+    pubkey: value.repeat(64)
+  }));
+  let accountHistory = rememberCurrentAccountHistoryEntry(null, accountChain[0]);
+  for (let index = 1; index < accountChain.length; index += 1) {
+    accountHistory = rememberAccountRotationHistoryEntry(accountHistory, accountChain[index - 1], accountChain[index]);
+  }
 
   const integrity = resolveSessionUsernameConflict(
     {
@@ -317,12 +278,20 @@ test("cached lookup conflicts from older keys do not poison the current local ac
       usernameRegistry: [],
       users: []
     },
-    { username: "aux", pubkey: "e".repeat(64) }
+    { username: "aux", pubkey: "e".repeat(64) },
+    {
+      accountHistory,
+      storedIntegrity: {
+        conflict: true,
+        claimedUsername: "aux",
+        ownerPubkey: "b".repeat(64),
+        source: "lookup"
+      }
+    }
   );
 
   assert.equal(integrity.conflict, false);
   assert.equal(integrity.source, "history-current");
-  assert.equal(readCachedSessionUsernameIntegrity({ username: "aux", pubkey: "e".repeat(64) }), null);
 });
 
 test("session username integrity messaging names the taken handle", () => {
@@ -345,14 +314,8 @@ test("session username integrity messaging names the taken handle", () => {
 });
 
 test("network-backed username integrity refuses a taken username before saving the session and caches the conflict", async () => {
-  const storage = new Map();
-  globalThis.localStorage = {
-    getItem: (key) => storage.get(key) || null,
-    setItem: (key, value) => storage.set(key, value),
-    removeItem: (key) => storage.delete(key)
-  };
-
   const session = { username: "aux", pubkey: "b".repeat(64) };
+  let storedIntegrity = null;
 
   await assert.rejects(
     assertNetworkSessionUsernameIntegrity(
@@ -360,6 +323,9 @@ test("network-backed username integrity refuses a taken username before saving t
       session,
       {
         action: "open this account",
+        onRememberIntegrity: async (_session, integrity) => {
+          storedIntegrity = integrity;
+        },
         lookupUsers: async () => [{ pubkey: "a".repeat(64), username: "aux", claimedUsername: "aux", usernameConflict: false }],
         requireLookup: true
       }
@@ -367,15 +333,15 @@ test("network-backed username integrity refuses a taken username before saving t
     /already claimed/
   );
 
-  const cachedIntegrity = readCachedSessionUsernameIntegrity(session);
-  assert.equal(cachedIntegrity?.conflict, true);
-  assert.equal(cachedIntegrity?.ownerPubkey, "a".repeat(64));
+  assert.equal(storedIntegrity?.conflict, true);
+  assert.equal(storedIntegrity?.ownerPubkey, "a".repeat(64));
   await assert.rejects(
     assertNetworkSessionUsernameIntegrity(
       { usernameRegistry: [], users: [] },
       session,
       {
         action: "open this account",
+        storedIntegrity,
         lookupUsers: async () => [{ pubkey: "a".repeat(64), username: "aux", claimedUsername: "aux", usernameConflict: false }],
         requireLookup: true
       }
@@ -386,32 +352,16 @@ test("network-backed username integrity refuses a taken username before saving t
       return true;
     }
   );
-
-  clearCachedSessionUsernameIntegrity(session);
-  assert.equal(readCachedSessionUsernameIntegrity(session), null);
 });
 
 test("lookup-backed cached conflicts survive an untrusted no-conflict snapshot", () => {
-  const storage = new Map();
-  globalThis.localStorage = {
-    getItem: (key) => storage.get(key) || null,
-    setItem: (key, value) => storage.set(key, value),
-    removeItem: (key) => storage.delete(key)
-  };
-
   const session = { username: "aux", pubkey: "b".repeat(64) };
-  storage.set(
-    "truecost.v2.username-integrity",
-    JSON.stringify({
-      [`aux:${"b".repeat(64)}`]: {
-        conflict: true,
-        claimedUsername: "aux",
-        ownerPubkey: "a".repeat(64),
-        checkedAt: Date.now(),
-        source: "lookup"
-      }
-    })
-  );
+  const storedIntegrity = {
+    conflict: true,
+    claimedUsername: "aux",
+    ownerPubkey: "a".repeat(64),
+    source: "lookup"
+  };
 
   const integrity = resolveSessionUsernameConflict(
     {
@@ -420,35 +370,22 @@ test("lookup-backed cached conflicts survive an untrusted no-conflict snapshot",
       usernameRegistry: [],
       users: []
     },
-    session
+    session,
+    { storedIntegrity }
   );
 
   assert.equal(integrity.conflict, true);
   assert.equal(integrity.source, "cache");
-  assert.equal(readCachedSessionUsernameIntegrity(session)?.conflict, true);
 });
 
 test("lookup-backed cached conflicts survive a generic trusted snapshot without explicit ownership", () => {
-  const storage = new Map();
-  globalThis.localStorage = {
-    getItem: (key) => storage.get(key) || null,
-    setItem: (key, value) => storage.set(key, value),
-    removeItem: (key) => storage.delete(key)
-  };
-
   const session = { username: "aux", pubkey: "b".repeat(64) };
-  storage.set(
-    "truecost.v2.username-integrity",
-    JSON.stringify({
-      [`aux:${"b".repeat(64)}`]: {
-        conflict: true,
-        claimedUsername: "aux",
-        ownerPubkey: "a".repeat(64),
-        checkedAt: Date.now(),
-        source: "lookup"
-      }
-    })
-  );
+  const storedIntegrity = {
+    conflict: true,
+    claimedUsername: "aux",
+    ownerPubkey: "a".repeat(64),
+    source: "lookup"
+  };
 
   const integrity = resolveSessionUsernameConflict(
     {
@@ -457,12 +394,12 @@ test("lookup-backed cached conflicts survive a generic trusted snapshot without 
       usernameRegistry: [],
       users: []
     },
-    session
+    session,
+    { storedIntegrity }
   );
 
   assert.equal(integrity.conflict, true);
   assert.equal(integrity.source, "cache");
-  assert.equal(readCachedSessionUsernameIntegrity(session)?.conflict, true);
 });
 
 test("network-backed username integrity does not reject the canonical owner from provisional state conflict", async () => {
