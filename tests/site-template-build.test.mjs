@@ -98,3 +98,13 @@ test("interactive explore pages render without intro shells above the main surfa
     assert.doesNotMatch(rendered, /section--page-intro/, `${fileName} output should not render a page intro shell`);
   }
 });
+
+test("workspace source page uses the compact account shell instead of a hero block", async () => {
+  const workspacePage = pageDefinitions.find((page) => page.fileName === "admin.html");
+  assert.ok(workspacePage);
+  const mainHtml = await fs.readFile(path.join(pageSourceRoot, workspacePage.mainSource), "utf8");
+
+  assert.doesNotMatch(mainHtml, /class="hero"/);
+  assert.doesNotMatch(mainHtml, /workspace-page__header/);
+  assert.match(mainHtml, /data-workspace-shell/);
+});

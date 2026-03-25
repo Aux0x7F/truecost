@@ -1,3 +1,5 @@
+import { normalizeAdminPubkeys } from "./public-state.js";
+
 export function firstEventTag(event, key) {
   const hit = (event?.tags || []).find((tag) => Array.isArray(tag) && tag[0] === key);
   return hit ? String(hit[1] || "") : "";
@@ -6,6 +8,10 @@ export function firstEventTag(event, key) {
 export function normalizeDirectPubkey(value) {
   const clean = String(value || "").trim().toLowerCase();
   return /^[0-9a-f]{64}$/.test(clean) ? clean : "";
+}
+
+function normalizeWorkspacePubkey(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
 export function findLocalUserCandidate(value, { users = [], normalizeUsername } = {}) {
@@ -37,46 +43,110 @@ export function filterVisibleWorkspaceUsers({
     if (user.removed) return true;
     return String(user?.moderation?.action || "").trim().toLowerCase() === "removed";
   };
-  const allUsers = Array.isArray(publicState?.users) ? publicState.users : [];
+  const allUsers = collectWorkspaceUsers(publicState);
   const activeUsers = allUsers.filter((user) => !isRemovedUser(user));
-  const removedUsers = [
-    ...(Array.isArray(publicState?.removedUsers) ? publicState.removedUsers : []).map((user) => ({
-      ...user,
-      removed: true,
-      isAdmin: false
-    })),
-    ...allUsers.filter((user) => isRemovedUser(user)).map((user) => ({
-      ...user,
-      removed: true
-    }))
-  ].filter((user, index, values) =>
-    values.findIndex((candidate) => String(candidate?.pubkey || "").trim().toLowerCase() === String(user?.pubkey || "").trim().toLowerCase()) === index
-  );
+  const removedUsers = allUsers.filter((user) => isRemovedUser(user)).map((user) => ({ ...user, removed: true }));
   const sourceUsers = cleanRole === "removed" ? removedUsers : activeUsers;
   return sourceUsers.filter((user) => {
     if (cleanRole === "admin" && (!user.isAdmin || isRemovedUser(user))) return false;
     if (cleanRole === "active" && isRemovedUser(user)) return false;
     if (cleanRole === "removed" && !isRemovedUser(user)) return false;
-    const visible =
-      user.isAdmin ||
-      isRemovedUser(user) ||
-      user.submissionCount > 0 ||
-      user.commentCount > 0 ||
-      user.moderation ||
-      user.username ||
-      user.claimedUsername ||
-      user.usernameConflict ||
-      String(user.bio || "").trim() ||
-      (Array.isArray(user.socialLinks) && user.socialLinks.length) ||
-      user.avatarUrl ||
-      user.avatarBlob;
-    if (!visible || !karmaBucketMatches(resolveWorkspaceUserKarma(user.pubkey), cleanKarmaBucket)) return false;
+    if (!karmaBucketMatches(resolveWorkspaceUserKarma(user.pubkey), cleanKarmaBucket)) return false;
     if (!cleanQuery) return true;
     const haystacks = [user.displayName, user.username, user.claimedUsername, user.bio, user.pubkey]
       .map((value) => String(value || "").trim().toLowerCase())
       .filter(Boolean);
     return haystacks.some((value) => value.includes(cleanQuery));
   });
+}
+
+export function collectWorkspaceUsers(publicState = null) {
+  const source = publicState && typeof publicState === "object" ? publicState : {};
+  const usersByPubkey = new Map();
+  const commentCounts = new Map();
+  const submissionCounts = new Map();
+
+  const mergeUser = (user = {}, extra = {}) => {
+    const cleanPubkey = normalizeWorkspacePubkey(user?.pubkey || extra.pubkey || "");
+    if (!cleanPubkey) return;
+    const current = usersByPubkey.get(cleanPubkey) || {
+      pubkey: cleanPubkey,
+      username: "",
+      claimedUsername: "",
+      displayName: "",
+      bio: "",
+      socialLinks: [],
+      avatarUrl: "",
+      avatarBlob: null,
+      moderation: null,
+      usernameConflict: false,
+      usernameOwnerPubkey: "",
+      isAdmin: false,
+      removed: false,
+      commentCount: 0,
+      submissionCount: 0
+    };
+    usersByPubkey.set(cleanPubkey, {
+      ...current,
+      ...user,
+      ...extra,
+      pubkey: cleanPubkey,
+      username: String(user?.username || current.username || extra.username || "").trim(),
+      claimedUsername: String(user?.claimedUsername || current.claimedUsername || extra.claimedUsername || "").trim(),
+      displayName: String(user?.displayName || current.displayName || extra.displayName || "").trim(),
+      isAdmin: Boolean(current.isAdmin || user?.isAdmin || extra.isAdmin),
+      removed: Boolean(current.removed || user?.removed || extra.removed),
+      commentCount: Math.max(
+        Number(current.commentCount || 0) || 0,
+        Number(user?.commentCount || 0) || 0,
+        Number(extra.commentCount || 0) || 0
+      ),
+      submissionCount: Math.max(
+        Number(current.submissionCount || 0) || 0,
+        Number(user?.submissionCount || 0) || 0,
+        Number(extra.submissionCount || 0) || 0
+      )
+    });
+  };
+
+  for (const user of Array.isArray(source.users) ? source.users : []) {
+    mergeUser(user);
+  }
+  for (const user of Array.isArray(source.removedUsers) ? source.removedUsers : []) {
+    mergeUser(user, { removed: true, isAdmin: false });
+  }
+  for (const adminPubkey of normalizeAdminPubkeys(source)) {
+    mergeUser({ pubkey: adminPubkey }, { isAdmin: true });
+  }
+  for (const comment of Array.isArray(source.allComments) ? source.allComments : []) {
+    const cleanPubkey = normalizeWorkspacePubkey(comment?.author || "");
+    if (!cleanPubkey) continue;
+    commentCounts.set(cleanPubkey, (commentCounts.get(cleanPubkey) || 0) + 1);
+    mergeUser({ pubkey: cleanPubkey });
+  }
+  if (source.submissionCountByAuthor instanceof Map) {
+    for (const [pubkey, count] of source.submissionCountByAuthor.entries()) {
+      const cleanPubkey = normalizeWorkspacePubkey(pubkey);
+      if (!cleanPubkey) continue;
+      submissionCounts.set(cleanPubkey, Math.max(submissionCounts.get(cleanPubkey) || 0, Number(count || 0) || 0));
+      mergeUser({ pubkey: cleanPubkey });
+    }
+  }
+  for (const request of Array.isArray(source.pendingAdminKeyRequests) ? source.pendingAdminKeyRequests : []) {
+    mergeUser({ pubkey: request?.requester_pubkey || "" });
+  }
+  for (const share of Array.isArray(source.adminKeyShareMetadata) ? source.adminKeyShareMetadata : []) {
+    mergeUser({ pubkey: share?.recipient_pubkey || "" }, { isAdmin: true });
+  }
+
+  return [...usersByPubkey.values()]
+    .map((user) => ({
+      ...user,
+      commentCount: Math.max(Number(user.commentCount || 0) || 0, commentCounts.get(user.pubkey) || 0),
+      submissionCount: Math.max(Number(user.submissionCount || 0) || 0, submissionCounts.get(user.pubkey) || 0),
+      displayName: String(user.displayName || user.username || user.claimedUsername || user.pubkey).trim()
+    }))
+    .sort((left, right) => String(left.displayName || "").localeCompare(String(right.displayName || "")));
 }
 
 export function buildWorkspaceUserStats({

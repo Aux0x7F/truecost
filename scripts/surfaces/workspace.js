@@ -2,19 +2,28 @@ export function renderWorkspaceView({ workspaceState, deps = {} } = {}) {
   const passwordMinLength = Number(deps.passwordMinLength || 8) || 8;
   const currentUserIsAdmin = deps.currentUserIsAdmin || (() => false);
   const hasSession = Boolean(workspaceState?.session);
+  const currentGroup = deps.currentWorkspaceGroup ? deps.currentWorkspaceGroup() : "profile";
   const removedSession = deps.currentRemovedSessionAccount ? deps.currentRemovedSessionAccount() : null;
   const staleSession = deps.currentStaleSessionAccount ? deps.currentStaleSessionAccount() : null;
   const sessionConflict = deps.currentSessionUsernameConflict ? deps.currentSessionUsernameConflict() : { conflict: false };
   const title = !workspaceState?.session
     ? "Log in"
     : currentUserIsAdmin()
-      ? "Workspace"
+      ? currentGroup === "admin"
+        ? "Admin tools"
+        : "Your account"
       : "Profile options";
   const lede = !workspaceState?.session
     ? "Use the same username and password each time to return to this account."
     : currentUserIsAdmin()
-      ? "Manage users, submissions, entities, and post review."
+      ? currentGroup === "admin"
+        ? "Manage the site, review activity, and work through admin queues."
+        : "Update your profile and review your own comment history."
       : "Update your profile and review your comments.";
+  const groupButtons = deps.groupButtons ? deps.groupButtons() : [];
+  const groupMarkup = groupButtons.length > 1
+    ? groupButtons.map((group) => deps.renderGroupButton(group)).join("")
+    : "";
   const tabsMarkup = (deps.tabButtons ? deps.tabButtons() : [])
     .map((tab) => deps.renderTabButton(tab))
     .join("");
@@ -36,7 +45,7 @@ export function renderWorkspaceView({ workspaceState, deps = {} } = {}) {
     deps.renderPasswordRotationModal?.() || ""
   ].join("");
 
-  return { title, lede, tabsMarkup, paneMarkup, overlayMarkup };
+  return { title, lede, groupMarkup, tabsMarkup, paneMarkup, overlayMarkup };
 }
 
 function renderActivePane(workspaceState, deps, passwordMinLength) {
@@ -47,10 +56,10 @@ function renderActivePane(workspaceState, deps, passwordMinLength) {
       return renderUsersPane(workspaceState, deps);
     case "submissions":
       return renderSubmissionsPane(workspaceState, deps);
-    case "entities":
-      return renderEntitiesPane(workspaceState, deps);
-    case "review":
-      return renderReviewPane(workspaceState, deps);
+    case "posts":
+      return renderPostsPane(workspaceState, deps);
+    case "moderation":
+      return renderModerationPane(workspaceState, deps);
     case "log":
       return deps.renderLogPane();
     case "comments":
@@ -138,21 +147,28 @@ function renderStalePane(deps) {
 
 function renderDashboardPane(workspaceState, deps) {
   const metrics = workspaceState.publicState?.metrics || {};
+  const users = Array.isArray(workspaceState.publicState?.users) ? workspaceState.publicState.users : [];
+  const publishedPosts = Array.isArray(workspaceState.publishedPosts) ? workspaceState.publishedPosts : [];
   const locationCount = new Set(
     (workspaceState.publicState?.approvedEntities || []).map((entity) => entity.location).filter(Boolean)
   ).size;
   const snapshot = workspaceState.publicState?.snapshotInfo || null;
   const escapeHtml = deps.escapeHtml || ((value) => String(value || ""));
+  const userCount = Number(metrics.userCount || deps.workspaceUserStats?.().total || users.length || 0) || 0;
+  const submissionCount = Number(metrics.submissionCount || workspaceState.inboxSubmissions?.length || 0) || 0;
+  const commentCount =
+    Number(metrics.commentCount || workspaceState.publicState?.comments?.length || workspaceState.publicState?.allComments?.length || 0) || 0;
   return `
     <div class="workspace-grid">
       <section class="metric-grid">
         <article class="metric-card"><strong>${metrics.visitorCount24h || 0}</strong><p>Visitors (24h)</p></article>
         <article class="metric-card"><strong>${metrics.visitorCount7d || 0}</strong><p>Visitors (7d)</p></article>
-        <article class="metric-card"><strong>${metrics.userCount || 0}</strong><p>Known users</p></article>
-        <article class="metric-card"><strong>${metrics.submissionCount || 0}</strong><p>Submission threads</p></article>
+        <article class="metric-card"><strong>${userCount}</strong><p>Known users</p></article>
+        <article class="metric-card"><strong>${publishedPosts.length}</strong><p>Published posts</p></article>
+        <article class="metric-card"><strong>${submissionCount}</strong><p>Submission threads</p></article>
         <article class="metric-card"><strong>${locationCount}</strong><p>Tracked locations</p></article>
-        <article class="metric-card"><strong>${metrics.approvedEntityCount || 0}</strong><p>Approved entities</p></article>
-        <article class="metric-card"><strong>${metrics.commentCount || 0}</strong><p>Visible comments</p></article>
+        <article class="metric-card"><strong>${metrics.approvedEntityCount || 0}</strong><p>Approved records</p></article>
+        <article class="metric-card"><strong>${commentCount}</strong><p>Visible comments</p></article>
         <article class="metric-card"><strong>${metrics.visitEventCount7d || 0}</strong><p>Visit pulses (7d)</p></article>
       </section>
       <section class="surface-panel">
@@ -346,81 +362,59 @@ function renderSubmissionsPane(workspaceState, deps) {
   `;
 }
 
-function renderEntitiesPane(workspaceState, deps) {
-  const visibleEntities = deps.visibleWorkspaceEntities();
-  return `
-    <div class="workspace-grid workspace-grid--rail">
-      <section class="surface-panel">
-        <div class="workspace-list__row">
-          <div>
-            <div class="eyebrow">Entities</div>
-            <h2>Locations and targets</h2>
-          </div>
-          <button class="button" type="button" data-open-entity-modal>Add entity</button>
-        </div>
-        <div class="roster-list">
-          ${
-            visibleEntities.length
-              ? visibleEntities
-                  .map(
-                    (entity) => `
-                      <article class="roster-item">
-                        <div class="workspace-list__row">
-                          <div>
-                            <strong>${deps.escapeHtml(entity.name)}</strong>
-                            <span>${deps.escapeHtml(entity.location)} • ${deps.escapeHtml(entity.type)}</span>
-                          </div>
-                          <div class="tag-row">
-                            <span class="tag">${deps.escapeHtml(entity.status)}</span>
-                          </div>
-                        </div>
-                        <span>${deps.escapeHtml(entity.notes || "No public note yet.")}</span>
-                        ${
-                          deps.currentUserIsAdmin()
-                            ? `
-                              <div class="button-row button-row--tight">
-                                ${entity.status !== "deleted" ? `<button class="button-ghost" type="button" data-edit-entity="${entity.slug}">Edit</button>` : ""}
-                                ${
-                                  entity.status === "pending"
-                                    ? `
-                                      <button class="button-ghost" type="button" data-entity-action="approve" data-entity-slug="${entity.slug}">Approve</button>
-                                      <button class="button-ghost" type="button" data-entity-action="deny" data-entity-slug="${entity.slug}">Deny</button>
-                                    `
-                                    : `<button class="button-ghost" type="button" data-entity-action="delete" data-entity-slug="${entity.slug}">Delete</button>`
-                                }
-                              </div>
-                            `
-                            : ""
-                        }
-                      </article>
-                    `
-                  )
-                  .join("")
-              : `<div class="empty-state">No entities match these filters yet.</div>`
-          }
-        </div>
-      </section>
-      <aside class="workspace-rail-stack">
-        <section class="surface-panel workspace-rail-panel">
-          ${deps.renderEntityManagementRail()}
-        </section>
-      </aside>
-    </div>
-  `;
-}
-
-function renderReviewPane(workspaceState, deps) {
+function renderPostsPane(workspaceState, deps) {
+  const publishedPosts = Array.isArray(workspaceState.publishedPosts) ? workspaceState.publishedPosts : [];
   const drafts = (workspaceState.publicState?.drafts || []).slice();
   const pending = drafts.filter((draft) => ["candidate", "submitted", "review"].includes(String(draft.status || "").toLowerCase()));
   const recentlyDecided = drafts
     .filter((draft) => ["approved", "revision", "denied"].includes(String(draft.status || "").toLowerCase()))
     .slice(0, 10);
+  const escapeHtml = deps.escapeHtml || ((value) => String(value || ""));
+  const escapeAttribute = deps.escapeAttribute || ((value) => String(value || ""));
   return `
     <div class="review-stack">
       <section class="surface-panel">
         <div class="workspace-list__row">
           <div>
-            <div class="eyebrow">Post Review</div>
+            <div class="eyebrow">Posts</div>
+            <h2>Published investigations</h2>
+          </div>
+          <div class="tag-row">
+            <span class="tag">${publishedPosts.length} published</span>
+          </div>
+        </div>
+        <div class="roster-list">
+          ${
+            publishedPosts.length
+              ? publishedPosts
+                  .map(
+                    (post) => `
+                      <article class="roster-item">
+                        <div class="workspace-list__row">
+                          <div>
+                            <strong>${escapeHtml(post.title || post.slug || "Untitled post")}</strong>
+                            <span>${escapeHtml(post.date || "No publish date")}</span>
+                          </div>
+                          <div class="tag-row">
+                            <span class="tag">Published</span>
+                          </div>
+                        </div>
+                        <span>${escapeHtml(post.summary || post.description || "Published investigation.")}</span>
+                        <div class="button-row button-row--tight">
+                          <a class="text-link" href="./investigation.html?slug=${escapeAttribute(post.slug || "")}">Open</a>
+                        </div>
+                      </article>
+                    `
+                  )
+                  .join("")
+              : `<div class="empty-state">No published posts are visible yet.</div>`
+          }
+        </div>
+      </section>
+      <section class="surface-panel">
+        <div class="workspace-list__row">
+          <div>
+            <div class="eyebrow">Review queue</div>
             <h2>Ready for review</h2>
           </div>
           <div class="tag-row">
@@ -452,66 +446,9 @@ function renderReviewPane(workspaceState, deps) {
 }
 
 function renderCommentsPane(workspaceState, deps) {
-  const ownComments = workspaceState.publicState?.commentsByAuthor.get(workspaceState.viewer?.pubkey || "") || [];
-  if (deps.currentUserIsAdmin()) {
-    const allComments = deps.filterWorkspaceComments((workspaceState.publicState?.allComments || []).slice().reverse());
-    const hiddenCount = workspaceState.publicState?.hiddenComments?.length || 0;
-    return `
-      <section class="surface-panel">
-        <div class="workspace-list__row">
-          <div>
-            <div class="eyebrow">Comments</div>
-            <h2>Review comments</h2>
-          </div>
-          <div class="tag-row">
-            <span class="tag">${allComments.length - hiddenCount} shown</span>
-            <span class="tag">${hiddenCount} hidden</span>
-          </div>
-        </div>
-        <div class="workspace-filter-bar">
-          ${deps.renderSearchField({
-            srLabel: "Search comments",
-            inputAttributes: {
-              class: "workspace-search__input",
-              "data-comment-filter-query": true,
-              type: "text",
-              maxlength: "120",
-              placeholder: "Search comments or users",
-              value: workspaceState.commentFilters.query || "",
-              autocomplete: "off"
-            },
-            clearButton: workspaceState.commentFilters.query
-              ? {
-                  attributes: { "data-clear-comment-filter": true },
-                  ariaLabel: "Clear comment search"
-                }
-              : null
-          })}
-          <label class="workspace-select">
-            <span class="sr-only">Filter by role</span>
-            <select data-comment-filter-role>
-              <option value="">All roles</option>
-              <option value="admin" ${workspaceState.commentFilters.role === "admin" ? "selected" : ""}>Admin</option>
-              <option value="user" ${workspaceState.commentFilters.role === "user" ? "selected" : ""}>User</option>
-            </select>
-          </label>
-          <label class="workspace-select">
-            <span class="sr-only">Filter by karma</span>
-            <select data-comment-filter-karma>
-              ${deps.renderKarmaSelectOptions(workspaceState.commentFilters.karma)}
-            </select>
-          </label>
-        </div>
-        <div class="roster-list">
-          ${
-            allComments.length
-              ? allComments.map((comment) => deps.renderModerationComment(comment)).join("")
-              : `<div class="empty-state">No comments yet.</div>`
-          }
-        </div>
-      </section>
-    `;
-  }
+  const ownComments = workspaceState.publicState?.commentsByAuthor instanceof Map
+    ? workspaceState.publicState.commentsByAuthor.get(workspaceState.viewer?.pubkey || "") || []
+    : [];
   return `
     <section class="surface-panel">
       <div class="eyebrow">Comments</div>
@@ -525,6 +462,66 @@ function renderCommentsPane(workspaceState, deps) {
                 .map((comment) => deps.renderOwnCommentRow(comment))
                 .join("")
             : `<div class="empty-state">No comments yet.</div>`
+        }
+      </div>
+    </section>
+  `;
+}
+
+function renderModerationPane(workspaceState, deps) {
+  const allComments = deps.filterWorkspaceComments((workspaceState.publicState?.allComments || []).slice().reverse());
+  const hiddenCount = workspaceState.publicState?.hiddenComments?.length || 0;
+  return `
+    <section class="surface-panel">
+      <div class="workspace-list__row">
+        <div>
+          <div class="eyebrow">Comment review</div>
+          <h2>Moderation queue</h2>
+        </div>
+        <div class="tag-row">
+          <span class="tag">${Math.max(0, allComments.length - hiddenCount)} shown</span>
+          <span class="tag">${hiddenCount} hidden</span>
+        </div>
+      </div>
+      <div class="workspace-filter-bar">
+        ${deps.renderSearchField({
+          srLabel: "Search comments",
+          inputAttributes: {
+            class: "workspace-search__input",
+            "data-comment-filter-query": true,
+            type: "text",
+            maxlength: "120",
+            placeholder: "Search comments or users",
+            value: workspaceState.commentFilters.query || "",
+            autocomplete: "off"
+          },
+          clearButton: workspaceState.commentFilters.query
+            ? {
+                attributes: { "data-clear-comment-filter": true },
+                ariaLabel: "Clear comment search"
+              }
+            : null
+        })}
+        <label class="workspace-select">
+          <span class="sr-only">Filter by role</span>
+          <select data-comment-filter-role>
+            <option value="">All roles</option>
+            <option value="admin" ${workspaceState.commentFilters.role === "admin" ? "selected" : ""}>Admin</option>
+            <option value="user" ${workspaceState.commentFilters.role === "user" ? "selected" : ""}>User</option>
+          </select>
+        </label>
+        <label class="workspace-select">
+          <span class="sr-only">Filter by karma</span>
+          <select data-comment-filter-karma>
+            ${deps.renderKarmaSelectOptions(workspaceState.commentFilters.karma)}
+          </select>
+        </label>
+      </div>
+      <div class="roster-list">
+        ${
+          allComments.length
+            ? allComments.map((comment) => deps.renderModerationComment(comment)).join("")
+            : `<div class="empty-state">No comments are visible yet.</div>`
         }
       </div>
     </section>

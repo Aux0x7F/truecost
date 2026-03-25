@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createWorkspaceSelectorController } from "../scripts/core/workspace-selectors.js";
-import { filterVisibleWorkspaceUsers } from "../scripts/core/workspace-data.js";
+import { collectWorkspaceUsers, filterVisibleWorkspaceUsers } from "../scripts/core/workspace-data.js";
 
 test("workspace selector controller hydrates lookup candidates and derives location suggestions", () => {
   const state = {
@@ -77,6 +77,22 @@ test("workspace user filtering hides removed users by default and shows them whe
     resolveWorkspaceUserKarma: () => 0,
     karmaBucketMatches: () => true
   });
-  assert.deepEqual(visible.map((user) => user.pubkey), ["removed-pubkey", "moderated-removed"]);
-  assert.equal(visible[0].removed, true);
+  assert.deepEqual(visible.map((user) => user.pubkey).sort(), ["moderated-removed", "removed-pubkey"]);
+  assert.equal(visible.every((user) => user.removed), true);
+});
+
+test("workspace user collection keeps sparse activity-only users visible", () => {
+  const users = collectWorkspaceUsers({
+    admins: ["a".repeat(64)],
+    allComments: [{ id: "c1", author: "b".repeat(64), markdown: "Comment" }],
+    submissionCountByAuthor: new Map([["c".repeat(64), 2]])
+  });
+
+  assert.deepEqual(
+    users.map((user) => user.pubkey).sort(),
+    ["a".repeat(64), "b".repeat(64), "c".repeat(64)].sort()
+  );
+  assert.equal(users.find((user) => user.pubkey === "a".repeat(64))?.isAdmin, true);
+  assert.equal(users.find((user) => user.pubkey === "b".repeat(64))?.commentCount, 1);
+  assert.equal(users.find((user) => user.pubkey === "c".repeat(64))?.submissionCount, 2);
 });

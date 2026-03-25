@@ -17,6 +17,19 @@ test("normalizeAdminPubkeys accepts string and object admin records", () => {
   assert.deepEqual(admins, ["abc123", "def456"]);
 });
 
+test("normalizeAdminPubkeys also accepts admin users when the admins array is sparse", () => {
+  const admins = normalizeAdminPubkeys({
+    admins: [],
+    users: [
+      { pubkey: "ROOT111", isAdmin: true },
+      { pubkey: "user999", isAdmin: false },
+      { pubkey: "AUX222", isAdmin: true }
+    ]
+  });
+
+  assert.deepEqual(admins, ["root111", "aux222"]);
+});
+
 test("publicStateHasAdminPubkey matches normalized admin entries", () => {
   const publicState = {
     admins: [{ pubkey: "ABC123" }],

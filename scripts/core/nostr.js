@@ -14,13 +14,18 @@ import {
   isUsablePublicState,
   normalizePublicState
 } from "./public-state.js";
+import {
+  clearPublicStateCacheStorage,
+  isRecoverablePublicStateCacheError,
+  repairPublicStateCacheStorage
+} from "./public-state-cache.js";
 
 const client = createNostrCmsClient(SITE);
 const blobs = createBlobStoreApi(SITE, client);
 const staticPages = createStaticPageOverlayApi(SITE);
 const structuredUnits = createStructuredUnitOverlayApi(SITE);
 let publicStatePromise = null;
-let lastGoodPublicState = clonePublicState(client.getCachedPublicState?.() || null);
+let lastGoodPublicState = clonePublicState(readCachedPublicStateSafely());
 
 export const {
   getEventTools,
@@ -77,7 +82,8 @@ export const {
 
 export async function loadPublicState(force = false) {
   if (publicStatePromise) return publicStatePromise;
-  publicStatePromise = client.loadPublicState(force)
+  repairStoredPublicStateCache();
+  publicStatePromise = loadPublicStateWithCacheRecovery(force)
     .then((publicState) => {
       const normalized = normalizePublicState(publicState, lastGoodPublicState);
       if (isUsablePublicState(normalized)) {
@@ -102,7 +108,7 @@ export function warmPublicState(force = false) {
 export function getCachedPublicState() {
   const cached = clonePublicState(lastGoodPublicState);
   if (cached) return cached;
-  const next = clonePublicState(getCachedPublicStateFromClient?.() || null);
+  const next = clonePublicState(readCachedPublicStateSafely());
   if (next && isUsablePublicState(next)) {
     lastGoodPublicState = clonePublicState(next);
   }
@@ -127,3 +133,38 @@ export default {
   warmPublicState,
   publicStateNeedsRepair
 };
+
+function readCachedPublicStateSafely() {
+  repairStoredPublicStateCache();
+  try {
+    return client.getCachedPublicState?.() || null;
+  } catch (error) {
+    if (!isRecoverablePublicStateCacheError(error)) return null;
+    clearStoredPublicStateCache();
+    try {
+      return client.getCachedPublicState?.() || null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function loadPublicStateWithCacheRecovery(force = false) {
+  try {
+    return await client.loadPublicState(force);
+  } catch (error) {
+    if (!isRecoverablePublicStateCacheError(error)) throw error;
+    clearStoredPublicStateCache();
+    return client.loadPublicState(true);
+  }
+}
+
+function repairStoredPublicStateCache() {
+  if (typeof window === "undefined" || !window?.localStorage) return null;
+  return repairPublicStateCacheStorage(window.localStorage, SITE.nostr.storageNamespace);
+}
+
+function clearStoredPublicStateCache() {
+  if (typeof window === "undefined" || !window?.localStorage) return null;
+  return clearPublicStateCacheStorage(window.localStorage, SITE.nostr.storageNamespace);
+}

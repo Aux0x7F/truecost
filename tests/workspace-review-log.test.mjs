@@ -98,5 +98,5 @@ test("renderLogPane uses shared log routing for audit events", () => {
   assert.match(markup, /Snapshot request/);
   assert.match(markup, /Entity update/);
   assert.match(markup, /admin\.html\?tab=dashboard/);
-  assert.match(markup, /admin\.html\?tab=entities/);
+  assert.match(markup, /admin\.html\?tab=posts/);
 });

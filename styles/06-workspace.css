@@ -1,5 +1,48 @@
 /* Workspace Surfaces */
 
+.workspace-page__wrap {
+  display: grid;
+  gap: 1.2rem;
+}
+
+.workspace-page__header {
+  display: grid;
+  gap: 0.45rem;
+  max-width: 48rem;
+}
+
+.workspace-page__header h1 {
+  margin: 0;
+}
+
+.workspace-page__lede {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.workspace-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-bottom: 0.85rem;
+}
+
+.workspace-switcher__button {
+  min-height: 2.55rem;
+  padding: 0.7rem 1rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.74);
+  font: inherit;
+  cursor: pointer;
+}
+
+.workspace-switcher__button.is-current {
+  background: rgba(156, 29, 24, 0.1);
+  border-color: rgba(156, 29, 24, 0.24);
+  color: var(--accent-deep);
+}
+
 .workspace-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -36,6 +79,12 @@
 
 .workspace-pane {
   min-height: 24rem;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
 }
 
 .workspace-rail-stack {

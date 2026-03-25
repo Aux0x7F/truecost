@@ -40,6 +40,8 @@ test("renderNavigationMarkup builds the admin explore shell with notifications",
   assert.match(markup, />\s*Map\s*</);
   assert.match(markup, /<a class="nav-link" href="\.\/editor\.html">Create Investigation<\/a>/);
   assert.match(markup, /Notifications/);
+  assert.match(markup, /href="\.\/admin\.html\?tab=profile">Profile<\/a>/);
+  assert.match(markup, /href="\.\/admin\.html\?tab=dashboard">Admin<\/a>/);
   assert.match(markup, />Admin</);
 });
 
@@ -86,7 +88,7 @@ test("renderWorkspaceView keeps login and comments panes as separate surfaces", 
       viewer: { pubkey: "admin" },
       activeTab: "comments",
       publicState: {
-        commentsByAuthor: new Map(),
+        commentsByAuthor: new Map([["admin", [{ id: "c1", author: "admin", markdown: "My comment", created_at: 1, post_slug: "post-a" }]]]),
         allComments: [{ id: "c1", author: "user", markdown: "Comment", created_at: 1 }],
         hiddenComments: []
       },
@@ -96,9 +98,10 @@ test("renderWorkspaceView keeps login and comments panes as separate surfaces", 
       tabButtons: () => [{ id: "comments", label: "Comments" }],
       renderTabButton: (tab) => `<button>${tab.label}</button>`,
       currentUserIsAdmin: () => true,
+      currentWorkspaceGroup: () => "profile",
       filterWorkspaceComments: (comments) => comments,
       renderModerationComment: (comment) => `<article data-comment-id="${comment.id}">${comment.markdown}</article>`,
-      renderOwnCommentRow: () => "",
+      renderOwnCommentRow: (comment) => `<article data-own-comment-id="${comment.id}">${comment.markdown}</article>`,
       renderSearchField: () => '<div data-search-field></div>',
       renderKarmaSelectOptions: () => '<option value="">All karma</option>',
       renderEntityModal: () => "",
@@ -109,8 +112,7 @@ test("renderWorkspaceView keeps login and comments panes as separate surfaces", 
     }
   });
 
-  assert.equal(commentsView.title, "Workspace");
-  assert.match(commentsView.paneMarkup, /Review comments/);
-  assert.match(commentsView.paneMarkup, /data-search-field/);
-  assert.match(commentsView.paneMarkup, /data-comment-id="c1"/);
+  assert.equal(commentsView.title, "Your account");
+  assert.match(commentsView.paneMarkup, /Your comments/);
+  assert.match(commentsView.paneMarkup, /data-own-comment-id="c1"/);
 });

@@ -35,7 +35,12 @@ export function isUsablePublicState(publicState) {
 }
 
 export function normalizeAdminPubkeys(publicState) {
-  const values = Array.isArray(publicState?.admins) ? publicState.admins : [];
+  const values = [
+    ...(Array.isArray(publicState?.admins) ? publicState.admins : []),
+    ...((Array.isArray(publicState?.users) ? publicState.users : [])
+      .filter((user) => user?.isAdmin)
+      .map((user) => user?.pubkey))
+  ];
   return dedupeValues(
     values
       .map((value) => {
@@ -181,6 +186,8 @@ export function applyDerivedCommentState(publicState, nextAllComments = null) {
         commentCount: (commentsByAuthor.get(user.pubkey) || []).length
       }))
     : [];
+  const submissionCount = deriveSubmissionCount(source, users);
+  const approvedEntityCount = Array.isArray(source.approvedEntities) ? source.approvedEntities.length : 0;
   return {
     ...source,
     removedPubkeys: [...removedPubkeys.values()].sort(),
@@ -199,10 +206,31 @@ export function applyDerivedCommentState(publicState, nextAllComments = null) {
     commentOrphansByPost: commentThreadState.orphansByPost,
     metrics: {
       ...(source.metrics || {}),
+      userCount: Array.isArray(users) ? users.length : 0,
+      submissionCount,
+      approvedEntityCount,
+      entityCount: Array.isArray(source.entities) ? source.entities.length : 0,
+      draftCount: Array.isArray(source.drafts) ? source.drafts.length : 0,
       commentCount: visibleComments.length,
       hiddenCommentCount: hiddenComments.length
     }
   };
+}
+
+function deriveSubmissionCount(publicState, users = []) {
+  let derived = 0;
+  if (publicState?.submissionCountByAuthor instanceof Map) {
+    for (const count of publicState.submissionCountByAuthor.values()) {
+      derived += Number(count || 0) || 0;
+    }
+  }
+  if (!derived) {
+    derived = (Array.isArray(users) ? users : []).reduce(
+      (total, user) => total + (Number(user?.submissionCount || 0) || 0),
+      0
+    );
+  }
+  return derived;
 }
 
 function removedActorPubkeySet(publicState) {

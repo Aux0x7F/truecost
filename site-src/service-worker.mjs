@@ -21,8 +21,20 @@ const PRECACHE_URLS = ${JSON.stringify(normalizedPrecacheUrls)};
 const RUNTIME_HTML_URLS = ${JSON.stringify(normalizedHtmlUrls)};
 const RUNTIME_ASSET_PREFIXES = ${JSON.stringify(normalizedAssetPrefixes)};
 const RUNTIME_CONTENT_PREFIXES = ${JSON.stringify(normalizedContentPrefixes)};
+const LOCAL_DEVELOPMENT_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+function isLocalDevelopmentHost(hostname = "") {
+  const normalized = String(hostname || "").trim().toLowerCase();
+  return LOCAL_DEVELOPMENT_HOSTS.has(normalized) || normalized.endsWith(".localhost");
+}
+
+const CACHE_DISABLED = isLocalDevelopmentHost(self.location.hostname);
 
 self.addEventListener("install", (event) => {
+  if (CACHE_DISABLED) {
+    event.waitUntil(self.skipWaiting());
+    return;
+  }
   event.waitUntil(
     caches.open(PRECACHE).then((cache) => cache.addAll(PRECACHE_URLS)).then(() => self.skipWaiting())
   );
@@ -33,7 +45,11 @@ self.addEventListener("activate", (event) => {
     caches.keys().then((keys) =>
       Promise.all(
         keys
-          .filter((key) => key.startsWith("truecost-") && key !== PRECACHE && key !== RUNTIME)
+          .filter((key) =>
+            CACHE_DISABLED
+              ? key.startsWith("truecost-")
+              : key.startsWith("truecost-") && key !== PRECACHE && key !== RUNTIME
+          )
           .map((key) => caches.delete(key))
       )
     ).then(() => self.clients.claim())
@@ -41,6 +57,7 @@ self.addEventListener("activate", (event) => {
 });
 
 function shouldHandle(requestUrl) {
+  if (CACHE_DISABLED) return false;
   if (requestUrl.origin !== self.location.origin) return false;
   const path = requestUrl.pathname || "/";
   return (

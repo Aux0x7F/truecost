@@ -19,10 +19,17 @@ test("workspace tabs controller normalizes tabs and updates the url", () => {
     accessController: {
       chooseInitialTab: () => "dashboard",
       currentUser: () => ({ pubkey: "admin-pubkey" }),
+      groupButtons: () => [{ id: "profile", label: "Profile" }, { id: "admin", label: "Admin" }],
+      groupIdForTab: (tabId) => (["profile", "comments"].includes(tabId) ? "profile" : "admin"),
       hasInboxAccess: () => true,
       isAdmin: () => true,
       pendingKeyRequest: () => null,
-      tabButtons: () => [{ id: "dashboard", label: "Dashboard" }, { id: "review", label: "Post Review" }]
+      tabButtons: () => [
+        { id: "dashboard", label: "Dashboard" },
+        { id: "profile", label: "Profile" },
+        { id: "comments", label: "Comments" },
+        { id: "posts", label: "Posts" }
+      ]
     },
     deps: {
       cleanSlug: (value) => String(value || "").trim().toLowerCase(),
@@ -30,9 +37,13 @@ test("workspace tabs controller normalizes tabs and updates the url", () => {
     }
   });
 
-  assert.equal(controller.chooseInitialTab(""), "review");
+  assert.equal(controller.chooseInitialTab(""), "posts");
   controller.setActiveTab("dashboard");
   assert.equal(state.activeTab, "dashboard");
   assert.equal(globalThis.window.location.search, "?tab=dashboard");
   assert.match(controller.renderTabButton({ id: "dashboard", label: "Dashboard" }), /workspace-tab is-current/);
+  controller.setActiveGroup("profile");
+  assert.equal(state.activeTab, "profile");
+  assert.equal(controller.currentWorkspaceGroup(), "profile");
+  assert.match(controller.renderGroupButton({ id: "profile", label: "Profile" }), /workspace-switcher__button is-current/);
 });

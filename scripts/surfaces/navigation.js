@@ -60,6 +60,10 @@ export function renderNavigationMarkup({
   const safeAvatarUrl = deps.safeAvatarUrl || ((value) => value);
   const unreadCount = isLoggedIn ? countUnreadNotifications(notifications) : 0;
   const expanded = unreadCount || notificationsLoading ? notificationsExpanded : false;
+  const workspaceLinks = [
+    `<a href="./admin.html?tab=profile">Profile</a>`,
+    isAdmin ? `<a href="./admin.html?tab=dashboard">Admin</a>` : ""
+  ].filter(Boolean).join("");
   const profileMarkup = isLoggedIn
     ? `
       <div class="profile-menu ${navKeys.workspace?.includes(page) ? "is-current" : ""} ${profileMenuOpen ? "is-open" : ""}" data-profile-menu>
@@ -103,7 +107,7 @@ export function renderNavigationMarkup({
                 : ""
             }
           </div>
-          <a href="./admin.html?tab=${isAdmin ? "dashboard" : "profile"}">${isAdmin ? "Admin" : "Profile"}</a>
+          ${workspaceLinks}
           <button type="button" data-signout>Sign out</button>
         </div>
       </div>

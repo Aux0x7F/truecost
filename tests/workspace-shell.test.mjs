@@ -26,16 +26,12 @@ test("workspace shell controller renders loading and hydrated views through the 
   shell.children.set("[data-workspace-tabs]", tabs);
   shell.children.set("[data-workspace-pane]", pane);
   shell.children.set("[data-workspace-overlays]", overlays);
-  const title = new FakeElement();
-  const lede = new FakeElement();
 
   globalThis.document = {
     activeElement: null,
     querySelector(selector) {
       return {
-        "[data-workspace-shell]": shell,
-        "[data-workspace-title]": title,
-        "[data-workspace-lede]": lede
+        "[data-workspace-shell]": shell
       }[selector] || null;
     }
   };
@@ -60,12 +56,9 @@ test("workspace shell controller renders loading and hydrated views through the 
   });
 
   controller.renderLoading("Looking up workspace...");
-  assert.equal(title.textContent, "Workspace");
-  assert.equal(lede.textContent, "Looking up workspace...");
+  assert.match(shell.innerHTML, /Looking up workspace/);
 
   controller.render();
-  assert.equal(title.textContent, "Workspace");
-  assert.equal(lede.textContent, "Manage things");
   assert.match(tabs.innerHTML, /Dashboard/);
   assert.match(pane.innerHTML, /Pane/);
 });
@@ -101,16 +94,12 @@ test("workspace shell controller preserves overlay DOM when unrelated regions re
   shell.children.set("[data-workspace-tabs]", tabs);
   shell.children.set("[data-workspace-pane]", pane);
   shell.children.set("[data-workspace-overlays]", overlays);
-  const title = new FakeElement();
-  const lede = new FakeElement();
 
   globalThis.document = {
     activeElement: null,
     querySelector(selector) {
       return {
-        "[data-workspace-shell]": shell,
-        "[data-workspace-title]": title,
-        "[data-workspace-lede]": lede
+        "[data-workspace-shell]": shell
       }[selector] || null;
     }
   };
