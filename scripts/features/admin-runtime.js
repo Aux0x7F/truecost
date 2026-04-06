@@ -1,4 +1,10 @@
 import SITE from "../core/site-config.js";
+import { installLocalDevelopmentHelpers } from "../core/dev-local-admin.js";
+import {
+  createMockPublishedPosts,
+  createMockWorkspaceSeed,
+  isLocalMockAdminEnabled
+} from "../core/dev-local-admin.js";
 import { buildDraftMarkdown, createUniqueSlug, splitTags } from "../core/content-utils.js";
 import {
   assertNetworkSessionUsernameIntegrity,
@@ -155,6 +161,8 @@ import { createWorkspaceUserLookupController } from "./workspace-user-lookup.js"
 import { buildPasswordLengthMessage, openAccountSession, PASSWORD_MIN_LENGTH, rotateAccountPassword } from "../core/account-actions.js";
 import { getStoredSession, rebroadcastAccount, resolveStoredSession, rotateAccountCredentials, saveSession, signInWithCredentials, deriveSecretKeyHex } from "../core/session.js";
 
+installLocalDevelopmentHelpers();
+
 let workspacePublicStateStore = null;
 let workspaceRuntime = null;
 let workspaceUserLookup = null;
@@ -224,6 +232,9 @@ const workspaceState = {
   backgroundSyncTimer: 0,
   backgroundSyncInFlight: false,
   inboxLoading: false,
+  publishedPosts: [],
+  mockMode: false,
+  mockModeMessage: "",
   respondedKeyRequests: new Set(),
   keyRequestCache: null
 };
@@ -359,6 +370,7 @@ workspaceRuntime = createWorkspaceRuntime({
     loadCachedSiteKeyShares: async () =>
       workspaceProjectionClient.loadCachedSiteKeyShares(),
     loadInboxSubmissions,
+    isMockAdminEnabled: () => isLocalMockAdminEnabled(),
     loadStaticSlugs,
     mergeSiteKeyShares: mergeWorkspaceSiteKeyShares,
     findSiteKeyShare: findWorkspaceSiteKeyShare,
@@ -548,6 +560,11 @@ workspacePage = createWorkspacePageController({
     handleAppendNextAvailableUsername: (target) => workspaceAccount.handleAppendNextAvailableUsername(target),
     hydrateChatModal: () => workspaceInbox.hydrateChatModal(),
     hydrateWorkspaceEnhancements,
+    handleMockAdminBlockedAction: () => {
+      workspaceState.dashboardStatus = "Local mock admin mode is active. Privileged writes stay disabled.";
+      workspaceState.userDirectStatus = "Local mock admin mode is UI-only.";
+      renderWorkspace({ soft: true });
+    },
     markSubmissionViewed: (submissionId, kinds) => workspaceInbox.markSubmissionViewed(submissionId, kinds),
     refreshWorkspace,
     renderLoginStatusPreview: (form) => workspaceAccount.renderLoginStatusPreview(form),
@@ -564,6 +581,30 @@ export function startWorkspaceAdminRuntime() {
 }
 
 async function refreshWorkspace(force = false) {
+  if (isLocalMockAdminEnabled()) {
+    const mockSeed = createMockWorkspaceSeed();
+    workspaceState.session = mockSeed.session;
+    workspaceState.sessionIdentity = mockSeed.sessionIdentity;
+    workspaceState.viewer = {
+      pubkey: mockSeed.session.pubkey,
+      secretKeyHex: mockSeed.session.secretKeyHex
+    };
+    workspaceState.publicState = mockSeed.publicState;
+    workspaceState.siteKeyShares = [];
+    workspaceState.siteKeyShare = null;
+    workspaceState.inboxSubmissions = mockSeed.inboxSubmissions;
+    workspaceState.inboxLoading = false;
+    workspaceState.staticSlugs = mockSeed.staticSlugs;
+    workspaceState.publishedPosts = createMockPublishedPosts();
+    workspaceState.dashboardStatus = mockSeed.dashboardStatus;
+    workspaceState.userDirectStatus = mockSeed.userDirectStatus;
+    workspaceState.mockMode = true;
+    workspaceState.mockModeMessage = mockSeed.mockModeMessage;
+    workspaceState.activeTab = workspaceAccess.chooseInitialTab(workspaceState.activeTab);
+    renderWorkspace();
+    return;
+  }
+
   workspaceState.session = await resolveStoredSession({
     persistSession: true
   }).catch(() => getStoredSession());
@@ -579,6 +620,8 @@ async function refreshWorkspace(force = false) {
   } else {
     workspaceState.sessionIdentity = null;
   }
+  workspaceState.mockMode = false;
+  workspaceState.mockModeMessage = "";
   await workspaceRuntime.refresh(force);
 }
 

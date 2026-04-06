@@ -42,7 +42,7 @@ export function createWorkspaceDeepLinkController({
 
   function maybeResolveCommentDeepLink() {
     const query = readLinkedUser();
-    if (!query || state.activeTab !== "comments" || state.commentFilters.query) return;
+    if (!query || state.activeTab !== "moderation" || state.commentFilters.query) return;
     state.commentFilters.query = query;
     hooks.renderWorkspace({ soft: true });
   }

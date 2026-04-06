@@ -98,3 +98,30 @@ test("interactive explore pages render without intro shells above the main surfa
     assert.doesNotMatch(rendered, /section--page-intro/, `${fileName} output should not render a page intro shell`);
   }
 });
+
+test("workspace source page uses the compact account shell instead of a hero block", async () => {
+  const workspacePage = pageDefinitions.find((page) => page.fileName === "admin.html");
+  assert.ok(workspacePage);
+  const mainHtml = await fs.readFile(path.join(pageSourceRoot, workspacePage.mainSource), "utf8");
+
+  assert.doesNotMatch(mainHtml, /class="hero"/);
+  assert.doesNotMatch(mainHtml, /workspace-page__header/);
+  assert.match(mainHtml, /data-workspace-shell/);
+});
+
+test("editor source page mounts directly into the editor shell with no legacy hero or toast ui assets", async () => {
+  const editorPage = pageDefinitions.find((page) => page.fileName === "editor.html");
+  assert.ok(editorPage);
+  const mainHtml = await fs.readFile(path.join(pageSourceRoot, editorPage.mainSource), "utf8");
+  const rendered = renderPageHtml({
+    page: editorPage,
+    site: siteTemplate,
+    mainHtml,
+    inlineStyles: "body{background:#fff}"
+  });
+
+  assert.doesNotMatch(mainHtml, /class="hero"/);
+  assert.match(mainHtml, /data-editor-shell/);
+  assert.doesNotMatch(rendered, /toastui-editor/);
+  assert.doesNotMatch(rendered, /vendor\/toastui-editor/);
+});

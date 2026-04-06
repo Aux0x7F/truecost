@@ -47,10 +47,26 @@ export function workspaceTabButtons({ hasSession = false, isAdmin = false } = {}
     ...base,
     { id: "users", label: "User Management" },
     { id: "submissions", label: "Submissions" },
-    { id: "entities", label: "Entities" },
-    { id: "review", label: "Post Review" },
+    { id: "posts", label: "Posts" },
+    { id: "moderation", label: "Comment Review" },
     { id: "log", label: "Log" }
   ];
+}
+
+export function workspaceGroupButtons({ hasSession = false, isAdmin = false } = {}) {
+  if (!hasSession) return [];
+  if (!isAdmin) return [{ id: "profile", label: "Profile" }];
+  return [
+    { id: "profile", label: "Profile" },
+    { id: "admin", label: "Admin" }
+  ];
+}
+
+export function workspaceTabGroupId(tabId = "", { isAdmin = false } = {}) {
+  const cleanTabId = String(tabId || "").trim().toLowerCase();
+  if (!isAdmin) return "profile";
+  if (["profile", "comments"].includes(cleanTabId)) return "profile";
+  return "admin";
 }
 
 export function chooseInitialWorkspaceTab(current, { hasSession = false, isAdmin = false } = {}) {
@@ -120,6 +136,19 @@ export function createWorkspaceAccessController({
     });
   }
 
+  function groupButtons() {
+    return workspaceGroupButtons({
+      hasSession: Boolean(state.session),
+      isAdmin: isAdmin()
+    });
+  }
+
+  function groupIdForTab(tabId = state.activeTab) {
+    return workspaceTabGroupId(tabId, {
+      isAdmin: isAdmin()
+    });
+  }
+
   function chooseInitialTab(current) {
     return chooseInitialWorkspaceTab(current, {
       hasSession: Boolean(state.session),
@@ -145,6 +174,8 @@ export function createWorkspaceAccessController({
     activeSitePubkey,
     hasInboxAccess,
     pendingKeyRequest,
+    groupButtons,
+    groupIdForTab,
     tabButtons,
     chooseInitialTab,
     captureAccessState

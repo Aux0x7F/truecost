@@ -6,6 +6,7 @@ import { minify as minifyHtml } from "html-minifier-terser";
 import { renderPageHtml } from "./site-src/layout.mjs";
 import { pageDefinitions, siteTemplate } from "./site-src/pages.mjs";
 import { renderServiceWorker } from "./site-src/service-worker.mjs";
+import { buildStylesBundle } from "./tooling/build-styles.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,9 +15,8 @@ const dist = path.join(root, "dist");
 const pageSourceRoot = path.join(root, "site-src", "main");
 const buildVersion = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 
-await import("./tooling/build-styles.mjs");
-
 await fs.mkdir(dist, { recursive: true });
+await clearDirContents(dist);
 
 await esbuild.build({
   entryPoints: [
@@ -35,15 +35,7 @@ await esbuild.build({
   chunkNames: "chunks/[name]-[hash]"
 });
 
-await esbuild.build({
-  entryPoints: [path.join(root, "scripts", "core", "site-runtime-worker.js")],
-  bundle: true,
-  format: "esm",
-  minify: true,
-  outfile: path.join(dist, "site-runtime-worker.js")
-});
-
-const css = await fs.readFile(path.join(root, "styles.css"), "utf8");
+const css = await buildStylesBundle();
 const minifiedCss = await esbuild.transform(css, { loader: "css", minify: true });
 await fs.writeFile(path.join(dist, "styles.css"), minifiedCss.code, "utf8");
 
@@ -52,8 +44,7 @@ for (const page of pageDefinitions) {
   const html = renderPageHtml({
     page,
     site: siteTemplate,
-    mainHtml,
-    inlineStyles: minifiedCss.code
+    mainHtml
   });
   const minified = await minifyHtml(html, {
     collapseWhitespace: true,
@@ -77,7 +68,6 @@ const serviceWorkerSource = renderServiceWorker({
     "./scripts/admin.js",
     "./scripts/submit.js",
     "./scripts/editor.js",
-    "./site-runtime-worker.js",
     "./content/investigations/index.json",
     "./content/graph/wiki-seed.json",
     "./content/pages/guide.md",
@@ -113,6 +103,13 @@ async function copyDir(source, target) {
 async function copyFile(source, target) {
   await fs.mkdir(path.dirname(target), { recursive: true });
   await fs.copyFile(source, target);
+}
+
+async function clearDirContents(target) {
+  const entries = await fs.readdir(target, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    await fs.rm(path.join(target, entry.name), { recursive: true, force: true });
+  }
 }
 
 async function listRelativeFiles(source, base) {

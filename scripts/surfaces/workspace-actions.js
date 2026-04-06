@@ -40,7 +40,7 @@ export function renderUserCard(user, workspaceState, deps = {}) {
   const isRemoved = Boolean(user?.removed);
   const canManage = deps.currentUserIsAdmin() && !isRootAdmin && !isRemoved && user.pubkey !== workspaceState.viewer?.pubkey;
   const submissionHref = `./investigations.html?author=${encodeURIComponent(user.username || user.pubkey)}`;
-  const commentHref = `./admin.html?tab=comments&user=${encodeURIComponent(user.username || user.pubkey)}`;
+  const commentHref = `./admin.html?tab=moderation&user=${encodeURIComponent(user.username || user.pubkey)}`;
   const karma = deps.resolveWorkspaceUserKarma(user.pubkey);
   const usernameConflict = deps.userHasUsernameConflict ? deps.userHasUsernameConflict(user) : Boolean(user?.usernameConflict);
   const escapeHtml = deps.escapeHtml || ((value) => String(value || ""));

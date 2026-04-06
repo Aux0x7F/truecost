@@ -17,7 +17,9 @@ export function createWorkspaceRuntime({
     loadCachedInboxSubmissions: async () => [],
     loadCachedSiteKeyShares: async () => [],
     loadInboxSubmissions: async () => [],
+    loadPublishedPosts: async () => [],
     loadStaticSlugs: async () => [],
+    isMockAdminEnabled: () => false,
     mergeSiteKeyShares: (primary, secondary) => [...(Array.isArray(primary) ? primary : []), ...(Array.isArray(secondary) ? secondary : [])],
     findSiteKeyShare: (shares, sitePubkey) => (Array.isArray(shares) ? shares : []).find((share) => share?.sitePubkey === sitePubkey) || null,
     persistCachedInboxSubmissions: () => {},
@@ -186,6 +188,10 @@ export function createWorkspaceRuntime({
   }
 
   async function refresh(force = false) {
+    if (runtime.isMockAdminEnabled()) {
+      clearTimers();
+      return;
+    }
     clearTimers();
     await primeSession(false, { resolve: true });
     if (!state.session) {
@@ -193,6 +199,7 @@ export function createWorkspaceRuntime({
       state.siteKeyShare = null;
       state.inboxSubmissions = [];
       state.inboxLoading = false;
+      state.publishedPosts = [];
       state.activeTab = accessController.chooseInitialTab("login");
       hooks.renderWorkspace();
       return;
@@ -213,7 +220,12 @@ export function createWorkspaceRuntime({
     await runtime.ensureEventToolsLoaded();
     await cachedAdminStatePromise;
     await hydrate(force);
-    state.staticSlugs = await runtime.loadStaticSlugs().catch(() => state.staticSlugs || []);
+    const [nextStaticSlugs, nextPublishedPosts] = await Promise.all([
+      runtime.loadStaticSlugs().catch(() => state.staticSlugs || []),
+      runtime.loadPublishedPosts({ force }).catch(() => state.publishedPosts || [])
+    ]);
+    state.staticSlugs = nextStaticSlugs;
+    state.publishedPosts = Array.isArray(nextPublishedPosts) ? nextPublishedPosts : [];
     state.activeTab = accessController.chooseInitialTab(state.activeTab);
     if (hooks.shouldSoftRefreshWorkspace()) {
       hooks.renderWorkspace({ soft: true });
@@ -236,6 +248,10 @@ export function createWorkspaceRuntime({
   }
 
   async function sync(force = true) {
+    if (runtime.isMockAdminEnabled()) {
+      clearTimers();
+      return;
+    }
     if (state.backgroundSyncInFlight) return;
     if (!document.querySelector("[data-workspace-page]")) return;
     if (document.visibilityState === "hidden") {
@@ -266,7 +282,12 @@ export function createWorkspaceRuntime({
         state.inboxLoading = false;
         state.inboxSubmissions = [];
       }
-      state.staticSlugs = await runtime.loadStaticSlugs().catch(() => state.staticSlugs || []);
+      const [nextStaticSlugs, nextPublishedPosts] = await Promise.all([
+        runtime.loadStaticSlugs().catch(() => state.staticSlugs || []),
+        runtime.loadPublishedPosts({ force }).catch(() => state.publishedPosts || [])
+      ]);
+      state.staticSlugs = nextStaticSlugs;
+      state.publishedPosts = Array.isArray(nextPublishedPosts) ? nextPublishedPosts : [];
       state.activeTab = accessController.chooseInitialTab(state.activeTab);
       const afterAccess = accessController.captureAccessState();
       const afterData = hooks.captureDataState();

@@ -4,7 +4,9 @@ import assert from "node:assert/strict";
 import {
   chooseInitialWorkspaceTab,
   createWorkspaceAccessController,
+  workspaceGroupButtons,
   workspaceHasInboxAccess,
+  workspaceTabGroupId,
   workspaceTabButtons,
   workspaceUserIsAdmin
 } from "../scripts/core/workspace-access.js";
@@ -33,8 +35,9 @@ test("workspace access controller uses cached session pubkey to expose admin tab
   assert.equal(access.hasInboxAccess(), true);
   assert.deepEqual(
     access.tabButtons().map((tab) => tab.id),
-    ["dashboard", "profile", "comments", "users", "submissions", "entities", "review", "log"]
+    ["dashboard", "profile", "comments", "users", "submissions", "posts", "moderation", "log"]
   );
+  assert.deepEqual(access.groupButtons().map((group) => group.id), ["profile", "admin"]);
   assert.equal(access.chooseInitialTab(""), "dashboard");
 });
 
@@ -66,6 +69,9 @@ test("workspace access helpers keep inbox access scoped to trusted admins and ac
   assert.equal(chooseInitialWorkspaceTab("", { hasSession: true, isAdmin: false }), "profile");
   assert.equal(chooseInitialWorkspaceTab("", { hasSession: false, isAdmin: false }), "login");
   assert.deepEqual(workspaceTabButtons({ hasSession: false, isAdmin: false }), []);
+  assert.deepEqual(workspaceGroupButtons({ hasSession: true, isAdmin: true }).map((group) => group.id), ["profile", "admin"]);
+  assert.equal(workspaceTabGroupId("comments", { isAdmin: true }), "profile");
+  assert.equal(workspaceTabGroupId("dashboard", { isAdmin: true }), "admin");
 });
 
 test("workspace access can recognize the configured root admin before public state finishes hydrating", () => {
@@ -90,7 +96,7 @@ test("workspace access can recognize the configured root admin before public sta
   assert.equal(access.chooseInitialTab(""), "dashboard");
   assert.deepEqual(
     access.tabButtons().map((tab) => tab.id),
-    ["dashboard", "profile", "comments", "users", "submissions", "entities", "review", "log"]
+    ["dashboard", "profile", "comments", "users", "submissions", "posts", "moderation", "log"]
   );
 });
 

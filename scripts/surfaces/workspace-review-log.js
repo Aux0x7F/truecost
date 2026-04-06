@@ -158,11 +158,11 @@ function logTarget(event, deps) {
         description: targetLabel
       };
     case kinds.entity:
-      return { href: "./admin.html?tab=entities", description: slug || deps.shortKey?.(event.pubkey) || event.pubkey };
+      return { href: "./admin.html?tab=posts", description: slug || deps.shortKey?.(event.pubkey) || event.pubkey };
     case kinds.draft:
-      return { href: "./admin.html?tab=review", description: slug || deps.shortKey?.(event.pubkey) || event.pubkey };
+      return { href: "./admin.html?tab=posts", description: slug || deps.shortKey?.(event.pubkey) || event.pubkey };
     case kinds.commentMod:
-      return { href: "./admin.html?tab=comments", description: deps.firstTag?.(event, "e") || deps.shortKey?.(event.pubkey) || event.pubkey };
+      return { href: "./admin.html?tab=moderation", description: deps.firstTag?.(event, "e") || deps.shortKey?.(event.pubkey) || event.pubkey };
     case kinds.submissionStatus:
       return { href: "./admin.html?tab=submissions", description: slug || deps.shortKey?.(event.pubkey) || event.pubkey };
     default:

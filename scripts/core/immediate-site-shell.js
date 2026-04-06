@@ -1,6 +1,12 @@
+import { getCachedPublicState } from "./nostr.js";
 import { publicStateHasAdminPubkey } from "./public-state.js";
 import { clearSession, getStoredSession } from "./session.js";
-import { getCachedSiteRuntimeProjection, getSiteRuntimeClient } from "./runtime-client.js";
+import {
+  disableLocalMockAdmin,
+  getMockAdminSession,
+  isLocalMockAdminEnabled,
+  mergeLocalAdminPublicState
+} from "./dev-local-admin.js";
 import {
   closeProfileMenu,
   createNavigationUiState,
@@ -29,48 +35,52 @@ export function createImmediateSiteShell({
   site,
   navKeys,
   renderNavigationMarkup,
-  sessionChangedEventName = "truecost:session-changed"
+  sessionChangedEventName = "truecost:session-changed",
+  deps = {}
 } = {}) {
+  const runtime = {
+    clearSession,
+    getCachedPublicState,
+    getStoredSession,
+    publicStateHasAdminPubkey,
+    ...deps
+  };
   const navigationUi = createNavigationUiState();
-  const rootAdminPubkey = String(site?.nostr?.rootAdminPubkey || "").trim().toLowerCase();
   let bindings = null;
-  let signingOut = false;
 
   function currentSession() {
-    return getStoredSession();
+    return runtime.getStoredSession();
   }
 
-  function currentPublicState() {
-    return getCachedSiteRuntimeProjection("publicState", {})?.value || null;
+  function cachedPublicState() {
+    try {
+      return runtime.getCachedPublicState?.() || null;
+    } catch {
+      return null;
+    }
   }
 
   function renderNavigation() {
-    if (signingOut) return;
     const nav = document.querySelector("[data-site-nav]");
     if (!(nav instanceof HTMLElement)) return;
-    const preservedFocus = captureNavigationFocus(nav);
-    const session = currentSession();
+    const mockAdminEnabled = isLocalMockAdminEnabled();
+    const session = mockAdminEnabled ? getMockAdminSession() : currentSession();
     const sessionPubkey = String(session?.pubkey || "").trim().toLowerCase();
-    const publicState = currentPublicState();
+    const publicState = mockAdminEnabled ? mergeLocalAdminPublicState(cachedPublicState()) : cachedPublicState();
     const currentUser = sessionPubkey
       ? (publicState?.users || []).find((user) => String(user?.pubkey || "").trim().toLowerCase() === sessionPubkey) || null
       : null;
-    const markup = renderNavigationMarkup({
+    nav.innerHTML = renderNavigationMarkup({
       page: document.body.dataset.page || "",
       navKeys,
       isLoggedIn: Boolean(session),
-      isAdmin: Boolean(
-        sessionPubkey &&
-          (publicStateHasAdminPubkey(publicState, sessionPubkey) ||
-            (rootAdminPubkey && sessionPubkey === rootAdminPubkey))
-      ),
+      isAdmin: Boolean(sessionPubkey && runtime.publicStateHasAdminPubkey(publicState, sessionPubkey)),
       currentUser,
       sessionUsername: session?.username || "",
       notifications: [],
       notificationsLoading: false,
       profileMenuOpen: navigationUi.profileMenuOpen,
       notificationsExpanded: navigationUi.notificationsExpanded,
-      openGroupKey: navigationUi.openGroupKey,
       deps: {
         countUnreadNotifications: () => 0,
         escapeAttribute,
@@ -78,10 +88,6 @@ export function createImmediateSiteShell({
         safeAvatarUrl
       }
     });
-    if (nav.innerHTML !== markup) {
-      nav.innerHTML = markup;
-      restoreNavigationFocus(nav, preservedFocus);
-    }
   }
 
   function mount() {
@@ -132,13 +138,11 @@ export function createImmediateSiteShell({
         if (submenuToggle) {
           const group = submenuToggle.closest("[data-nav-group]");
           if (group) {
-            const groupKey = String(group.getAttribute("data-nav-group-key") || "").trim();
             const next = !group.classList.contains("is-open");
             for (const openGroup of document.querySelectorAll("[data-nav-group].is-open")) {
               if (openGroup !== group) openGroup.classList.remove("is-open");
             }
             group.classList.toggle("is-open", next);
-            navigationUi.openGroupKey = next ? groupKey : "";
           }
           return;
         }
@@ -156,19 +160,17 @@ export function createImmediateSiteShell({
           return;
         }
 
-        if (target.closest("[data-signout]")) {
-          event.preventDefault();
-          if (signingOut) return;
-          signingOut = true;
-          void getSiteRuntimeClient()
-            .then((runtimeClient) => runtimeClient.signOut())
-            .catch(() => {
-              clearSession();
-            })
-            .finally(() => {
-              closeProfileMenu(navigationUi);
-              window.location.reload();
-            });
+      if (target.closest("[data-signout]")) {
+        event.preventDefault();
+        if (isLocalMockAdminEnabled()) {
+          disableLocalMockAdmin({ reload: true });
+          return;
+        }
+        runtime.clearSession();
+        closeProfileMenu(navigationUi);
+          renderNavigation();
+          window.dispatchEvent(new CustomEvent(sessionChangedEventName));
+          window.location.reload();
           return;
         }
 
@@ -180,12 +182,7 @@ export function createImmediateSiteShell({
         }
 
         for (const group of document.querySelectorAll("[data-nav-group].is-open")) {
-          if (!group.contains(target)) {
-            group.classList.remove("is-open");
-            if (navigationUi.openGroupKey === String(group.getAttribute("data-nav-group-key") || "").trim()) {
-              navigationUi.openGroupKey = "";
-            }
-          }
+          if (!group.contains(target)) group.classList.remove("is-open");
         }
       },
       { signal }
@@ -220,38 +217,6 @@ export function createImmediateSiteShell({
     mount,
     renderNavigation
   };
-}
-
-function captureNavigationFocus(nav) {
-  const active = document.activeElement;
-  if (!(active instanceof HTMLElement) || !nav.contains(active)) return null;
-  if (active.matches("[data-submenu-toggle]")) {
-    const group = active.closest("[data-nav-group]");
-    return {
-      type: "submenu-toggle",
-      groupKey: String(group?.getAttribute("data-nav-group-key") || "").trim()
-    };
-  }
-  if (active.matches("[data-profile-toggle]")) return { type: "profile-toggle" };
-  if (active.matches("[data-notification-toggle]")) return { type: "notification-toggle" };
-  return null;
-}
-
-function restoreNavigationFocus(nav, preservedFocus) {
-  if (!preservedFocus?.type) return;
-  let nextFocus = null;
-  if (preservedFocus.type === "submenu-toggle" && preservedFocus.groupKey) {
-    nextFocus = nav.querySelector(
-      `[data-nav-group-key="${CSS.escape(preservedFocus.groupKey)}"] [data-submenu-toggle]`
-    );
-  } else if (preservedFocus.type === "profile-toggle") {
-    nextFocus = nav.querySelector("[data-profile-toggle]");
-  } else if (preservedFocus.type === "notification-toggle") {
-    nextFocus = nav.querySelector("[data-notification-toggle]");
-  }
-  if (nextFocus instanceof HTMLElement) {
-    nextFocus.focus({ preventScroll: true });
-  }
 }
 
 export default createImmediateSiteShell;

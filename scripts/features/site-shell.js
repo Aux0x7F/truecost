@@ -1,6 +1,12 @@
 import { clearSession } from "../core/session.js";
 import { getSiteRuntimeClient } from "../core/runtime-client.js";
 import {
+  disableLocalMockAdmin,
+  getMockAdminSession,
+  isLocalMockAdminEnabled,
+  mergeLocalAdminPublicState
+} from "../core/dev-local-admin.js";
+import {
   clampNotificationsPanel,
   closeProfileMenu,
   keepProfileMenuOpen,
@@ -53,13 +59,20 @@ export function createSiteShellFeature({
     const preservedFocus = captureNavigationFocus(nav);
 
     const page = document.body.dataset.page || "";
-    const isLoggedIn = Boolean(state.session);
-    const viewerPubkey = String(viewerController.resolvedSessionPubkey?.({ deriveWhenAvailable: true }) || viewerController.sessionPubkey() || "").trim();
+    const mockAdminEnabled = isLocalMockAdminEnabled();
+    const effectiveSession = mockAdminEnabled ? getMockAdminSession() : state.session;
+    const effectivePublicState = mockAdminEnabled ? mergeLocalAdminPublicState(state.publicState) : state.publicState;
+    const isLoggedIn = Boolean(effectiveSession);
+    const viewerPubkey = String(
+      mockAdminEnabled
+        ? effectiveSession?.pubkey
+        : viewerController.resolvedSessionPubkey?.({ deriveWhenAvailable: true }) || viewerController.sessionPubkey() || ""
+    ).trim();
     const currentUser = isLoggedIn && viewerPubkey
-      ? state.publicState?.users?.find((user) => user.pubkey === viewerPubkey) || null
+      ? effectivePublicState?.users?.find((user) => user.pubkey === viewerPubkey) || null
       : null;
-    const isAdmin = Boolean(isLoggedIn && viewerController.canEdit(state.publicState));
-    const notifications = isLoggedIn ? notificationState.items.slice(0, 8) : [];
+    const isAdmin = Boolean(mockAdminEnabled || (isLoggedIn && viewerController.canEdit(state.publicState)));
+    const notifications = isLoggedIn && !mockAdminEnabled ? notificationState.items.slice(0, 8) : [];
     const unreadCount = isLoggedIn ? countNotificationItems(notifications) : 0;
     const notificationsExpanded = clampNotificationsPanel(state.navigationUi, {
       count: unreadCount,
@@ -71,7 +84,7 @@ export function createSiteShellFeature({
       isLoggedIn,
       isAdmin,
       currentUser,
-      sessionUsername: state.session?.username || "",
+      sessionUsername: effectiveSession?.username || "",
       notifications,
       notificationsLoading: notificationState.loading,
       profileMenuOpen: state.navigationUi.profileMenuOpen,
@@ -243,6 +256,10 @@ export function createSiteShellFeature({
 
       if (target.closest("[data-signout]")) {
         event.preventDefault();
+        if (isLocalMockAdminEnabled()) {
+          disableLocalMockAdmin({ reload: true });
+          return;
+        }
         if (state.isSigningOut) return;
         state.isSigningOut = true;
         void getSiteRuntimeClient()

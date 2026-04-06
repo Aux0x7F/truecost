@@ -13,5 +13,15 @@
     "@playwright/test": "^1.58.2",
     "esbuild": "^0.25.1",
     "html-minifier-terser": "^7.2.0"
+  },
+  "dependencies": {
+    "@tiptap/core": "^3.20.5",
+    "@tiptap/extension-link": "^3.20.5",
+    "@tiptap/extension-placeholder": "^3.20.5",
+    "@tiptap/extension-text-align": "^3.20.5",
+    "@tiptap/extension-underline": "^3.20.5",
+    "@tiptap/pm": "^3.20.5",
+    "@tiptap/starter-kit": "^3.20.5",
+    "marked": "^17.0.5"
   }
 }

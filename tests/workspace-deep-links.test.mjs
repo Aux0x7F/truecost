@@ -58,7 +58,7 @@ test("workspace deep link controller resolves user and comment links from the ur
   await controller.maybeResolveUserDeepLink();
   assert.ok(calls.some(([type]) => type === "scroll"));
 
-  state.activeTab = "comments";
+  state.activeTab = "moderation";
   controller.maybeResolveCommentDeepLink();
   assert.equal(state.commentFilters.query, "abcd");
 
