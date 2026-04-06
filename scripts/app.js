@@ -10,6 +10,7 @@ import { formatDate, formatLocalTimestamp, buildArticleMetaLine } from "./core/f
 import { createFeatureManifest } from "./core/feature-manifest.js";
 import { fetchJson, fetchText } from "./core/http.js";
 import { createSiteOverlayConnector } from "./core/overlay-connector.js";
+import { installLocalDevelopmentHelpers } from "./core/dev-local-admin.js";
 import {
   cleanSlug,
   deriveIdentity,
@@ -65,6 +66,8 @@ let signerClient = null;
 let overlayConnector = null;
 const queryState = createQueryState();
 const navigationUi = createNavigationUiState();
+
+installLocalDevelopmentHelpers();
 
 const publicStateStore = createPublicStateProjectionStore({
   getSessionSecretKey: async () => (signerClient ? signerClient.resolveSecretKey() : ""),

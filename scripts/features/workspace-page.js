@@ -8,6 +8,7 @@ export function createWorkspacePageController({
     document: globalThis.document,
     window: globalThis.window,
     getStoredSession: () => null,
+    isMockAdminEnabled: () => false,
     cycleHighlightIndex: (current, total, direction) => {
       if (!Number.isFinite(total) || total <= 0) return -1;
       const index = Number.isFinite(current) ? current : -1;
@@ -44,6 +45,7 @@ export function createWorkspacePageController({
     handleAppendNextAvailableUsername: async () => {},
     hydrateChatModal: async () => {},
     hydrateWorkspaceEnhancements: () => {},
+    handleMockAdminBlockedAction: () => {},
     markSubmissionViewed: () => {},
     refreshWorkspace: async () => {},
     renderLoginStatusPreview: () => {},
@@ -203,12 +205,20 @@ export function createWorkspacePageController({
 
       const moderationButton = target.closest("[data-user-action]");
       if (moderationButton) {
+        if (runtime.isMockAdminEnabled()) {
+          hooks.handleMockAdminBlockedAction({ kind: "user-action" });
+          return;
+        }
         await hooks.handleUserAction(moderationButton);
         return;
       }
 
       const directUserAction = target.closest("[data-quick-user-action]");
       if (directUserAction) {
+        if (runtime.isMockAdminEnabled()) {
+          hooks.handleMockAdminBlockedAction({ kind: "quick-user-action" });
+          return;
+        }
         await hooks.handleDirectUserAction(directUserAction);
         return;
       }
@@ -297,18 +307,30 @@ export function createWorkspacePageController({
 
       const entityAction = target.closest("[data-entity-action]");
       if (entityAction) {
+        if (runtime.isMockAdminEnabled()) {
+          hooks.handleMockAdminBlockedAction({ kind: "entity-action" });
+          return;
+        }
         await hooks.handleEntityAction(entityAction);
         return;
       }
 
       const commentAction = target.closest("[data-comment-action]");
       if (commentAction) {
+        if (runtime.isMockAdminEnabled()) {
+          hooks.handleMockAdminBlockedAction({ kind: "comment-action" });
+          return;
+        }
         await hooks.handleCommentAction(commentAction);
         return;
       }
 
       const reviewAction = target.closest("[data-review-action]");
       if (reviewAction) {
+        if (runtime.isMockAdminEnabled()) {
+          hooks.handleMockAdminBlockedAction({ kind: "review-action" });
+          return;
+        }
         await hooks.handleReviewAction(reviewAction);
         return;
       }
@@ -321,18 +343,30 @@ export function createWorkspacePageController({
 
       const submissionAction = target.closest("[data-submission-action]");
       if (submissionAction) {
+        if (runtime.isMockAdminEnabled()) {
+          hooks.handleMockAdminBlockedAction({ kind: "submission-action" });
+          return;
+        }
         await hooks.handleSubmissionAction(submissionAction);
         return;
       }
 
       const attachmentAction = target.closest("[data-download-attachment]");
       if (attachmentAction) {
+        if (runtime.isMockAdminEnabled()) {
+          hooks.handleMockAdminBlockedAction({ kind: "attachment-download" });
+          return;
+        }
         await hooks.handleAttachmentDownload(attachmentAction);
         return;
       }
 
       const snapshotRequest = target.closest("[data-request-snapshot]");
       if (snapshotRequest) {
+        if (runtime.isMockAdminEnabled()) {
+          hooks.handleMockAdminBlockedAction({ kind: "snapshot-request" });
+          return;
+        }
         await hooks.handleSnapshotRequest(snapshotRequest);
         return;
       }
@@ -418,6 +452,26 @@ export function createWorkspacePageController({
       const form = event.target;
       if (!(form instanceof HTMLFormElement)) return;
       event.preventDefault();
+
+      if (runtime.isMockAdminEnabled()) {
+        hooks.handleMockAdminBlockedAction({
+          kind: "form-submit",
+          form: form.getAttribute("data-login-form")
+            ? "login"
+            : form.getAttribute("data-profile-form")
+              ? "profile"
+              : form.getAttribute("data-password-rotation-form")
+                ? "password-rotation"
+                : form.getAttribute("data-entity-form")
+                  ? "entity"
+                  : form.getAttribute("data-chat-form")
+                    ? "chat"
+                    : form.getAttribute("data-comment-action-form")
+                      ? "comment-action"
+                      : "unknown"
+        });
+        return;
+      }
 
       if (form.matches("[data-login-form]")) {
         await hooks.handleLogin(form);

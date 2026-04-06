@@ -28,7 +28,8 @@ test("investigation document artifacts preserve rich image placement metadata", 
     tags: ["records"]
   });
 
-  assert.equal(artifacts.structuredDocument.blocks[1].type, "image");
+  assert.equal(artifacts.structuredDocument.blocks[1].type, "multimedia");
+  assert.equal(artifacts.structuredDocument.blocks[1].variant, "image");
   assert.equal(artifacts.structuredDocument.blocks[1].placement, "fill-crop");
   assert.deepEqual(artifacts.structuredDocument.blocks[1].drag, { x: 0.25, y: 0.75 });
   assert.deepEqual(artifacts.structuredDocument.blocks[1].crop, { x: 0.1, y: 0.2, width: 0.8, height: 0.7 });
@@ -74,6 +75,51 @@ test("structured investigation documents round-trip through markdown-compatible 
   const markdown = structuredDocumentToMarkdown(record.structured_document);
   assert.match(markdown, /## Heading/);
   assert.match(markdown, new RegExp(title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("structured investigation artifacts preserve bakedown image paths for published output", () => {
+  const artifacts = deriveInvestigationStructuredArtifacts({
+    slug: "north-valley",
+    title: "North Valley",
+    summary: "Summary",
+    bodyJson: {
+      type: "doc",
+      content: [
+        {
+          type: "investigationImage",
+          attrs: {
+            assetId: "img-1",
+            src: "https://blossom.band/blob/abc",
+            alt: "Facility",
+            caption: "North Valley exterior",
+            placement: "full-width"
+          }
+        }
+      ]
+    },
+    mediaAssets: [
+      {
+        id: "img-1",
+        name: "north valley exterior",
+        mimeType: "image/png",
+        publishUrl: "https://blossom.band/blob/abc",
+        blobSha256: "c".repeat(64)
+      }
+    ]
+  });
+
+  assert.equal(
+    artifacts.structuredDocument.metadata.mediaAssets[0].bakedPath,
+    `./content/investigation-assets/north-valley/${"c".repeat(64)}.png`
+  );
+
+  const html = renderStructuredInvestigationHtml(artifacts.structuredDocument, {
+    renderMarkedHtml: (markdown) => markdown
+  });
+  assert.match(
+    html,
+    new RegExp(`content/investigation-assets/north-valley/${"c".repeat(64)}\\.png`)
+  );
 });
 
 test("structured investigation renderer keeps markdown blocks and richer article image classes", () => {

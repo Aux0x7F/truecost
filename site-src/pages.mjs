@@ -170,8 +170,6 @@ export const pageDefinitions = [
     title: "Create Investigation | The True Cost Project",
     description: "Write and review investigation drafts for The True Cost Project.",
     mainSource: "editor.html",
-    extraStyles: ["./vendor/toastui-editor.min.css"],
-    extraScripts: [{ src: "./vendor/toastui-editor-all.min.js" }],
     entryScripts: ["./scripts/shell.js", "./scripts/editor.js"],
     bakedown: {
       templateKind: "editor",

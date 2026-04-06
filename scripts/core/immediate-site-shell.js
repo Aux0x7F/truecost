@@ -2,6 +2,12 @@ import { getCachedPublicState } from "./nostr.js";
 import { publicStateHasAdminPubkey } from "./public-state.js";
 import { clearSession, getStoredSession } from "./session.js";
 import {
+  disableLocalMockAdmin,
+  getMockAdminSession,
+  isLocalMockAdminEnabled,
+  mergeLocalAdminPublicState
+} from "./dev-local-admin.js";
+import {
   closeProfileMenu,
   createNavigationUiState,
   toggleNotificationsPanel,
@@ -57,9 +63,10 @@ export function createImmediateSiteShell({
   function renderNavigation() {
     const nav = document.querySelector("[data-site-nav]");
     if (!(nav instanceof HTMLElement)) return;
-    const session = currentSession();
+    const mockAdminEnabled = isLocalMockAdminEnabled();
+    const session = mockAdminEnabled ? getMockAdminSession() : currentSession();
     const sessionPubkey = String(session?.pubkey || "").trim().toLowerCase();
-    const publicState = cachedPublicState();
+    const publicState = mockAdminEnabled ? mergeLocalAdminPublicState(cachedPublicState()) : cachedPublicState();
     const currentUser = sessionPubkey
       ? (publicState?.users || []).find((user) => String(user?.pubkey || "").trim().toLowerCase() === sessionPubkey) || null
       : null;
@@ -153,10 +160,14 @@ export function createImmediateSiteShell({
           return;
         }
 
-        if (target.closest("[data-signout]")) {
-          event.preventDefault();
-          runtime.clearSession();
-          closeProfileMenu(navigationUi);
+      if (target.closest("[data-signout]")) {
+        event.preventDefault();
+        if (isLocalMockAdminEnabled()) {
+          disableLocalMockAdmin({ reload: true });
+          return;
+        }
+        runtime.clearSession();
+        closeProfileMenu(navigationUi);
           renderNavigation();
           window.dispatchEvent(new CustomEvent(sessionChangedEventName));
           window.location.reload();

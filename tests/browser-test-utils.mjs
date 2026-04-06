@@ -52,12 +52,19 @@ async function resolveStaticServerRoot(root) {
 }
 
 export async function loadPlaywright(repoRoot = process.cwd()) {
-  const playwrightPath = path.resolve(repoRoot, "../nostr-site/tooling/browser-smoke/node_modules/playwright/index.mjs");
-  try {
-    return await import(pathToFileURL(playwrightPath).href);
-  } catch {
-    return null;
+  const candidatePaths = [
+    path.resolve(repoRoot, "node_modules/playwright/index.mjs"),
+    path.resolve(repoRoot, "node_modules/@playwright/test/index.mjs"),
+    path.resolve(repoRoot, "../nostr-site/tooling/browser-smoke/node_modules/playwright/index.mjs")
+  ];
+  for (const playwrightPath of candidatePaths) {
+    try {
+      return await import(pathToFileURL(playwrightPath).href);
+    } catch {
+      continue;
+    }
   }
+  return null;
 }
 
 export function captureRelevantConsoleErrors(page, bucket) {
@@ -174,16 +181,17 @@ export async function seedKnownUsernameOwner(page, { port, username = "aux", own
 
 export async function seedConflictedUsernameSession(page, { port, secretKeyHex, claimedUsername = "aux", ownerPubkey = "" }) {
   const canonicalOwnerPubkey = ownerPubkey || "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa";
+  const nostr = await import("../scripts/core/nostr.js");
+  await nostr.ensureEventToolsLoaded();
+  const nextPubkey = nostr.deriveIdentity(secretKeyHex).pubkey;
   await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: "domcontentloaded" });
   await page.evaluate(
     async ({
       secretKeyHex: nextSecretKeyHex,
       claimedUsername: nextClaimedUsername,
-      ownerPubkey: nextOwnerPubkey
+      ownerPubkey: nextOwnerPubkey,
+      nextPubkey
     }) => {
-      const nostr = await import("./scripts/core/nostr.js");
-      await nostr.ensureEventToolsLoaded();
-      const nextPubkey = nostr.deriveIdentity(nextSecretKeyHex).pubkey;
       localStorage.setItem(
         "truecost.v2.session",
         JSON.stringify({ username: nextClaimedUsername, secretKeyHex: nextSecretKeyHex, pubkey: nextPubkey })
@@ -250,7 +258,7 @@ export async function seedConflictedUsernameSession(page, { port, secretKeyHex, 
         })
       );
     },
-    { secretKeyHex, claimedUsername, ownerPubkey: canonicalOwnerPubkey }
+    { secretKeyHex, claimedUsername, ownerPubkey: canonicalOwnerPubkey, nextPubkey }
   );
 }
 

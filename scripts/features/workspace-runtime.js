@@ -19,6 +19,7 @@ export function createWorkspaceRuntime({
     loadInboxSubmissions: async () => [],
     loadPublishedPosts: async () => [],
     loadStaticSlugs: async () => [],
+    isMockAdminEnabled: () => false,
     mergeSiteKeyShares: (primary, secondary) => [...(Array.isArray(primary) ? primary : []), ...(Array.isArray(secondary) ? secondary : [])],
     findSiteKeyShare: (shares, sitePubkey) => (Array.isArray(shares) ? shares : []).find((share) => share?.sitePubkey === sitePubkey) || null,
     persistCachedInboxSubmissions: () => {},
@@ -187,6 +188,10 @@ export function createWorkspaceRuntime({
   }
 
   async function refresh(force = false) {
+    if (runtime.isMockAdminEnabled()) {
+      clearTimers();
+      return;
+    }
     clearTimers();
     await primeSession(false, { resolve: true });
     if (!state.session) {
@@ -243,6 +248,10 @@ export function createWorkspaceRuntime({
   }
 
   async function sync(force = true) {
+    if (runtime.isMockAdminEnabled()) {
+      clearTimers();
+      return;
+    }
     if (state.backgroundSyncInFlight) return;
     if (!document.querySelector("[data-workspace-page]")) return;
     if (document.visibilityState === "hidden") {

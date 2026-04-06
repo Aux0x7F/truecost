@@ -75,6 +75,7 @@ export function createEditorLiveOverlayController({
   function handleStatus(detail) {
     if (detail?.documentId !== state.liveDocumentId) return;
     state.liveStatus = String(detail?.state || "idle");
+    state.liveMessage = String(detail?.message || "");
   }
 
   function handleContent(content, detail) {

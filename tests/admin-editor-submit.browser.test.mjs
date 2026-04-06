@@ -134,7 +134,8 @@ test("admin workspace, submit autocomplete, and editor boot survive cached admin
 
     await seedAdminSession(page, { port, secretKeyHex, pubkey });
     await page.goto(`http://127.0.0.1:${port}/editor.html`, { waitUntil: "domcontentloaded" });
-    await page.waitForSelector("[data-editor-form]", { timeout: 15000 });
+    await page.waitForSelector("[data-editor-layout]", { timeout: 15000 });
+    await page.waitForSelector("[data-editor-surface] .ProseMirror", { timeout: 15000 });
     await page.waitForTimeout(2000);
 
     assert.deepEqual(pageErrors, [], `page errors: ${pageErrors.join(" | ")}`);

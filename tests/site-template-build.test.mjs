@@ -108,3 +108,20 @@ test("workspace source page uses the compact account shell instead of a hero blo
   assert.doesNotMatch(mainHtml, /workspace-page__header/);
   assert.match(mainHtml, /data-workspace-shell/);
 });
+
+test("editor source page mounts directly into the editor shell with no legacy hero or toast ui assets", async () => {
+  const editorPage = pageDefinitions.find((page) => page.fileName === "editor.html");
+  assert.ok(editorPage);
+  const mainHtml = await fs.readFile(path.join(pageSourceRoot, editorPage.mainSource), "utf8");
+  const rendered = renderPageHtml({
+    page: editorPage,
+    site: siteTemplate,
+    mainHtml,
+    inlineStyles: "body{background:#fff}"
+  });
+
+  assert.doesNotMatch(mainHtml, /class="hero"/);
+  assert.match(mainHtml, /data-editor-shell/);
+  assert.doesNotMatch(rendered, /toastui-editor/);
+  assert.doesNotMatch(rendered, /vendor\/toastui-editor/);
+});
